@@ -1,0 +1,24 @@
+# NOTE: reconstructed 2026-07-12 from the live running container's config
+# (docker inspect poisonflix-proxy) after this file was accidentally deleted
+# by `create-vite --overwrite`. Functionally equivalent to the original;
+# original comments/formatting could not be recovered. Please diff against
+# your own memory of the file and adjust if anything looks off.
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: poisonflix-proxy
+    restart: unless-stopped
+    ports:
+      - "8600:8600"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./www:/srv:ro
+    networks:
+      - jellyfin-server_default
+      - media-automation
+
+networks:
+  jellyfin-server_default:
+    external: true
+  media-automation:
+    external: true

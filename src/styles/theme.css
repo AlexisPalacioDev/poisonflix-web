@@ -1,0 +1,9 @@
+:root {
+  --pf-bg: #0a0c10; /* near-black background */
+  --pf-surface: #12151b; /* elevated cards/rails */
+  --pf-gold: #f2c14e; /* primary accent / focus */
+  --pf-available: #8cff5a; /* toxic-green "available"/InLibrary */
+  --pf-text: #edeff2;
+  --pf-text-dim: #9aa3ad;
+  --pf-danger: #e5484d;
+}

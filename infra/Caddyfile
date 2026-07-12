@@ -1,0 +1,29 @@
+# poisonflix-web same-origin reverse proxy.
+# Solves the browser CORS problem by serving the web app AND both backend
+# APIs under a single origin, using path prefixes. Also fixes the Jellyseerr
+# `connect.sid` cookie (now first-party, no SameSite=None/Secure needed).
+#
+# Upstreams are reached by container name over the two docker networks this
+# proxy joins (see docker-compose.yml) — no dependency on the host's DHCP IP.
+#   - jellyfin shares its network namespace with the `jellyfin-ts` sidecar,
+#     so it is reachable at jellyfin-ts:8096 on jellyfin-server_default.
+#   - jellyseerr:5055 on media-automation.
+
+:8600 {
+	# Jellyfin API + media streaming -> strip /jellyfin prefix
+	handle_path /jellyfin/* {
+		reverse_proxy jellyfin-ts:8096
+	}
+
+	# Jellyseerr API -> strip /jellyseerr prefix
+	handle_path /jellyseerr/* {
+		reverse_proxy jellyseerr:5055
+	}
+
+	# Everything else: serve the built web app (SPA fallback to index.html).
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
