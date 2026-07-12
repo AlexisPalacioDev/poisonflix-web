@@ -12,3 +12,16 @@ export function RouteGuard({ children }: { children: ReactNode }) {
 
   return <>{children}</>;
 }
+
+// Inverse guard for /onboarding itself: an already-authenticated user (e.g.
+// a hydrated session on reload) skips onboarding entirely and lands on Home
+// (onboarding spec: "Reload after successful onboarding").
+export function PublicOnlyRoute({ children }: { children: ReactNode }) {
+  const { session } = useAuthContext();
+
+  if (session) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}

@@ -15,6 +15,6 @@ describe('App', () => {
     const router = createMemoryRouter(routes, { initialEntries: ['/onboarding'] });
     render(<App router={router} />);
 
-    expect(await screen.findByText(/onboarding screen placeholder/i)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /poisonflix/i })).toBeInTheDocument();
   });
 });

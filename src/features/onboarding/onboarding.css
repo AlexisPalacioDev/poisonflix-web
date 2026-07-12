@@ -1,0 +1,158 @@
+/* Onboarding screen - two-panel layout (brand left, form right) on wide
+   screens, stacked on narrow/mobile. Uses the theme.css CSS variables
+   (design.md §8) rather than hardcoded colors so future theme tweaks stay
+   in one place. */
+
+.pf-onboarding {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.pf-onboarding__layout {
+  display: flex;
+  align-items: center;
+  gap: 56px;
+  max-width: 960px;
+  width: 100%;
+}
+
+.pf-onboarding__brand {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.pf-onboarding__mark {
+  width: 84px;
+  height: 84px;
+}
+
+.pf-onboarding__title {
+  margin: 18px 0 12px;
+  font-size: 2.25rem;
+  font-weight: 700;
+  color: var(--pf-gold);
+  letter-spacing: -0.02em;
+}
+
+.pf-onboarding__tagline {
+  margin: 0;
+  max-width: 380px;
+  color: var(--pf-text-dim);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.pf-onboarding__form-panel {
+  flex: 0 0 420px;
+  max-width: 100%;
+  background: var(--pf-surface);
+  border-radius: 24px;
+  padding: 32px 28px;
+}
+
+.pf-onboarding__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.pf-onboarding__label {
+  font-size: 0.8125rem;
+  color: var(--pf-text-dim);
+}
+
+.pf-onboarding__input {
+  background: var(--pf-bg);
+  border: 1px solid #2a303c;
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--pf-text);
+  font-size: 0.95rem;
+}
+
+.pf-onboarding__input:focus {
+  outline: none;
+  border-color: var(--pf-gold);
+}
+
+.pf-onboarding__input:disabled {
+  color: var(--pf-text-dim);
+  opacity: 0.7;
+}
+
+.pf-onboarding__error {
+  margin: 4px 0 14px;
+  color: var(--pf-danger);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.pf-onboarding__submit {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 12px;
+  background: var(--pf-gold);
+  color: #0a0c10;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.pf-onboarding__submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pf-onboarding__advanced {
+  margin-top: 18px;
+  border-top: 1px solid #2a303c;
+  padding-top: 14px;
+}
+
+.pf-onboarding__advanced summary {
+  cursor: pointer;
+  color: var(--pf-text-dim);
+  font-size: 0.8125rem;
+}
+
+.pf-onboarding__advanced-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 0.8125rem;
+  color: var(--pf-text-dim);
+}
+
+.pf-onboarding__advanced-row code {
+  color: var(--pf-text);
+}
+
+@media (max-width: 860px) {
+  .pf-onboarding__layout {
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .pf-onboarding__brand {
+    text-align: center;
+  }
+
+  .pf-onboarding__mark {
+    margin: 0 auto;
+  }
+
+  .pf-onboarding__tagline {
+    margin: 0 auto;
+  }
+
+  .pf-onboarding__form-panel {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+}

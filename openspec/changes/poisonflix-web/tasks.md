@@ -68,14 +68,14 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 
 ## Slice 3: Onboarding
 
-- [ ] 3.1 `src/features/onboarding/OnboardingScreen.tsx`: 2-panel form, 4 empty fields on first load.
-- [ ] 3.2 `src/auth/AuthContext.tsx`: `{session, login, logout}`; hydrate from session store on boot.
-- [ ] 3.3 Two-phase login step 1: Jellyfin `authenticateByName`; on failure show field error, stop, no Jellyseerr call, persist nothing.
-- [ ] 3.4 Two-phase login step 2: on Jellyfin success call Jellyseerr `authJellyfin`; on failure discard the Jellyfin token, persist nothing.
-- [ ] 3.5 Both succeed: persist token+userId+cookie marker via session store, route to Home.
-- [ ] 3.6 Error routing: `NetworkError`/`CorsError` -> proxy/connectivity message; `ApiError(401)` -> invalid-credentials message.
-- [ ] 3.7 `src/auth/RouteGuard.tsx`: redirect unauthenticated users to `/onboarding`; wire into route tree.
-- [ ] 3.8 Tests: both-or-nothing branches, route-guard redirect, reload-persists-session.
+- [x] 3.1 `src/features/onboarding/OnboardingScreen.tsx`: 2-panel form. **Deviation from the literal spec** (approved by this batch's delegation): only username+password are user-entered fields; the Jellyfin/Jellyseerr URLs are the fixed same-origin proxy prefixes (`/jellyfin`, `/jellyseerr`), shown read-only under a "Configuración avanzada" `<details>` disclosure instead of as required inputs, since this web app is same-origin via the reverse proxy (unlike the native app's absolute-IP model).
+- [x] 3.2 `src/auth/AuthContext.tsx`: `{session, login, logout}`; hydrates from `lib/session/store.ts` on boot; `logout` clears storage + `queryClient.clear()`.
+- [x] 3.3 Two-phase login step 1: Jellyfin `authenticateByName` (`lib/domain/onboardingAuth.ts`); on failure throws `OnboardingAuthError('jellyfin', cause)`, no Jellyseerr call, persists nothing.
+- [x] 3.4 Two-phase login step 2: on Jellyfin success calls Jellyseerr `authJellyfin`; on failure throws `OnboardingAuthError('jellyseerr', cause)` - the Jellyfin token obtained in step 1 is discarded simply by never being returned/persisted.
+- [x] 3.5 Both succeed: persist token+userId+serverId+cookie marker via session store (`AuthContext.login`), navigate to `/`.
+- [x] 3.6 Error routing (`features/onboarding/errorMessage.ts`): `NetworkError`/`CorsError` -> proxy/connectivity message naming the failed backend; `ApiError(401)` -> invalid-credentials message, distinct per backend.
+- [x] 3.7 `src/auth/RouteGuard.tsx`: redirect unauthenticated users to `/onboarding`; **added `PublicOnlyRoute`** (inverse guard) so an already-authenticated user is redirected away from `/onboarding` to `/`; both wired into `routes/index.tsx`.
+- [x] 3.8 Tests: `lib/domain/onboardingAuth.test.ts` (both-or-nothing branches), `features/onboarding/errorMessage.test.ts` (error mapping), `features/onboarding/OnboardingScreen.test.tsx` (component-level happy/failure paths + advanced disclosure), `auth/RouteGuard.test.tsx` (route-guard redirect + reload-persists-session). 22 new tests, all passing.
 
 ## Slice 4: Home
 

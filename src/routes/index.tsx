@@ -1,5 +1,5 @@
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom';
-import { RouteGuard } from '../auth/RouteGuard';
+import { PublicOnlyRoute, RouteGuard } from '../auth/RouteGuard';
 import { OnboardingScreen } from '../features/onboarding/OnboardingScreen';
 import { HomeScreen } from '../features/home/HomeScreen';
 import { SearchScreen } from '../features/search/SearchScreen';
@@ -12,7 +12,14 @@ import { PlayerScreen } from '../features/player/PlayerScreen';
 // instance) so tests can build a `createMemoryRouter` from the exact same
 // tree instead of exercising real browser History/fetch APIs under jsdom.
 export const routes: RouteObject[] = [
-  { path: '/onboarding', element: <OnboardingScreen /> },
+  {
+    path: '/onboarding',
+    element: (
+      <PublicOnlyRoute>
+        <OnboardingScreen />
+      </PublicOnlyRoute>
+    ),
+  },
   {
     path: '/',
     element: (

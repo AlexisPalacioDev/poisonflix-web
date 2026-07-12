@@ -267,8 +267,196 @@ inspection, never into the repo.
 - `npm test` (`vitest run`) — **59/59 passed** across 9 test files (12 new
   in `streamResolver.test.ts`).
 
-### Next up
+### Next up (superseded by Slice 3 below)
 
 Slice 3 (Onboarding: `OnboardingScreen`, `AuthContext`, two-phase
 both-or-nothing login, `RouteGuard`) is next, per tasks.md. Now unblocked —
 both Jellyfin and Jellyseerr auth are confirmed working live end-to-end.
+
+## Slice 3: Onboarding — COMPLETE
+
+Implemented the full onboarding/login flow (design.md §5/§6/§7, tasks.md
+3.1-3.8). All 8 sub-tasks done; one deliberate, disclosed deviation from the
+literal spec (see below).
+
+### What was built
+
+- **`src/lib/session/deviceId.ts`** — stable per-browser device id
+  (`crypto.randomUUID`, persisted in localStorage), replacing the native
+  app's `Settings.Secure.ANDROID_ID` (no browser equivalent) for the
+  `X-Emby-Authorization` header's `DeviceId` field.
+- **`src/lib/domain/onboardingAuth.ts`** — `authenticateBothBackends()`, the
+  pure, framework-free two-phase auth (ported from
+  `OnboardingViewModel.kt` L44-51/L130-142): Jellyfin `authenticateByName`
+  first; on failure throws `OnboardingAuthError('jellyfin', cause)` before
+  any Jellyseerr call. On Jellyfin success, calls Jellyseerr `authJellyfin`;
+  on failure throws `OnboardingAuthError('jellyseerr', cause)` — the
+  Jellyfin token is discarded automatically because it only ever lives in
+  this function's local variable and is never returned/persisted on that
+  branch. Only on full success does it return the `StoredSession` shape for
+  the caller to persist. This makes "discard on partial failure" structural
+  rather than something a caller must remember to do.
+- **`src/features/onboarding/errorMessage.ts`** — `mapOnboardingError()`
+  maps an `OnboardingAuthError` to Spanish UI copy: `NetworkError`/
+  `CorsError` (from `lib/http/errors.ts`) -> proxy/connectivity message
+  naming the failed backend and its fixed prefix; `ApiError(401)` ->
+  invalid-credentials message (worded differently per backend, since a
+  Jellyfin 401 means "wrong password" but a Jellyseerr 401 after a
+  successful Jellyfin auth means "Jellyfin conectó bien, pero Jellyseerr
+  rechazó las credenciales" — a materially different signal for the user).
+  Satisfies the spec's explicit CORS-vs-401 distinction requirement.
+- **`src/auth/AuthContext.tsx`** (rewritten from the Slice 0 stub) — `session`
+  now hydrates from `lib/session/store.ts` on boot via `useState(() =>
+  getSession())`; `login(credentials)` runs `authenticateBothBackends` +
+  `getOrCreateDeviceId()`, persists via `setSession` (store) only on
+  success, and updates context state; `logout()` clears storage, resets
+  context state, and calls `queryClient.clear()` (via `useQueryClient()` —
+  works because `AuthProvider` is mounted inside `QueryClientProvider` in
+  `App.tsx`).
+- **`src/auth/RouteGuard.tsx`** — kept the existing `RouteGuard` (redirect
+  unauthenticated -> `/onboarding`) and **added `PublicOnlyRoute`**, the
+  inverse guard: an already-authenticated user hitting `/onboarding` (e.g.
+  a hydrated session on reload) is redirected to `/` instead of seeing the
+  login form again (onboarding spec's "Reload after successful onboarding"
+  scenario). Wired into `routes/index.tsx` around the `/onboarding` route.
+- **`src/features/onboarding/PoisonMark.tsx`** — the PoisonOS gold
+  poison-drop mascot, ported 1:1 (same `viewBox`, same path data, same
+  scale/pivot transform) from the native app's
+  `res/drawable/ic_poison_logo.xml` vector drawable to an inline SVG
+  component, so the web onboarding uses the *actual* brand asset rather
+  than a reinterpretation.
+- **`src/features/onboarding/OnboardingScreen.tsx`** + **`onboarding.css`** —
+  two-panel layout (brand left: mark + "PoisonFlix" title + the exact
+  tagline "Tu Netflix propio, en un solo lugar. Busca, pide y mira todo
+  desde aquí."; form right: near-black surface card with gold focus rings
+  and gold CTA button, per design.md §8's CSS variables), responsive
+  single-column stack under 860px. Loading state disables the form and
+  shows "Conectando…"; errors render in a `role="alert"` paragraph.
+
+### Deliberate deviation from the literal spec (disclosed, approved by this
+batch's task instructions)
+
+`specs/onboarding/spec.md`'s "Two-panel credential form" requirement says
+the form renders **four** fields (Jellyfin URL, Jellyseerr URL, username,
+password), mirroring the native app's absolute-IP model. This web app is
+**same-origin via the reverse proxy** instead: the backend base URLs are
+the fixed prefixes `/jellyfin`/`/jellyseerr` (`lib/http/client.ts`'s
+`BASE_URLS`, env-driven, design.md §3), not something a user can
+meaningfully type differently. Per this batch's explicit task instructions,
+the form was built with **only username + password as required, user-typed
+fields**; the two fixed prefixes are shown **read-only** under a
+"Configuración avanzada" `<details>` disclosure (collapsed by default) so
+the information is still visible/inspectable without demanding input the
+user can't act on. The auth *semantics* (both-or-nothing, discard-on-
+partial-failure, CORS-vs-401 distinction) are implemented exactly per spec
+— only the field count/requiredness deviates, and only because the
+same-origin architecture makes the other two fields structurally
+non-actionable. Flagged here as a spec/tasks.md follow-up: `spec.md`'s
+"Form fields present" scenario should be updated to describe 2 required +
+2 read-only-informational fields to match the same-origin design decided
+in design.md §3 ("Onboarding still captures the two server URLs... but in
+the same-origin model they are informational/validation-only").
+
+### Tests added (22 new, all passing)
+
+- `src/lib/domain/onboardingAuth.test.ts` (3 tests) — happy path builds the
+  session from the Jellyfin response; Jellyfin failure stops before any
+  Jellyseerr call; Jellyfin success + Jellyseerr failure throws
+  `OnboardingAuthError('jellyseerr', ...)` without returning a session.
+- `src/features/onboarding/errorMessage.test.ts` (5 tests) — NetworkError/
+  CorsError -> proxy message per backend; ApiError(401) -> distinct
+  credentials messages per backend; non-auth error -> generic fallback.
+- `src/features/onboarding/OnboardingScreen.test.tsx` (6 tests) — happy path
+  persists the session and navigates to `/`; Jellyfin-401 shows an alert
+  and never calls Jellyseerr; Jellyfin-success/Jellyseerr-401 shows a
+  Jellyseerr-specific alert and persists nothing; NetworkError shows a
+  proxy-flavored message distinct from a credentials message; empty-field
+  submit is rejected client-side without calling either backend; the
+  advanced disclosure renders the fixed `/jellyfin`/`/jellyseerr` prefixes.
+- `src/auth/RouteGuard.test.tsx` (3 tests) — unauthenticated user on `/` is
+  redirected to `/onboarding`; a session hydrated into localStorage before
+  render redirects an `/onboarding` visit to `/` (reload-persists-session);
+  a hydrated session lets a protected route render directly.
+- `src/App.test.tsx` — updated its Slice-0 smoke assertion (the old
+  "onboarding screen placeholder" text no longer exists) to check for the
+  "PoisonFlix" heading instead.
+
+**Test infra note:** `createMemoryRouter` + `RouterProvider` (react-router
+v6's *data* router) triggers `<Navigate>` redirects through an internal
+fetch-like path that isn't jsdom-safe under vitest (`TypeError: RequestInit:
+Expected signal ("AbortSignal {}") to be an instance of AbortSignal` —
+undici/jsdom realm mismatch). This is exactly the gap `App.test.tsx`'s
+Slice-0 comment flagged as deferred to Slice 3. Fixed by switching
+`RouteGuard.test.tsx` and `OnboardingScreen.test.tsx` to plain `<MemoryRouter>`
++ `useRoutes(routes)` (non-data-router API) instead of
+`createMemoryRouter`/`RouterProvider` — renders the identical `RouteObject[]`
+tree, but navigation (including `<Navigate>` redirects and `useNavigate()`
+after login) runs synchronously without touching fetch/AbortSignal at all.
+No polyfill needed; App.test.tsx itself was left on the data router since it
+never exercises a redirect.
+
+Added `@testing-library/user-event` as a new devDependency (was missing;
+needed for realistic `type`/`click` simulation in the component tests).
+
+### Verification results
+
+- `npx tsc -b` — clean, no type errors.
+- `npm run build` (`tsc -b && vite build`) — succeeded, 111 modules, no
+  warnings beyond Vite's normal output.
+- `npm test` (`vitest run`) — **76/76 passed** across 13 test files (22 new
+  for Slice 3).
+- `npx oxlint` — same 2 pre-existing warnings as Slices 1-2 (vite.config.ts
+  triple-slash-reference; `AuthContext.tsx`'s `only-export-components` for
+  exporting both `AuthProvider` and `useAuthContext` from one file — present
+  in the file since Slice 0, confirmed via `git stash` diff), **0 new
+  warnings**.
+
+### Live browser validation (agent-browser, MANDATORY per task instructions)
+
+Ran the real dev server (`npm run dev`, Vite proxying `/jellyfin` ->
+`localhost:8096` and `/jellyseerr` -> `localhost:5055` per `vite.config.ts`,
+both containers confirmed healthy beforehand: `docker ps` showed
+`jellyfin-ts` healthy and `jellyseerr` up) and drove it with the
+`agent-browser` CLI (headless, `--args "--no-sandbox"`):
+
+1. `agent-browser open http://localhost:5173/` -> redirected to
+   `/onboarding` (unauthenticated, `RouteGuard` working as designed).
+2. Screenshot confirmed the two-panel layout, gold poison-drop mark, gold
+   "PoisonFlix" title, tagline, and the dark near-black surface card — the
+   intended aesthetic reads correctly in a real rendered browser, not just
+   in source.
+3. `snapshot -i` found the real form controls (`Usuario`, `Contraseña`,
+   `Conectar` button) by accessible role/label — confirms the form is
+   properly labeled, not just visually laid out.
+4. Filled `perroenvenenado` / `pass1234`, clicked `Conectar`, waited for
+   network-idle.
+5. **Result: real end-to-end login succeeded.** `get url` -> `http://
+   localhost:5173/` (left `/onboarding`, landed on Home). Snapshot showed
+   the real `HomeScreen` placeholder heading. `localStorage.getItem
+   ('poisonflix:session')` returned a genuine persisted session with a
+   **real Jellyfin access token** (`f776c6d4...`), **real Jellyfin userId**
+   (`c42d0321...`), and **real ServerId** (`7064f6ef...`) — not mocked
+   data, actual values Jellyfin returned to the live `authenticateByName`
+   call, plus `jellyseerrCookiePresent: true` confirming the Jellyseerr
+   phase also succeeded (its `connect.sid` cookie replayed automatically
+   per the same-origin `credentials: 'include'` design).
+6. Re-opened `http://localhost:5173/` in the same session (session still
+   in localStorage) -> landed directly on `/` again, no bounce to
+   `/onboarding` — confirms `PublicOnlyRoute`/hydration-on-boot correctly
+   implements "reload persists session".
+7. `agent-browser close --all` + killed the dev server afterward. No
+   throwaway routes/scripts were committed; the screenshots live in the
+   session scratchpad, not the repo.
+
+**Verdict: real dual-backend authentication works end-to-end in a live
+browser against the live containers**, not just in mocked unit/component
+tests.
+
+### Next up
+
+Slice 4 (Home: `useLibraryRow`, `useTrendingRow`, `Row`, `PosterCard`,
+`StatusBadge`, `HomeScreen` mounting exactly Library + Trending with row
+isolation) is next, per tasks.md. Onboarding now gates every protected
+route correctly and a real session persists across reload, so Slice 4 can
+build directly against `useAuth()`'s hydrated session/userId without any
+further auth plumbing.
