@@ -1,8 +1,8 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { authenticateBothBackends, type OnboardingCredentials } from '../lib/domain/onboardingAuth';
 import { getOrCreateDeviceId } from '../lib/session/deviceId';
-import { clearSession, getSession, setSession as persistSession, type StoredSession } from '../lib/session/store';
+import { clearSession, getSession, setSession as persistSession, subscribeSession, type StoredSession } from '../lib/session/store';
 
 // design.md §5 - Session store + AuthContext. Session shape is exactly the
 // persisted shape (StoredSession); there is no separate in-memory model.
@@ -25,6 +25,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // persists across reload).
   const [session, setSessionState] = useState<Session | null>(() => getSession());
   const queryClient = useQueryClient();
+
+  // React to session writes/clears that happen outside login()/logout() - most
+  // importantly the http client calling clearSession() on a 401. Without this,
+  // localStorage would be cleared but this state would keep the stale session,
+  // so RouteGuard wouldn't bounce to onboarding until the next mount.
+  useEffect(() => {
+    return subscribeSession((next) => {
+      setSessionState(next);
+      if (!next) queryClient.clear();
+    });
+  }, [queryClient]);
 
   const login = async (credentials: OnboardingCredentials) => {
     const deviceId = getOrCreateDeviceId();

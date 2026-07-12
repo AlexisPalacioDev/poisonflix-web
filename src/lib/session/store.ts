@@ -7,6 +7,24 @@
 
 const STORAGE_KEY = 'poisonflix:session';
 
+// Subscribers notified whenever the session is written or cleared. This is what
+// lets AuthContext react to a session cleared OUT OF BAND - e.g. the http client
+// clearing it on a 401 mid-session - so the route guard bounces to onboarding
+// immediately instead of only on the next mount.
+type SessionListener = (session: StoredSession | null) => void;
+const listeners = new Set<SessionListener>();
+
+export function subscribeSession(listener: SessionListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function notify(session: StoredSession | null): void {
+  for (const listener of listeners) listener(session);
+}
+
 export interface StoredSession {
   jellyfinToken: string;
   jellyfinUserId: string;
@@ -29,8 +47,10 @@ export function getSession(): StoredSession | null {
 
 export function setSession(session: StoredSession): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  notify(session);
 }
 
 export function clearSession(): void {
   localStorage.removeItem(STORAGE_KEY);
+  notify(null);
 }

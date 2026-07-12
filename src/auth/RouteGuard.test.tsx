@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter, useRoutes } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { routes } from '../routes';
@@ -54,5 +54,20 @@ describe('RouteGuard / PublicOnlyRoute', () => {
     renderAt('/');
 
     expect(screen.queryByLabelText(/usuario/i)).not.toBeInTheDocument();
+  });
+
+  it('reactively bounces to /onboarding when the session is cleared mid-session (401 path)', async () => {
+    setSession({ jellyfinToken: 'tok', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    renderAt('/');
+    // Authenticated: the onboarding form is not shown.
+    expect(screen.queryByLabelText(/usuario/i)).not.toBeInTheDocument();
+
+    // The http client clears the session out of band on a 401. The guard must
+    // redirect WITHOUT waiting for a remount (the bug this fix closes).
+    act(() => {
+      clearSession();
+    });
+
+    expect(await screen.findByRole('heading', { name: /poisonflix/i })).toBeInTheDocument();
   });
 });
