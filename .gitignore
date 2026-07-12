@@ -14,6 +14,10 @@ dev-dist
 coverage
 *.local
 
+# Build output served by the Caddy proxy (infra/). Regenerated from `dist/`,
+# so it's ignored just like dist/ — see infra/docker-compose.yml for how to populate it.
+infra/www/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
