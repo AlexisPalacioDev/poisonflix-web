@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getItem, getPlaybackInfo } from '../api/jellyfin';
 import { createBrowserDeviceProfile } from '../lib/domain/deviceProfile';
+import { displayTitle } from '../lib/domain/displayTitle';
 import { resolvePlayback, resumePositionMs, type ResolvedStream } from '../lib/domain/streamResolver';
 import { queryKeys } from './queryKeys';
 import { useAuth } from './useAuth';
@@ -46,7 +47,7 @@ export function usePlaybackInfo(itemId: string) {
       return {
         resolved: resolvePlayback(itemId, playbackInfo, token),
         resumeSeconds: resumePositionMs(item.UserData?.PlaybackPositionTicks) / 1000,
-        title: item.Name,
+        title: displayTitle(item.Name),
       };
     },
     enabled: Boolean(itemId && userId && token),
