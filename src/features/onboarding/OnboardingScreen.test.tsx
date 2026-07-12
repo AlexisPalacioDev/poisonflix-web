@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useRoutes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -61,7 +61,11 @@ describe('OnboardingScreen', () => {
     renderOnboarding();
     await fillAndSubmit(user);
 
-    expect(await screen.findByRole('heading', { name: /^home$/i })).toBeInTheDocument();
+    // Home is a real screen as of Slice 4 (Library + Trending rows, no
+    // "Home" placeholder heading anymore) - assert the onboarding form is
+    // gone instead of a heading text that no longer exists, same pattern as
+    // RouteGuard.test.tsx's guard-redirect assertions.
+    await waitFor(() => expect(screen.queryByLabelText(/usuario/i)).not.toBeInTheDocument());
     expect(getSession()).toEqual({
       jellyfinToken: 'token-abc',
       jellyfinUserId: 'user-1',

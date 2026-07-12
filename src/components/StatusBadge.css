@@ -1,0 +1,31 @@
+/* StatusBadge colors map straight off theme.css tokens (design.md §8):
+   InLibrary -> available/green, Requesting -> gold, Requestable -> neutral
+   outline. */
+
+.pf-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  backdrop-filter: blur(2px);
+}
+
+.pf-status-badge--in-library {
+  background: rgba(140, 255, 90, 0.16);
+  color: var(--pf-available);
+  border: 1px solid var(--pf-available);
+}
+
+.pf-status-badge--requesting {
+  background: rgba(242, 193, 78, 0.16);
+  color: var(--pf-gold);
+  border: 1px solid var(--pf-gold);
+}
+
+.pf-status-badge--requestable {
+  background: rgba(237, 239, 242, 0.08);
+  color: var(--pf-text-dim);
+  border: 1px solid var(--pf-text-dim);
+}

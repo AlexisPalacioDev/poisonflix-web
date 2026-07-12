@@ -1,0 +1,66 @@
+/* Row - horizontal rail with row-scoped loading/error/retry state (home
+   spec: row isolation). Scrolls independently on both wide (TV/desktop) and
+   narrow (mobile) viewports. */
+
+.pf-row {
+  margin: 0 0 32px;
+}
+
+.pf-row__title {
+  margin: 0 0 12px;
+  padding: 0 24px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+
+.pf-row__status {
+  margin: 0;
+  padding: 0 24px;
+  color: var(--pf-text-dim);
+  font-size: 0.9rem;
+}
+
+.pf-row__status--error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--pf-danger);
+}
+
+.pf-row__retry {
+  background: transparent;
+  border: 1px solid var(--pf-danger);
+  color: var(--pf-danger);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.pf-row__retry:hover,
+.pf-row__retry:focus-visible {
+  background: rgba(229, 72, 77, 0.12);
+}
+
+.pf-row__track {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 4px 24px 12px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+
+.pf-row__track > * {
+  scroll-snap-align: start;
+}
+
+@media (max-width: 640px) {
+  .pf-row__title,
+  .pf-row__status,
+  .pf-row__track {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

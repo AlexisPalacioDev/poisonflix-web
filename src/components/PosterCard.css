@@ -1,0 +1,83 @@
+/* PosterCard - reusable focus-friendly poster primitive (Home now, Search
+   later). Gold focus/hover ring per design.md §8's theme tokens. */
+
+.pf-poster-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 150px;
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.pf-poster-card__art {
+  position: relative;
+  width: 150px;
+  height: 225px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--pf-surface);
+  border: 2px solid transparent;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.pf-poster-card__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pf-poster-card__placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--pf-text-dim);
+}
+
+.pf-poster-card:hover .pf-poster-card__art,
+.pf-poster-card:focus-visible .pf-poster-card__art {
+  border-color: var(--pf-gold);
+  transform: scale(1.03);
+}
+
+.pf-poster-card:focus-visible {
+  outline: none;
+}
+
+.pf-poster-card__badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+}
+
+.pf-poster-card__title {
+  font-size: 0.8125rem;
+  color: var(--pf-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .pf-poster-card,
+  .pf-poster-card__art {
+    width: 108px;
+  }
+
+  .pf-poster-card__art {
+    height: 162px;
+  }
+}

@@ -452,7 +452,7 @@ both containers confirmed healthy beforehand: `docker ps` showed
 browser against the live containers**, not just in mocked unit/component
 tests.
 
-### Next up
+### Next up (superseded — see Slice 4 section below)
 
 Slice 4 (Home: `useLibraryRow`, `useTrendingRow`, `Row`, `PosterCard`,
 `StatusBadge`, `HomeScreen` mounting exactly Library + Trending with row
@@ -460,3 +460,89 @@ isolation) is next, per tasks.md. Onboarding now gates every protected
 route correctly and a real session persists across reload, so Slice 4 can
 build directly against `useAuth()`'s hydrated session/userId without any
 further auth plumbing.
+
+## Slice 4: Home — COMPLETE
+
+Implemented tasks 4.1-4.6 (see tasks.md). MVP row set only: Library +
+Trending, per the home spec's Deferred section (Continue Watching,
+Downloading, genre rows, +18 PIN all intentionally NOT built).
+
+### Files created
+
+| File | What |
+|---|---|
+| `src/hooks/useLibraryRow.ts` | `useQuery` wrapping `getItems(userId, {includeItemTypes:'Movie', recursive:true, limit:40})`, key `queryKeys.library(userId, params)`, `enabled` gated on a hydrated `session.jellyfinUserId` (never fires pre-login), `staleTime` 60s / `gcTime` 5min per design.md §4.2. |
+| `src/hooks/useTrendingRow.ts` | `useQuery` wrapping `discoverTrending()`, key `queryKeys.trending()`. Deliberately no `enabled` gate — Jellyseerr's trending call needs only the same-origin cookie, not a userId — and no dependency on the Library query, satisfying ADR-3's "independent `useQuery` per row" literally (not just in spirit). |
+| `src/lib/domain/posterUrl.ts` | Pure poster-URL builders: `jellyfinPosterUrl(item, token, maxWidth=400)` builds an authenticated `Items/{id}/Images/Primary?tag=...&api_key=...` URL (same query-string auth pattern already validated live for DirectPlay in Slice 2), returns `null` when the item has no `ImageTags.Primary`; `tmdbPosterUrl(posterPath)` resolves a Jellyseerr/TMDB-relative path against `image.tmdb.org/t/p/w342`, `null` when absent. |
+| `src/components/Row.tsx` + `Row.css` | Generic reusable horizontal-rail primitive (`title`, `items`, `isLoading`, `isError`, `onRetry`, `renderItem`, `emptyMessage`). This is the component that makes ADR-3's row isolation visible in the UI — each `<Row>` instance only ever renders its own loading/error/empty/success state, never a screen-wide one. Rendered as `<section aria-label={title}>` so each row is an accessible, independently-queryable `region` (used directly by the row-isolation tests). Horizontal scroll via `overflow-x:auto` + `scroll-snap-type:x proximity`, works on both wide and narrow viewports (confirmed live, see below). |
+| `src/components/PosterCard.tsx` + `PosterCard.css` | Reusable poster primitive — plain `PosterItem {id, title, imageUrl, badge?}` prop shape (API-agnostic; callers map their own Jellyfin/Jellyseerr data into it), so Search (Slice 5) can reuse it unchanged for its results carousel per the task's explicit instruction. Rendered as a native `<button>` (real tab order + Enter/Space activation out of the box, ADR-6 — ) that calls `navigate('/detail/'+item.id)` on click; a placeholder letter renders when `imageUrl` is `null`. Gold focus/hover ring on `:focus-visible`/`:hover` per theme.css tokens. |
+| `src/components/StatusBadge.tsx` + `StatusBadge.css` | Built per tasks.md 4.4 as a standalone reusable primitive (`variant: 'in-library'\|'requesting'\|'requestable'`, colors mapped straight off theme.css). **Deliberately NOT wired into Home's MVP rows** — the InLibrary/Requesting/Requestable *join* is `lib/domain/libraryIndex.ts` correlating a search result against library + Jellyseerr request state, which is Search's job per design.md §4.4 and tasks.md Slice 5, not Home's. Flagged here as an intentional scope boundary, not an oversight: the component exists and is ready for Search to consume via `PosterCard`'s optional `badge` prop. |
+| `src/components/Header.tsx` + `Header.css` | App header: reuses `PoisonMark` **imported directly from `features/onboarding/PoisonMark.tsx`** (no duplication, no modification to onboarding's own files) + "PoisonFlix" wordmark, plus a search icon `<Link to="/search">`. Search screen itself stays Slice 5's placeholder; this only wires the navigation target. |
+| `src/features/home/HomeScreen.tsx` (rewritten from the Slice 0 placeholder) + `home.css` | Mounts `<Header/>` + exactly two `<Row>`s ("Tu biblioteca" from `useLibraryRow`, "Tendencias" from `useTrendingRow"). `toLibraryPosterItem`/`toTrendingPosterItem` map each backend's item shape to the plain `PosterItem` the reusable components consume. **Flagged simplification**: a library item's card id is `ProviderIds.Tmdb ?? item.Id` (Detail's route param is a TMDB id per design.md §7); when a library item has no TMDB provider id, it falls back to the raw Jellyfin item id so the card stays clickable — Detail's real TMDB-based fetch is Slice 6 work, out of this slice's scope. Confirmed correct live (see below): clicking "The Matrix" navigated to `/detail/603`, TMDB's real id for The Matrix. |
+
+### Test files created (Vitest)
+
+- `src/lib/domain/posterUrl.test.ts` (5 tests) — null on missing `ImageTags.Primary`/empty object, correct `Items/{id}/Images/Primary` path + `tag`/`api_key`/`maxWidth` query params, `api_key` omitted when no token, TMDB path resolution + null-on-absent.
+- `src/components/PosterCard.test.tsx` (3 tests) — click navigates to `/detail/:id` (task: "clicking a poster navigates to /detail/:id"); Tab-focus + Enter activates the same navigation (ADR-6: real focus, no mouse-only handlers); placeholder letter renders with no `imageUrl`.
+- `src/features/home/HomeScreen.test.tsx` (3 tests, the task's required row-isolation coverage) — both rows render their real mapped items and are exposed as named `region`s; **Trending fails → Library still renders its items** (row-scoped error + retry button in the Trending region only); **Library fails → Trending still renders its items** (row-scoped error + retry button in the Library region only). Uses a `QueryClient` with `retry:false` for deterministic, fast failure assertions.
+
+### Existing test updated (flagged, not silent)
+
+`src/features/onboarding/OnboardingScreen.test.tsx`'s happy-path test previously asserted `findByRole('heading', {name: /^home$/i})` against the Slice 0 `<h1>Home</h1>` placeholder, which no longer exists now that HomeScreen is a real screen. Changed to `waitFor(() => expect(screen.queryByLabelText(/usuario/i)).not.toBeInTheDocument())` — same pattern already used by `RouteGuard.test.tsx`'s guard-redirect assertions — so the test asserts "left the onboarding form" rather than a heading string tied to a placeholder that was always going to disappear.
+
+### Verification results
+
+- `npm run build` (`tsc -b && vite build`) — succeeded, no type errors, 123 modules.
+- `npm test` (`vitest run`) — **87/87 passed** across 16 test files (11 new for Slice 4, 1 pre-existing test updated).
+- `npx oxlint` — same 2 pre-existing warnings as Slices 0-3 (vite.config.ts triple-slash-reference; `AuthContext.tsx`'s `only-export-components`), **0 new warnings**.
+
+### Live browser validation (agent-browser, MANDATORY per task instructions) — BOTH ROWS POPULATED WITH REAL DATA
+
+Ran the real dev server (`npm run dev`) against the live containers (`jellyfin`
+healthy, `jellyseerr` up, `poisonflix-proxy` up — confirmed via `docker ps`
+beforehand) and drove it with `agent-browser` (headless, `--args
+"--no-sandbox"`):
+
+1. Opened `http://localhost:5173/` → redirected to `/onboarding`
+   (unauthenticated, `RouteGuard` still working from Slice 3).
+2. Filled `perroenvenenado`/`pass1234`, clicked `Conectar` → landed on `/`
+   (real Home, not a placeholder).
+3. Screenshot + accessibility snapshot confirmed:
+   - **Library row ("Tu biblioteca") populated with real library movies**:
+     "GalaxyRG265 - The.Matrix.1999.1080p.BluRay.DDP5.1.x265.10bit-GalaxyRG265"
+     (Jellyfin's own raw scene-release `Name` field — a library metadata
+     quality issue, not a bug in this code) and "La noche de los muertos
+     vivientes", both with real Jellyfin poster artwork rendered (the
+     `api_key`-authenticated `Items/{id}/Images/Primary` URL resolved
+     correctly).
+   - **Trending row ("Tendencias") populated with real TMDB trending
+     titles**: Obsesión, The Westies, The Furious, Moana, Evil Dead: En
+     llamas, Silo, El complejo de apartamentos, La Odisea, Backrooms: Sin
+     salida, Mushoku Tensei Jobless Reincarnation, El Pasajero Del Diablo,
+     Michael — all with real TMDB poster art, horizontally scrollable.
+   - Both rows exposed as accessible named `region`s (`Tu biblioteca`,
+     `Tendencias`), each poster a real focusable `button`.
+4. Clicked the header's search icon → navigated to `/search` (Slice 5's
+   placeholder, confirms the navigation wiring works even though the real
+   screen doesn't exist yet).
+5. Re-opened `/`, clicked the real "The Matrix" poster card → navigated to
+   **`/detail/603`** — TMDB's actual id for The Matrix, confirming
+   `ProviderIds.Tmdb` correlation resolved correctly against live data, not
+   just a fixture.
+6. `agent-browser close --all` + stopped the dev server afterward
+   (`curl` to `:5173` afterward returned no response, confirming a clean
+   stop). No throwaway routes/scripts were committed; screenshots live in
+   the session scratchpad, not the repo.
+
+**Verdict: both MVP rows render real, live backend data end-to-end in a real
+browser** — not just mocked component tests — and row isolation is now both
+unit-tested (mocked failures) and structurally visible in the real UI (two
+independent `region`s, two independent query states).
+
+### Next up
+
+Slice 5 (Search: `useDebouncedValue` already done in Slice 1, `dedup.ts`,
+`useSearch.ts`, `SearchScreen.tsx` reusing `Row`/`PosterCard` from this
+slice, `StatusBadge` wired via `libraryIndex.ts`'s join) is next, per
+tasks.md. The search route already exists and the header's search icon
+already links to it; Slice 5 replaces the placeholder with the real screen.

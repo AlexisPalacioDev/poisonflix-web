@@ -77,14 +77,14 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 - [x] 3.7 `src/auth/RouteGuard.tsx`: redirect unauthenticated users to `/onboarding`; **added `PublicOnlyRoute`** (inverse guard) so an already-authenticated user is redirected away from `/onboarding` to `/`; both wired into `routes/index.tsx`.
 - [x] 3.8 Tests: `lib/domain/onboardingAuth.test.ts` (both-or-nothing branches), `features/onboarding/errorMessage.test.ts` (error mapping), `features/onboarding/OnboardingScreen.test.tsx` (component-level happy/failure paths + advanced disclosure), `auth/RouteGuard.test.tsx` (route-guard redirect + reload-persists-session). 22 new tests, all passing.
 
-## Slice 4: Home
+## Slice 4: Home — COMPLETE
 
-- [ ] 4.1 `src/hooks/useLibraryRow.ts`: `useQuery` Jellyfin `getItems`, key `['jellyfin','library',userId,params]`.
-- [ ] 4.2 `src/hooks/useTrendingRow.ts`: `useQuery` Jellyseerr `discoverTrending`, key `['jellyseerr','trending']`.
-- [ ] 4.3 `src/components/Row.tsx`: row-scoped loading/error/retry state.
-- [ ] 4.4 `src/components/PosterCard.tsx` + `src/components/StatusBadge.tsx` (focus-friendly primitives, Decision 3 seam).
-- [ ] 4.5 `src/features/home/HomeScreen.tsx`: mounts exactly Library + Trending rows.
-- [ ] 4.6 Test: mocked Trending failure leaves Library rendering normally, and vice versa (row isolation).
+- [x] 4.1 `src/hooks/useLibraryRow.ts`: `useQuery` Jellyfin `getItems`, key `['jellyfin','library',userId,params]`.
+- [x] 4.2 `src/hooks/useTrendingRow.ts`: `useQuery` Jellyseerr `discoverTrending`, key `['jellyseerr','trending']`.
+- [x] 4.3 `src/components/Row.tsx`: row-scoped loading/error/retry state.
+- [x] 4.4 `src/components/PosterCard.tsx` + `src/components/StatusBadge.tsx` (focus-friendly primitives, Decision 3 seam).
+- [x] 4.5 `src/features/home/HomeScreen.tsx`: mounts exactly Library + Trending rows.
+- [x] 4.6 Test: mocked Trending failure leaves Library rendering normally, and vice versa (row isolation).
 
 ## Slice 5: Search
 
