@@ -1,9 +1,62 @@
 :root {
+  /* --- Brand identity (do NOT change: PoisonFlix palette) --- */
   --pf-bg: #0a0c10; /* near-black background */
   --pf-surface: #12151b; /* elevated cards/rails */
+  --pf-surface-2: #191d26; /* raised controls / inputs on top of surface */
   --pf-gold: #f2c14e; /* primary accent / focus */
+  --pf-gold-dim: #d9a93c; /* pressed/hover gold */
   --pf-available: #8cff5a; /* toxic-green "available"/InLibrary */
   --pf-text: #edeff2;
   --pf-text-dim: #9aa3ad;
   --pf-danger: #e5484d;
+
+  /* --- Spacing scale (8pt-ish, plus fluid page gutter) --- */
+  --pf-space-2xs: 4px;
+  --pf-space-xs: 8px;
+  --pf-space-sm: 12px;
+  --pf-space-md: 16px;
+  --pf-space-lg: 24px;
+  --pf-space-xl: 40px;
+  --pf-space-2xl: 64px;
+  /* Horizontal page gutter grows on wide desktop / TV so rows breathe and
+     content doesn't clump against the left edge on ultra-wide screens. */
+  --pf-gutter: clamp(16px, 4.5vw, 60px);
+
+  /* --- Radii --- */
+  --pf-radius-sm: 8px;
+  --pf-radius-md: 12px;
+  --pf-radius-lg: 16px;
+  --pf-radius-xl: 24px;
+  --pf-radius-pill: 999px;
+
+  /* --- Elevation --- */
+  --pf-shadow-card: 0 6px 18px rgba(0, 0, 0, 0.38);
+  --pf-shadow-card-hover: 0 18px 42px rgba(0, 0, 0, 0.6);
+  --pf-shadow-hero: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+  /* --- Chrome --- */
+  --pf-header-h: 68px;
+
+  /* --- Motion --- */
+  --pf-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --pf-dur-fast: 0.16s;
+  --pf-dur: 0.26s;
+
+  /* --- Focus ring (gold, brand-consistent) --- */
+  --pf-ring: 0 0 0 3px rgba(242, 193, 78, 0.75);
+
+  /* --- Gradients / scrims --- */
+  --pf-scrim-bottom: linear-gradient(
+    to top,
+    var(--pf-bg) 0%,
+    rgba(10, 12, 16, 0.85) 22%,
+    rgba(10, 12, 16, 0.35) 55%,
+    rgba(10, 12, 16, 0) 100%
+  );
+  --pf-scrim-left: linear-gradient(
+    to right,
+    rgba(10, 12, 16, 0.92) 0%,
+    rgba(10, 12, 16, 0.6) 42%,
+    rgba(10, 12, 16, 0) 78%
+  );
 }

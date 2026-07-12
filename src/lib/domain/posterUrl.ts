@@ -33,6 +33,36 @@ export function jellyfinPosterUrl(
 }
 
 /**
+ * Builds a wide Jellyfin backdrop URL for the Home hero banner. Prefers the
+ * item's first `BackdropImageTags` entry (`Images/Backdrop/0`); when the
+ * library item has no backdrop, falls back to its primary poster so the hero
+ * still renders a real image rather than an empty gradient. Returns `null`
+ * only when the item carries neither. Same authenticated `api_key` query
+ * pattern as `jellyfinPosterUrl` (an `<img>` can't send an auth header).
+ */
+export function jellyfinBackdropUrl(
+  item: Pick<JellyfinItem, 'Id' | 'ImageTags' | 'BackdropImageTags'>,
+  token: string | null,
+  maxWidth = 1280,
+): string | null {
+  const backdropTag = item.BackdropImageTags?.[0];
+  if (backdropTag) {
+    const query = new URLSearchParams({ tag: backdropTag, maxWidth: String(maxWidth), quality: '85' });
+    if (token) query.set('api_key', token);
+    return `${JELLYFIN_BASE}/Items/${item.Id}/Images/Backdrop/0?${query.toString()}`;
+  }
+
+  const primaryTag = item.ImageTags?.Primary;
+  if (primaryTag) {
+    const query = new URLSearchParams({ tag: primaryTag, maxWidth: String(maxWidth), quality: '85' });
+    if (token) query.set('api_key', token);
+    return `${JELLYFIN_BASE}/Items/${item.Id}/Images/Primary?${query.toString()}`;
+  }
+
+  return null;
+}
+
+/**
  * Resolves a Jellyseerr/TMDB `posterPath` (e.g. `/abc123.jpg`) against
  * TMDB's public image CDN, or `null` when absent. `size` defaults to the
  * carousel-friendly `w342`; Search's big preview panel requests the wider

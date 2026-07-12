@@ -20,8 +20,105 @@ body {
     'Segoe UI',
     Roboto,
     sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  /* Establish a full-height flow so screens can fill the viewport and never
+     leave a bare black void below short content. */
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 a {
   color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+/* Consistent, brand-gold keyboard focus for every interactive primitive. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--pf-ring);
+  border-radius: var(--pf-radius-sm);
+}
+
+/* Thin, subtle scrollbars (rows restyle this further). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(154, 163, 173, 0.35) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(154, 163, 173, 0.28);
+  border-radius: var(--pf-radius-pill);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(154, 163, 173, 0.5);
+}
+
+/* Loading skeletons: a calm shimmer, not a bare spinner. */
+.pf-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--pf-surface);
+  border-radius: var(--pf-radius-md);
+}
+
+.pf-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 45%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.06) 55%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: pf-shimmer 1.4s var(--pf-ease) infinite;
+}
+
+@keyframes pf-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

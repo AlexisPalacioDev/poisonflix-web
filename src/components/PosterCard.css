@@ -1,11 +1,12 @@
-/* PosterCard - reusable focus-friendly poster primitive (Home now, Search
-   later). Gold focus/hover ring per design.md §8's theme tokens. */
+/* PosterCard - reusable focus-friendly poster primitive (Home + Search).
+   Larger, rounded artwork with a gold focus/hover ring, smooth scale-up and
+   a slight lift (visual redesign). */
 
 .pf-poster-card {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 150px;
+  width: 168px;
   flex: 0 0 auto;
   background: transparent;
   border: none;
@@ -18,15 +19,18 @@
 
 .pf-poster-card__art {
   position: relative;
-  width: 150px;
-  height: 225px;
-  border-radius: 12px;
+  width: 168px;
+  height: 252px;
+  border-radius: var(--pf-radius-md);
   overflow: hidden;
   background: var(--pf-surface);
-  border: 2px solid transparent;
+  box-shadow: var(--pf-shadow-card);
+  outline: 2px solid transparent;
+  outline-offset: 0;
   transition:
-    border-color 0.15s ease,
-    transform 0.15s ease;
+    transform var(--pf-dur) var(--pf-ease),
+    box-shadow var(--pf-dur) var(--pf-ease),
+    outline-color var(--pf-dur-fast) var(--pf-ease);
 }
 
 .pf-poster-card__art img {
@@ -45,39 +49,51 @@
   font-size: 2.5rem;
   font-weight: 700;
   color: var(--pf-text-dim);
+  background: radial-gradient(120% 120% at 50% 0%, var(--pf-surface-2) 0%, var(--pf-surface) 70%);
 }
 
 .pf-poster-card:hover .pf-poster-card__art,
 .pf-poster-card:focus-visible .pf-poster-card__art {
-  border-color: var(--pf-gold);
-  transform: scale(1.03);
+  transform: translateY(-6px) scale(1.04);
+  box-shadow: var(--pf-shadow-card-hover);
+  outline-color: var(--pf-gold);
 }
 
+/* The gold ring lives on the artwork (outline above), so suppress the default
+   focus box-shadow on the button wrapper to avoid a double ring. */
 .pf-poster-card:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 
 .pf-poster-card__badge {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 8px;
+  left: 8px;
 }
 
 .pf-poster-card__title {
-  font-size: 0.8125rem;
-  color: var(--pf-text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--pf-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-poster-card:hover .pf-poster-card__title,
+.pf-poster-card:focus-visible .pf-poster-card__title {
+  color: var(--pf-text);
 }
 
 @media (max-width: 640px) {
   .pf-poster-card,
   .pf-poster-card__art {
-    width: 108px;
+    width: 128px;
   }
 
   .pf-poster-card__art {
-    height: 162px;
+    height: 192px;
   }
 }

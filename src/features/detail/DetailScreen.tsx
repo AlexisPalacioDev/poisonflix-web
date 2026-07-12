@@ -22,6 +22,13 @@ function parseYear(dateStr: string | null | undefined): number | null {
   return Number.isNaN(year) ? null : year;
 }
 
+function formatRuntime(minutes: number | null | undefined): string | null {
+  if (!minutes || minutes <= 0) return null;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
 interface DetailActionProps {
   status: TitleStatus;
   isRequesting: boolean;
@@ -132,6 +139,7 @@ export function DetailScreen() {
   }
 
   const year = parseYear(detail.releaseDate);
+  const runtime = formatRuntime(detail.runtime);
   const backdropUrl = tmdbPosterUrl(detail.backdropPath, 'w1280');
   const posterUrl = tmdbPosterUrl(detail.posterPath, 'w500');
 
@@ -162,8 +170,11 @@ export function DetailScreen() {
           <h1 className="pf-detail__title">{detail.title}</h1>
 
           <div className="pf-detail__meta">
+            {detail.voteAverage != null && (
+              <span className="pf-detail__rating">★ {detail.voteAverage.toFixed(1)}</span>
+            )}
             {year != null && <span>{year}</span>}
-            {detail.voteAverage != null && <span>★ {detail.voteAverage.toFixed(1)}</span>}
+            {runtime && <span>{runtime}</span>}
           </div>
 
           {detail.overview && <p className="pf-detail__overview">{detail.overview}</p>}

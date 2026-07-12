@@ -1,24 +1,24 @@
 /* Row - horizontal rail with row-scoped loading/error/retry state (home
-   spec: row isolation). Scrolls independently on both wide (TV/desktop) and
-   narrow (mobile) viewports. */
+   spec: row isolation). Styled section header, comfortable gaps, smooth
+   horizontal scroll with a thin scrollbar and soft fade edges. */
 
 .pf-row {
-  margin: 0 0 32px;
+  margin: 0;
 }
 
 .pf-row__title {
-  margin: 0 0 12px;
-  padding: 0 24px;
-  font-size: 1.125rem;
-  font-weight: 600;
+  margin: 0 0 14px;
+  padding: 0 var(--pf-gutter);
+  font-size: clamp(1.15rem, 1.6vw, 1.4rem);
+  font-weight: 700;
   color: var(--pf-text);
 }
 
 .pf-row__status {
   margin: 0;
-  padding: 0 24px;
+  padding: 0 var(--pf-gutter);
   color: var(--pf-text-dim);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .pf-row__status--error {
@@ -32,35 +32,68 @@
   background: transparent;
   border: 1px solid var(--pf-danger);
   color: var(--pf-danger);
-  border-radius: 8px;
-  padding: 4px 10px;
-  font-size: 0.8125rem;
+  border-radius: var(--pf-radius-sm);
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
   cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease);
 }
 
 .pf-row__retry:hover,
 .pf-row__retry:focus-visible {
-  background: rgba(229, 72, 77, 0.12);
+  background: rgba(229, 72, 77, 0.14);
 }
 
 .pf-row__track {
   display: flex;
-  gap: 14px;
+  gap: 18px;
   overflow-x: auto;
-  padding: 4px 24px 12px;
+  padding: 6px var(--pf-gutter) 18px;
   scroll-snap-type: x proximity;
-  scrollbar-width: thin;
+  scroll-behavior: smooth;
+  /* Soft fade at the left/right edges so cards dissolve into the page rather
+     than getting hard-cut at the gutter. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 calc(var(--pf-gutter) * 0.7),
+    #000 calc(100% - var(--pf-gutter) * 0.7),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 calc(var(--pf-gutter) * 0.7),
+    #000 calc(100% - var(--pf-gutter) * 0.7),
+    transparent 100%
+  );
 }
 
 .pf-row__track > * {
   scroll-snap-align: start;
 }
 
+.pf-row__skeleton-card {
+  flex: 0 0 auto;
+  width: 168px;
+  height: 252px;
+  border-radius: var(--pf-radius-md);
+}
+
 @media (max-width: 640px) {
   .pf-row__title,
-  .pf-row__status,
+  .pf-row__status {
+    padding-left: var(--pf-gutter);
+    padding-right: var(--pf-gutter);
+  }
+
   .pf-row__track {
-    padding-left: 16px;
-    padding-right: 16px;
+    gap: 12px;
+  }
+
+  .pf-row__skeleton-card {
+    width: 128px;
+    height: 192px;
   }
 }

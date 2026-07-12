@@ -1,28 +1,33 @@
 import { Header } from '../../components/Header';
+import { Hero, HeroSkeleton, type HeroFeature } from '../../components/Hero';
 import { PosterCard, type PosterItem } from '../../components/PosterCard';
 import { Row } from '../../components/Row';
 import { useLibraryRow } from '../../hooks/useLibraryRow';
 import { useTrendingRow } from '../../hooks/useTrendingRow';
 import { useAuth } from '../../hooks/useAuth';
-import { jellyfinPosterUrl, tmdbPosterUrl } from '../../lib/domain/posterUrl';
+import { displayTitle } from '../../lib/domain/displayTitle';
+import { jellyfinBackdropUrl, jellyfinPosterUrl, tmdbPosterUrl } from '../../lib/domain/posterUrl';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
 import './home.css';
 
-// Home screen (home spec's "Fixed MVP row set"): mounts EXACTLY the Library
-// and Trending rows via two independent useQuery hooks (ADR-3). Deferred:
-// Continue Watching, Downloading, genre rows, +18 PIN - see tasks.md Slice 4
-// and the home spec's Deferred section.
+// Home screen (home spec's "Fixed MVP row set"): a featured hero banner on top
+// of EXACTLY the Library and Trending rows, each fed by an independent useQuery
+// hook (ADR-3). Deferred: Continue Watching, Downloading, genre rows, +18 PIN.
+
+function parseYear(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const year = Number.parseInt(dateStr.slice(0, 4), 10);
+  return Number.isNaN(year) ? null : year;
+}
 
 function toLibraryPosterItem(item: JellyfinItem, token: string | null): PosterItem {
   return {
     // Detail's route param is a TMDB id (design.md §7). A library item
     // normally carries one via ProviderIds.Tmdb; when it doesn't, fall back
-    // to the Jellyfin item id so the card is still clickable - Detail's real
-    // TMDB-based fetch is Slice 6 work, out of this slice's scope, so this
-    // fallback is a flagged simplification, not a silent gap.
+    // to the Jellyfin item id so the card is still clickable.
     id: item.ProviderIds?.Tmdb ?? item.Id,
-    title: item.Name,
+    title: displayTitle(item.Name),
     imageUrl: jellyfinPosterUrl(item, token),
   };
 }
@@ -35,44 +40,125 @@ function toTrendingPosterItem(result: JellyseerrSearchResult): PosterItem {
   };
 }
 
+// --- Featured-title selection for the hero ---------------------------------
+// The hero is presentational; Home decides WHICH already-fetched title to
+// feature. Preference order maximises both "looks premium" (a real backdrop)
+// and "the primary action actually works" (a playable library item):
+//   1. a library item with artwork  -> playable + real Jellyfin backdrop
+//   2. a trending item with artwork  -> rich TMDB backdrop, detail-only
+//   3. any library item              -> playable, gradient fallback
+//   4. any trending item             -> detail-only, gradient fallback
+// The chosen title is then excluded from the row it came from so it never
+// appears twice on screen (Netflix-style spotlight).
+interface Featured {
+  feature: HeroFeature;
+  libraryId?: string;
+  trendingId?: number;
+}
+
+function libraryFeature(item: JellyfinItem, token: string | null): Featured {
+  return {
+    libraryId: item.Id,
+    feature: {
+      title: displayTitle(item.Name),
+      overview: item.Overview ?? null,
+      backdropUrl: jellyfinBackdropUrl(item, token),
+      year: item.ProductionYear ?? parseYear(item.PremiereDate),
+      rating: item.CommunityRating ?? null,
+      detailTo: `/detail/${item.ProviderIds?.Tmdb ?? item.Id}`,
+      playTo: `/player/${item.Id}`,
+    },
+  };
+}
+
+function trendingFeature(result: JellyseerrSearchResult): Featured {
+  return {
+    trendingId: result.id,
+    feature: {
+      title: result.title ?? result.name ?? 'Sin título',
+      overview: result.overview ?? null,
+      backdropUrl: tmdbPosterUrl(result.backdropPath, 'w1280'),
+      year: parseYear(result.releaseDate ?? result.firstAirDate),
+      rating: result.voteAverage ?? null,
+      detailTo: `/detail/${result.id}`,
+      playTo: null,
+    },
+  };
+}
+
+function pickFeatured(
+  libraryItems: JellyfinItem[],
+  trendingItems: JellyseerrSearchResult[],
+  token: string | null,
+): Featured | null {
+  const libWithArt = libraryItems.find(
+    (item) => Boolean(item.ImageTags?.Primary) || (item.BackdropImageTags?.length ?? 0) > 0,
+  );
+  if (libWithArt) return libraryFeature(libWithArt, token);
+
+  const trendWithArt = trendingItems.find((result) => Boolean(result.backdropPath));
+  if (trendWithArt) return trendingFeature(trendWithArt);
+
+  if (libraryItems[0]) return libraryFeature(libraryItems[0], token);
+  if (trendingItems[0]) return trendingFeature(trendingItems[0]);
+  return null;
+}
+
 export function HomeScreen() {
   const { session } = useAuth();
+  const token = session?.jellyfinToken ?? null;
   const library = useLibraryRow();
   const trending = useTrendingRow();
 
-  const libraryItems = (library.data?.Items ?? []).map((item) =>
-    toLibraryPosterItem(item, session?.jellyfinToken ?? null),
-  );
-
+  const libraryItemsRaw = library.data?.Items ?? [];
   // Trending mixes movie/tv/person results; Home only shows titles a poster
   // + Detail route make sense for.
-  const trendingItems = (trending.data?.results ?? [])
-    .filter((result) => result.mediaType === 'movie' || result.mediaType === 'tv')
+  const trendingItemsRaw = (trending.data?.results ?? []).filter(
+    (result) => result.mediaType === 'movie' || result.mediaType === 'tv',
+  );
+
+  const featured = pickFeatured(libraryItemsRaw, trendingItemsRaw, token);
+
+  // Exclude the featured title from its source row so it never renders twice.
+  const libraryItems = libraryItemsRaw
+    .filter((item) => item.Id !== featured?.libraryId)
+    .map((item) => toLibraryPosterItem(item, token));
+
+  const trendingItems = trendingItemsRaw
+    .filter((result) => result.id !== featured?.trendingId)
     .map(toTrendingPosterItem);
+
+  // Only feature once both rows have settled, so the hero doesn't flip titles
+  // as the two independent queries resolve at different times.
+  const heroSettled = !library.isLoading && !trending.isLoading;
 
   return (
     <main className="pf-home">
       <Header />
 
-      <Row
-        title="Tu biblioteca"
-        items={library.isSuccess ? libraryItems : undefined}
-        isLoading={library.isLoading}
-        isError={library.isError}
-        onRetry={() => library.refetch()}
-        renderItem={(item) => <PosterCard key={item.id} item={item} />}
-        emptyMessage="Todavía no hay películas en tu biblioteca."
-      />
+      {heroSettled && featured ? <Hero feature={featured.feature} /> : <HeroSkeleton />}
 
-      <Row
-        title="Tendencias"
-        items={trending.isSuccess ? trendingItems : undefined}
-        isLoading={trending.isLoading}
-        isError={trending.isError}
-        onRetry={() => trending.refetch()}
-        renderItem={(item) => <PosterCard key={item.id} item={item} />}
-        emptyMessage="No hay tendencias para mostrar ahora mismo."
-      />
+      <div className="pf-home__rows">
+        <Row
+          title="Tu biblioteca"
+          items={library.isSuccess ? libraryItems : undefined}
+          isLoading={library.isLoading}
+          isError={library.isError}
+          onRetry={() => library.refetch()}
+          renderItem={(item) => <PosterCard key={item.id} item={item} />}
+          emptyMessage="Todavía no hay películas en tu biblioteca."
+        />
+
+        <Row
+          title="Tendencias"
+          items={trending.isSuccess ? trendingItems : undefined}
+          isLoading={trending.isLoading}
+          isError={trending.isError}
+          onRetry={() => trending.refetch()}
+          renderItem={(item) => <PosterCard key={item.id} item={item} />}
+          emptyMessage="No hay tendencias para mostrar ahora mismo."
+        />
+      </div>
     </main>
   );
 }

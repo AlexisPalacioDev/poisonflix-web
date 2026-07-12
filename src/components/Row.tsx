@@ -22,7 +22,13 @@ export function Row<T>({ title, items, isLoading, isError, onRetry, renderItem, 
     <section className="pf-row" aria-label={title}>
       <h2 className="pf-row__title">{title}</h2>
 
-      {isLoading && <p className="pf-row__status">Cargando…</p>}
+      {isLoading && (
+        <div className="pf-row__track pf-row__track--skeleton" aria-hidden="true">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="pf-skeleton pf-row__skeleton-card" />
+          ))}
+        </div>
+      )}
 
       {isError && (
         <div className="pf-row__status pf-row__status--error" role="alert">

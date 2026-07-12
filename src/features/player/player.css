@@ -12,10 +12,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: var(--pf-space-md);
   color: var(--pf-text);
   text-align: center;
-  padding: 24px;
+  padding: var(--pf-space-lg);
 }
 
 .pf-player-screen__status--error {
@@ -23,11 +23,19 @@
 }
 
 .pf-player-screen__status button {
-  padding: 10px 24px;
-  border-radius: 999px;
+  padding: 11px 26px;
+  border-radius: var(--pf-radius-pill);
   border: 2px solid var(--pf-gold);
   background: transparent;
   color: var(--pf-gold);
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-player-screen__status button:hover {
+  background: rgba(242, 193, 78, 0.14);
+  transform: translateY(-1px);
 }

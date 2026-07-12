@@ -1,0 +1,200 @@
+/* Featured hero banner - full-bleed backdrop + gradient scrim that anchors
+   the top of Home and fills the viewport (kills the empty black void). */
+
+.pf-hero {
+  position: relative;
+  width: 100%;
+  min-height: min(82vh, 760px);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  /* Pull up under the fixed, transparent header so the backdrop bleeds to the
+     very top of the page. */
+  margin-top: 0;
+}
+
+.pf-hero__backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 18%;
+}
+
+.pf-hero__backdrop--fallback {
+  background:
+    radial-gradient(120% 100% at 80% 0%, rgba(242, 193, 78, 0.22) 0%, transparent 55%),
+    radial-gradient(120% 120% at 0% 100%, rgba(140, 255, 90, 0.12) 0%, transparent 50%),
+    var(--pf-surface);
+}
+
+.pf-hero__scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--pf-scrim-bottom), var(--pf-scrim-left);
+}
+
+.pf-hero__content {
+  position: relative;
+  z-index: 1;
+  padding: 0 var(--pf-gutter) clamp(40px, 7vh, 88px);
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+}
+
+.pf-hero__eyebrow {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pf-gold);
+}
+
+.pf-hero__title {
+  margin: 0;
+  font-size: clamp(2.2rem, 5.6vw, 4.4rem);
+  font-weight: 800;
+  color: var(--pf-text);
+  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.55);
+}
+
+.pf-hero__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.95rem;
+  color: var(--pf-text);
+}
+
+.pf-hero__rating {
+  color: var(--pf-gold);
+  font-weight: 700;
+}
+
+.pf-hero__overview {
+  margin: 0;
+  max-width: 60ch;
+  color: rgba(237, 239, 242, 0.86);
+  line-height: 1.6;
+  font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pf-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-xs);
+}
+
+/* --- Shared button primitive (hero + detail reuse) --- */
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 26px;
+  border-radius: var(--pf-radius-pill);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition:
+    transform var(--pf-dur-fast) var(--pf-ease),
+    background var(--pf-dur-fast) var(--pf-ease),
+    box-shadow var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-btn:hover {
+  transform: translateY(-1px);
+}
+
+.pf-btn:active {
+  transform: translateY(0);
+}
+
+.pf-btn--play {
+  background: var(--pf-available);
+  color: #06210a;
+  box-shadow: 0 8px 24px rgba(140, 255, 90, 0.28);
+}
+
+.pf-btn--play:hover {
+  background: #9dff72;
+}
+
+.pf-btn--gold {
+  background: var(--pf-gold);
+  color: #241b03;
+  box-shadow: 0 8px 24px rgba(242, 193, 78, 0.26);
+}
+
+.pf-btn--gold:hover {
+  background: #f6cd6b;
+}
+
+.pf-btn--ghost {
+  background: rgba(237, 239, 242, 0.12);
+  color: var(--pf-text);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.pf-btn--ghost:hover {
+  background: rgba(237, 239, 242, 0.2);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+/* --- Skeleton --- */
+.pf-hero--skeleton {
+  background: var(--pf-surface);
+}
+
+.pf-hero__sk-title {
+  width: min(60%, 420px);
+  height: clamp(40px, 6vw, 72px);
+  border-radius: var(--pf-radius-md);
+}
+
+.pf-hero__sk-line {
+  width: min(80%, 560px);
+  height: 16px;
+  border-radius: var(--pf-radius-sm);
+}
+
+.pf-hero__sk-line--short {
+  width: min(55%, 360px);
+}
+
+.pf-hero__sk-actions {
+  display: flex;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-xs);
+}
+
+.pf-hero__sk-btn {
+  width: 150px;
+  height: 48px;
+  border-radius: var(--pf-radius-pill);
+}
+
+@media (max-width: 640px) {
+  .pf-hero {
+    min-height: min(72vh, 600px);
+  }
+
+  .pf-hero__backdrop {
+    object-position: center 12%;
+  }
+
+  .pf-btn {
+    padding: 11px 20px;
+    font-size: 0.95rem;
+  }
+}

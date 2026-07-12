@@ -1,10 +1,11 @@
-/* Detail screen (detail-request spec) - dark hero backdrop + poster +
-   metadata + context-aware action, mirroring `DetailScreen.kt`'s layout. */
+/* Detail screen (detail-request spec) - full-bleed backdrop hero + poster +
+   metadata + context-aware action, consistent with Home's premium treatment. */
 
 .pf-detail {
   position: relative;
+  flex: 1;
   min-height: 100%;
-  padding-bottom: 32px;
+  padding-bottom: var(--pf-space-2xl);
 }
 
 .pf-detail__backdrop {
@@ -12,21 +13,21 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 420px;
+  height: clamp(360px, 60vh, 620px);
   background-size: cover;
-  background-position: center 20%;
-  z-index: -1;
+  background-position: center 18%;
+  z-index: 0;
 }
 
 .pf-detail__backdrop::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(10, 12, 16, 0.35) 0%, var(--pf-bg) 92%);
+  background: var(--pf-scrim-bottom), var(--pf-scrim-left);
 }
 
 .pf-detail__status {
-  padding: 48px 24px;
+  padding: calc(var(--pf-header-h) + 48px) var(--pf-gutter) 48px;
   color: var(--pf-text-dim);
 }
 
@@ -39,28 +40,32 @@
 }
 
 .pf-detail__retry {
-  padding: 6px 14px;
-  border-radius: 8px;
+  padding: 8px 18px;
+  border-radius: var(--pf-radius-pill);
   border: 1px solid var(--pf-danger);
   background: transparent;
   color: var(--pf-danger);
+  font-weight: 600;
   cursor: pointer;
 }
 
 .pf-detail__content {
+  position: relative;
+  z-index: 1;
   display: flex;
-  gap: 28px;
-  padding: 160px 24px 24px;
+  gap: clamp(24px, 4vw, 48px);
+  padding: clamp(220px, 34vh, 380px) var(--pf-gutter) var(--pf-space-lg);
+  max-width: 1100px;
 }
 
 .pf-detail__poster {
   flex: 0 0 auto;
-  width: 240px;
+  width: clamp(180px, 20vw, 260px);
   aspect-ratio: 2 / 3;
-  border-radius: 14px;
+  border-radius: var(--pf-radius-lg);
   overflow: hidden;
   background: var(--pf-surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--pf-shadow-hero);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -82,59 +87,89 @@
 .pf-detail__info {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--pf-space-md);
   min-width: 0;
-  padding-top: 8px;
+  padding-top: var(--pf-space-xs);
 }
 
 .pf-detail__title {
   margin: 0;
   color: var(--pf-text);
-  font-size: 2rem;
+  font-size: clamp(2rem, 3.6vw, 3rem);
+  font-weight: 800;
+  text-shadow: 0 3px 18px rgba(0, 0, 0, 0.5);
 }
 
 .pf-detail__meta {
   display: flex;
   align-items: center;
-  gap: 12px;
-  color: var(--pf-text-dim);
-  font-size: 0.95rem;
+  gap: 16px;
+  color: var(--pf-text);
+  font-size: 0.98rem;
+}
+
+.pf-detail__rating {
+  color: var(--pf-gold);
+  font-weight: 700;
 }
 
 .pf-detail__overview {
   margin: 0;
-  color: var(--pf-text);
+  color: rgba(237, 239, 242, 0.86);
   max-width: 65ch;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .pf-detail__action {
   align-self: flex-start;
-  padding: 12px 28px;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 30px;
+  border-radius: var(--pf-radius-pill);
   font-size: 1rem;
   font-weight: 700;
   cursor: pointer;
   border: 2px solid transparent;
+  margin-top: var(--pf-space-xs);
+  transition:
+    transform var(--pf-dur-fast) var(--pf-ease),
+    background var(--pf-dur-fast) var(--pf-ease),
+    box-shadow var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-detail__action:not(:disabled):hover {
+  transform: translateY(-1px);
 }
 
 .pf-detail__action--play {
   background: var(--pf-available);
-  color: #0a0c10;
+  color: #06210a;
+  box-shadow: 0 8px 24px rgba(140, 255, 90, 0.28);
+}
+
+.pf-detail__action--play:hover {
+  background: #9dff72;
 }
 
 .pf-detail__action--request {
   background: var(--pf-gold);
-  color: #0a0c10;
+  color: #241b03;
+  box-shadow: 0 8px 24px rgba(242, 193, 78, 0.26);
+}
+
+.pf-detail__action--request:hover {
+  background: #f6cd6b;
 }
 
 .pf-detail__action--request:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .pf-detail__action--requesting {
-  background: transparent;
+  background: rgba(242, 193, 78, 0.12);
   border-color: var(--pf-gold);
   color: var(--pf-gold);
   cursor: not-allowed;
@@ -145,13 +180,13 @@
   color: var(--pf-danger);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .pf-detail__content {
     flex-direction: column;
-    padding-top: 200px;
+    padding-top: clamp(200px, 40vh, 300px);
   }
 
   .pf-detail__poster {
-    width: 160px;
+    width: 150px;
   }
 }

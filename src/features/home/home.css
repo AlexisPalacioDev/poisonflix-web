@@ -1,4 +1,18 @@
 .pf-home {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   min-height: 100%;
-  padding-bottom: 24px;
+  padding-bottom: var(--pf-space-2xl);
+}
+
+/* Rows sit just below the hero, overlapping its lower scrim slightly so the
+   page reads as one continuous surface instead of hero-then-void. */
+.pf-home__rows {
+  position: relative;
+  z-index: 1;
+  margin-top: clamp(-64px, -4vw, -32px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-lg);
 }

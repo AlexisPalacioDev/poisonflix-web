@@ -1,48 +1,88 @@
 .pf-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  height: var(--pf-header-h);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px;
+  padding: 0 var(--pf-gutter);
+  /* Transparent over the hero, with a top-down scrim so the brand stays
+     legible against a bright backdrop. */
+  background: linear-gradient(to bottom, rgba(10, 12, 16, 0.72) 0%, rgba(10, 12, 16, 0) 100%);
+  transition:
+    background var(--pf-dur) var(--pf-ease),
+    border-color var(--pf-dur) var(--pf-ease),
+    backdrop-filter var(--pf-dur) var(--pf-ease);
+  border-bottom: 1px solid transparent;
+}
+
+.pf-header--scrolled {
+  background: rgba(10, 12, 16, 0.86);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border-bottom-color: rgba(255, 255, 255, 0.07);
 }
 
 .pf-header__brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 10px;
+  padding: 6px 8px;
+  margin-left: -8px;
+  border-radius: var(--pf-radius-md);
 }
 
 .pf-header__mark {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
 }
 
 .pf-header__title {
-  font-size: 1.125rem;
-  font-weight: 700;
+  font-size: 1.2rem;
+  font-weight: 800;
   color: var(--pf-gold);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .pf-header__search {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 40px;
+  gap: 8px;
   height: 40px;
-  border-radius: 999px;
+  padding: 0 14px 0 12px;
+  border-radius: var(--pf-radius-pill);
   color: var(--pf-text);
-  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-header__search-label {
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .pf-header__search:hover,
 .pf-header__search:focus-visible {
+  background: rgba(242, 193, 78, 0.14);
   border-color: var(--pf-gold);
   color: var(--pf-gold);
-  outline: none;
 }
 
 @media (max-width: 640px) {
-  .pf-header {
-    padding: 16px;
+  .pf-header__search-label {
+    display: none;
+  }
+
+  .pf-header__search {
+    width: 40px;
+    justify-content: center;
+    padding: 0;
   }
 }

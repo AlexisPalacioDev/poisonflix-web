@@ -1,36 +1,48 @@
 /* Search screen (search spec) - debounced results carousel (reuses Row's
-   layout) on top, big preview panel below, mirroring `SearchScreen.kt`'s
-   two-part layout. */
+   layout) on top, big preview panel below. Clears the fixed header. */
 
 .pf-search {
+  flex: 1;
   min-height: 100%;
-  padding-bottom: 24px;
+  padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
+  padding-bottom: var(--pf-space-2xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
 }
 
 .pf-search__query {
-  padding: 0 24px 16px;
+  padding: 0 var(--pf-gutter) var(--pf-space-md);
 }
 
 .pf-search__input {
   width: 100%;
-  max-width: 480px;
-  padding: 10px 16px;
-  border-radius: 10px;
-  border: 1px solid var(--pf-text-dim);
+  max-width: 560px;
+  padding: 14px 18px;
+  border-radius: var(--pf-radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   background: var(--pf-surface);
   color: var(--pf-text);
-  font-size: 1rem;
+  font-size: 1.05rem;
+  transition:
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    box-shadow var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-search__input::placeholder {
+  color: var(--pf-text-dim);
 }
 
 .pf-search__input:focus-visible {
   outline: none;
   border-color: var(--pf-gold);
+  box-shadow: var(--pf-ring);
 }
 
 .pf-search__preview {
   display: flex;
-  gap: 20px;
-  padding: 12px 24px 24px;
+  gap: clamp(20px, 3vw, 36px);
+  padding: var(--pf-space-md) var(--pf-gutter) var(--pf-space-lg);
 }
 
 .pf-search__preview--empty {
@@ -39,11 +51,12 @@
 
 .pf-search__preview-art {
   flex: 0 0 auto;
-  width: 220px;
+  width: clamp(180px, 20vw, 240px);
   aspect-ratio: 2 / 3;
-  border-radius: 12px;
+  border-radius: var(--pf-radius-lg);
   overflow: hidden;
   background: var(--pf-surface);
+  box-shadow: var(--pf-shadow-card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -65,39 +78,39 @@
 .pf-search__preview-info {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--pf-space-sm);
   min-width: 0;
+  padding-top: var(--pf-space-xs);
 }
 
 .pf-search__preview-title {
   margin: 0;
   color: var(--pf-text);
-  font-size: 1.5rem;
+  font-size: clamp(1.4rem, 2.4vw, 2rem);
+  font-weight: 800;
 }
 
 .pf-search__preview-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--pf-text-dim);
-  font-size: 0.9rem;
+  gap: 12px;
+  color: var(--pf-text);
+  font-size: 0.92rem;
 }
 
 .pf-search__preview-overview {
   margin: 0;
-  color: var(--pf-text);
-  max-width: 60ch;
-  line-height: 1.5;
+  color: rgba(237, 239, 242, 0.82);
+  max-width: 62ch;
+  line-height: 1.6;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .pf-search__preview {
     flex-direction: column;
-    padding-left: 16px;
-    padding-right: 16px;
   }
 
   .pf-search__preview-art {
-    width: 160px;
+    width: 150px;
   }
 }
