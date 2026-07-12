@@ -41,17 +41,22 @@ Chain strategy: pending
 - [x] 0.8 **README**: document reverse proxy as a BLOCKING infra prerequisite (Decision 1 — `/jellyfin/*`/`/jellyseerr/*` same-origin routing must exist before onboarding works) + local dev-proxy usage.
 - [x] 0.9 `vitest` config + smoke test (app renders without crashing).
 
-## Slice 1: API client + auth layer
+## Slice 1: API client + auth layer — COMPLETE
 
-- [ ] 1.1 `src/api/schemas/jellyfin.ts`: zod schemas (User/AccessToken/PlaybackInfo).
-- [ ] 1.2 `src/api/schemas/jellyseerr.ts`: zod schemas (search/discover/request incl. `media.status`).
-- [ ] 1.3 `src/lib/http/errors.ts`: `ApiError` vs `NetworkError`/`CorsError` distinction.
-- [ ] 1.4 `src/lib/session/store.ts`: localStorage read/write/clear.
-- [ ] 1.5 `src/lib/http/client.ts`: `apiFetch` — inject `X-Emby-Token` (Jellyfin), `credentials:'include'` (Jellyseerr), 401 clears session with no retry, schema-validated parse.
-- [ ] 1.6 `src/api/jellyfin.ts`: `authenticateByName`, `getItems`, `getPlaybackInfo`, `reportPlaying/reportProgress/reportStopped`; `getResumeItems` signature reserved only (deferred).
-- [ ] 1.7 `src/api/jellyseerr.ts`: `authJellyfin` (body-only `{username,password}`), `search`/`discoverTrending` (`language=es-MX`), `discoverMovies`/`discoverTv` (omit `language`, per-endpoint — ADR-4), `requestMedia`; `getRequests` reserved (deferred).
-- [ ] 1.8 `src/api/arr.ts` + `src/lib/domain/config.ts`: shape only, not wired into any UI (deferred surface).
-- [ ] 1.9 Unit tests: `errors.ts` distinction; schema fixtures parse valid / reject malformed payloads.
+- [x] 1.1 `src/api/schemas/jellyfin.ts`: zod schemas (User/AccessToken/PlaybackInfo).
+- [x] 1.2 `src/api/schemas/jellyseerr.ts`: zod schemas (search/discover/request incl. `media.status`).
+- [x] 1.3 `src/lib/http/errors.ts`: `ApiError` vs `NetworkError`/`CorsError` distinction.
+- [x] 1.4 `src/lib/session/store.ts`: localStorage read/write/clear.
+- [x] 1.5 `src/lib/http/client.ts`: `apiFetch` — inject `X-Emby-Token` (Jellyfin), `credentials:'include'` (Jellyseerr), 401 clears session with no retry, schema-validated parse.
+- [x] 1.6 `src/api/jellyfin.ts`: `authenticateByName`, `getItems`, `getPlaybackInfo`, `reportPlaying/reportProgress/reportStopped`; `getResumeItems` signature reserved only (deferred).
+- [x] 1.7 `src/api/jellyseerr.ts`: `authJellyfin` (body-only `{username,password}`), `search`/`discoverTrending` (`language=es-MX`), `discoverMovies`/`discoverTv` (omit `language`, per-endpoint — ADR-4), `requestMedia`; `getRequests` reserved (deferred).
+- [x] 1.8 `src/api/arr.ts` + `src/lib/domain/config.ts`: shape only, not wired into any UI (deferred surface).
+- [x] 1.9 Unit tests: `errors.ts` distinction; schema fixtures parse valid / reject malformed payloads.
+
+Pulled forward from Slice 5 into this batch (pure, framework-free, no UI dependency — flagged deviation, not silent):
+- [x] 5.3 `src/lib/domain/libraryIndex.ts`: badge resolver — TMDB id match + title+year fallback -> `InLibrary|Requesting|Requestable` (unit tests: all 4 branches incl. primary-vs-fallback precedence).
+- [x] 5.1 (partial) `src/hooks/useDebouncedValue.ts`: 350ms debounce primitive (unit tests: below-min, rapid-retype, single-fire-on-settle). `useSearch.ts`'s `enabled` gating itself is still Slice 5 work.
+- Also added (not separately tracked tasks, foundational per delegation §5): `src/hooks/queryKeys.ts` (query-key factory) and `src/hooks/useAuth.ts` (thin re-export of `useAuthContext`).
 
 ## Slice 2: DirectPlay `<video>` auth spike — GO/NO-GO (do this before onboarding/home/search/detail UI work continues past stubs)
 

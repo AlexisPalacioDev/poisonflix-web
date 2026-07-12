@@ -67,6 +67,104 @@ I did not choose one of these unilaterally — flagging for your call.
 - `npm test` (`vitest run`) — 1/1 passed.
 - `npm run dev` — started, `curl localhost:5173/` returned `200`, stopped cleanly afterward.
 
+### Next up (superseded — see Slice 1 section below)
+
+---
+
+## Slice 1: API client + auth layer — COMPLETE
+
+Implemented tasks 1.1-1.9 (see tasks.md), plus a deliberate, flagged pull-forward
+of pure/framework-free pieces from Slice 5 (LibraryIndex + debounce hook) since
+this batch's delegation explicitly scoped them as foundation work. No UI
+screens were built (per scope).
+
+### Files created
+
+| File | What |
+|---|---|
+| `src/api/schemas/jellyfin.ts` | zod schemas: `JellyfinUser`, `JellyfinAuthResponse`, `JellyfinItem`, `JellyfinQueryResult`, `JellyfinMediaSource`, `JellyfinPlaybackInfoResponse`. |
+| `src/api/schemas/jellyseerr.ts` | zod schemas: `JellyseerrUser`, `JellyseerrMediaInfo`, `JellyseerrSearchResult(Response)`, `JellyseerrRequestDto`, `JellyseerrRequestListResponse`. |
+| `src/lib/http/errors.ts` | `ApiError` (status+body), `NetworkError`, `CorsError` (subtype of `NetworkError`), `isApiError`/`isNetworkError` guards. |
+| `src/lib/session/store.ts` | localStorage-backed `StoredSession` (`jellyfinToken`, `jellyfinUserId`, `jellyfinServerId?`, `jellyseerrCookiePresent`) — `getSession`/`setSession`/`clearSession`. Enriches design.md §5's shape with `jellyfinServerId` per this batch's explicit delegation instructions. |
+| `src/lib/http/client.ts` | `apiFetch(backend, path, options)` — injects `X-Emby-Token` for jellyfin, `credentials:'include'` for jellyseerr, clears session + throws `ApiError(401)` on 401 (no retry), throws `NetworkError` on a rejected `fetch`, validates the parsed body against an optional zod schema. |
+| `src/api/jellyfin.ts` | `buildEmbyAuthorizationHeader`, `authenticateByName`, `getItems`, `getResumeItems` (reserved/deferred), `getItem`, `getPlaybackInfo`, `reportPlaying`/`reportProgress`/`reportStopped`. |
+| `src/api/jellyseerr.ts` | `authJellyfin` (body-only `{username,password}`), `search`, `discoverTrending` (both send `language=es-MX`), `discoverMovies`/`discoverTv` (ADR-4: no `language`), `requestMedia`, `getRequests` (reserved/deferred). |
+| `src/lib/domain/config.ts` | `ArrConfig`/`ArrService` types + `defaultPortFor`/`buildArrBaseUrl` — deferred surface, shape only. |
+| `src/api/arr.ts` | `getMovie`/`setMonitored` implementing the GET-raw → flip → PUT-back-unmodified pattern — deferred surface, not wired into any UI. |
+| `src/lib/domain/libraryIndex.ts` | **Pulled forward from Slice 5** — `LibraryIndex` class (`resolve`) + `jellyseerrStatusLabel`, ported verbatim from `LibraryIndex.kt`/`TitleStatus.kt`. |
+| `src/hooks/useDebouncedValue.ts` | **Pulled forward from Slice 5** — 350ms debounce primitive. |
+| `src/hooks/queryKeys.ts` | Query-key factory (`library`, `trending`, `search`, `item`, `playbackInfo`) per design.md §4.1. |
+| `src/hooks/useAuth.ts` | Thin re-export of `useAuthContext` as `useAuth` (design.md §2 hooks list). |
+
+### Test files created (Vitest)
+
+`src/lib/http/errors.test.ts`, `src/api/schemas/jellyfin.test.ts`,
+`src/api/schemas/jellyseerr.test.ts`, `src/lib/domain/libraryIndex.test.ts`
+(all 4 `TitleStatus` branches + fallback-precedence + case-insensitive match),
+`src/hooks/useDebouncedValue.test.ts` (below-min, rapid-retype, settle-once),
+`src/lib/session/store.test.ts`, `src/lib/http/client.test.ts` (header
+injection, `credentials:'include'`, 401→clear+no-retry, `NetworkError` on
+fetch rejection, non-2xx→`ApiError`, 204→`undefined`, schema validation
+success/failure).
+
+Also removed 5 now-stale `.gitkeep` placeholders (`src/api/schemas`,
+`src/hooks`, `src/lib/{domain,http,session}`) since each of those directories
+now has real files. `src/components` and `src/lib/platform` still empty —
+their `.gitkeep`s are untouched.
+
+### Verification results
+
+- `npm run build` (`tsc -b && vite build`) — succeeded, no type errors.
+- `npm test` (`vitest run`) — **47/47 passed** across 8 test files.
+- `npm run lint` (`oxlint`) — 0 new warnings (2 pre-existing Slice-0 warnings unrelated to this batch).
+
+### Live smoke test against the real backends — BLOCKED, root cause is infra, not this code
+
+Per this batch's instructions, the request shapes were validated live against
+the running proxy/backends (`localhost:8096` Jellyfin, `localhost:5055`
+Jellyseerr, `localhost:8600` Caddy proxy, plus the Vite dev-proxy at
+`localhost:5173`) using `perroenvenenado`/`pass1234`:
+
+- Reverse proxy + dev-proxy path prefixes: **confirmed working** —
+  `GET /jellyfin/System/Info/Public` and `GET /jellyseerr/api/v1/status`
+  through both `:8600` and the Vite dev-proxy return `200`.
+- `authenticateByName`'s request shape (`X-Emby-Authorization` header +
+  `{Username, Pw}` body) reached Jellyfin's controller and got as far as its
+  own `GetUserByName` database lookup — i.e. the **client-side request shape
+  is correct** (also tried lowercase `username`/`pw`, `Username`/`Password` —
+  all forms make it past routing/header validation into the same DB call).
+- The call then fails server-side with **`500 Error processing request`**.
+  `docker logs jellyfin` shows the root cause is NOT this codebase:
+  `Microsoft.Data.Sqlite.SqliteException: SQLite Error 10: 'disk I/O error'`
+  while Jellyfin's own EF Core query reads its `Users` table
+  (`WHERE u.NormalizedUsername = @__ToUpperInvariant_0`). Disk space is not
+  the cause (`df -h /` shows 102G free, 78% used) — this looks like a locked
+  or corrupted SQLite file inside the `jellyfin` container's own `/config`
+  bind mount (`/home/alexis/jellyfin-server/config`), unrelated to any
+  request this client sends.
+- Jellyseerr's `authJellyfin` was also tried directly against `:5055` and
+  fails identically (`500 {"message":"Something went wrong."}`) because it
+  internally calls the same broken Jellyfin `AuthenticateByName` endpoint —
+  further confirming this is a Jellyfin-server-side data issue, not a
+  Jellyseerr- or client-side one.
+- **I did not attempt to repair the Jellyfin SQLite database** — that is a
+  live production media server outside this repo and outside this task's
+  scope (same boundary as "don't touch `infra/`"); repairing a possibly
+  corrupted/locked SQLite file on a running server carries real data-loss
+  risk and needs the owner's explicit call, not an unrelated coding agent's.
+- **Conclusion:** the api client's request shapes for `authenticateByName`
+  are validated as correct up to the point Jellyfin's own database layer
+  fails; a true end-to-end "does a real 200 auth response parse through our
+  zod schema" check could not be completed and remains open. Recommend the
+  user (or a dedicated ops task) investigate/restart the Jellyfin
+  container's SQLite state before Slice 2's live DirectPlay spike, since that
+  slice also needs a working `authenticateByName` to obtain a token.
+- No throwaway scripts were created or committed — validation used `curl`
+  directly against each origin; the temporary `npm run dev` process was
+  stopped afterward.
+
 ### Next up
 
-Slice 1 (API client + auth layer) is next, per tasks.md. Not started.
+Slice 2 (DirectPlay `<video>` auth GO/NO-GO spike) is next, per tasks.md —
+**blocked** until the Jellyfin auth path above is confirmed working live,
+since Slice 2 needs a real access token to build a DirectPlay URL.
