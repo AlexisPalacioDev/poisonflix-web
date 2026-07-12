@@ -263,64 +263,44 @@ Status badge colors map straight off these (`InLibrary`→available/green, `Requ
 **ADR-1 — Same-origin relative requests, no hostnames in client.**
 *Decision:* every backend call is relative to the app origin under `/jellyfin/*` and `/jellyseerr/*`; the proxy owns routing.
 *Rationale:* kills CORS preflight on `X-Emby-Token`, lets the `connect.sid` cookie replay automatically via `credentials:'include'`, keeps the app a true thin client (Decision 1).
-
-<!--
-=====================================================================
-RECONSTRUCTION GAP — read this before trusting anything below this line
-=====================================================================
-On 2026-07-12, `npm exec create-vite@latest -- . --template react-ts
---overwrite` was run against this repo root during sdd-apply Slice 0,
-and it deleted this entire `openspec/` directory (and `infra/`) because
-they were untracked in git (never committed, so no git object existed
-to restore from). Everything ABOVE this marker (through end of ADR-1)
-is byte-verbatim, recovered from the apply agent's own tool-call
-history where the file had already been read into context.
-
-Everything BELOW this marker (ADR-2 through ADR-7, and §13 Open items)
-is NOT verbatim. It is reconstructed only from a condensed engram
-summary (topic `sdd/poisonflix-web/design`, project `hy300-poisonos`,
-obs #947) saved during the original sdd-design phase, which paraphrased
-rather than quoted the source. Treat the ADR bodies below as a
-best-effort approximation of intent, not the original wording. If
-byte-for-byte fidelity matters (e.g. citations, exact line-number
-references into the Kotlin reference app), the safest fix is to
-re-run sdd-design for this change and let it regenerate design.md
-from proposal.md + specs/ fresh — PROVIDED proposal.md/explore.md/
-specs/*.md are restored first (see apply-progress.md for their status,
-which is worse: no verbatim or engram-summary source survives for
-those files' full bodies).
-=====================================================================
--->
+*Rejected alternatives:* (a) per-backend CORS config on Jellyfin/Jellyseerr — brittle across two servers and still leaves the cookie `SameSite=None; Secure` problem unsolved; (b) a thin backend/edge tier — contradicts the "thin client" goal and adds a server tier we explicitly do not want (proposal Decision 1).
 
 **ADR-2 — Kotlin clean-layer mapped 1:1 into React idiom (not a UI-only port).**
-*Decision:* every Kotlin data/domain/UI layer gets exactly one corresponding web layer (see §1 table): `data/remote` → `src/api`, `AuthInterceptor`/`CredentialStore` → `lib/http`/`lib/session`, `repository`/`LibraryIndex` → `lib/domain` (pure, framework-free), `*ViewModel` → TanStack Query hooks, `*Screen` → `features/*` + router.
-*Rationale:* preserves the proven separation of concerns instead of re-deriving it ad hoc in a new stack; keeps domain logic (badge computation, dedup) unit-testable without React or network, mirroring the native app's pure Kotlin objects.
+*Decision:* every Kotlin data/domain/UI layer gets exactly one corresponding web layer per the §1 table: `data/remote/*Api.kt` + `dto/*Dto.kt` → `src/api/` (+ `schemas/`), `AuthInterceptor.kt` + `CredentialStore.kt` → `lib/http` + `lib/session`, `data/repository/*Impl.kt` + `LibraryIndex.kt` → `lib/domain/` (pure, framework-free, network-free), `ui/*ViewModel.kt` → TanStack Query hooks in `src/hooks/`, `ui/*Screen.kt` + `ui/navigation/*` → `features/*` + `routes/`. The mapping — not new invention — is the organizing principle of the codebase.
+*Rationale:* the native app already solved the hard separation-of-concerns problem; re-deriving architecture ad hoc in a new stack would discard proven structure and reopen settled questions (proposal §3). Anchoring to the reference keeps domain logic (badge computation, dedup, stream-URL construction) unit-testable without React or network, exactly as the pure Kotlin objects are, and makes every ported file traceable back to its Kotlin source.
+*Rejected alternative:* a UI-only port that folds data/auth/domain logic into components — collapses the layers, makes the domain rules untestable in isolation, and loses the 1:1 traceability that lets us port proven logic verbatim.
 
 **ADR-3 — Row isolation via one `useQuery` per row, no aggregate screen-state object.**
-*Decision:* Home's Library and Trending rows are independent `useQuery` calls, each owning its own loading/error/retry state.
-*Rationale:* ports `HomeViewModel.kt`'s independent `Result<T>` rows so a failed Trending fetch never blocks or blanks a working Library row. The polling seam (deferred Continue Watching/Downloading rows) is additive — each future row just adds `refetchInterval` to its own hook.
+*Decision:* Home's Library (Jellyfin) and Trending (Jellyseerr) rows are independent `useQuery` calls, each owning its own loading/error/retry state. There is no shared "home screen state" object aggregating the rows.
+*Rationale:* directly ports `HomeViewModel.kt`'s independent `Result<T>` rows so a failed Trending fetch renders a row-scoped error while a working Library row renders normally — one backend being down never blanks the whole screen (proposal §3, home spec). TanStack Query's per-query state is the native mechanism for this, making the port near-1:1.
+*Rejected alternative:* a single combined query / aggregate state object — one failure would fail the whole screen, defeating the isolation the native app deliberately built.
+*Seam:* the deferred polling rows (Continue Watching @20s, Downloading @15s) are purely additive — a future row adds `refetchInterval` to its own hook and nothing else changes (proposal §3; §4.2).
 
 **ADR-4 — Per-endpoint `language` param, never a shared interceptor.**
-*Decision:* `search`/`discoverTrending` send `language=es-MX`; `discoverMovies`/`discoverTv` omit `language` entirely, encoded individually in each function body in `api/jellyseerr.ts`.
-*Rationale:* carries forward the native `LanguageInterceptor.kt` footgun (explore.md) — centralizing this as a shared interceptor/default previously caused `discoverMovies`/`discoverTv` to silently collapse to zero results under `es-MX`. Keeping it per-call makes the divergence visible and grep-able instead of hidden in shared middleware.
+*Decision:* in `api/jellyseerr.ts`, `search` and `discoverTrending` send `language=es-MX`; `discoverMovies` and `discoverTv` **omit `language` entirely**. The distinction is encoded individually in each function body — there is no shared language interceptor or default.
+*Rationale:* carries forward the documented native `LanguageInterceptor.kt` footgun (explore.md L41, proposal Risks). Jellyseerr treats `language` on `/discover/movies|tv` as a TMDB *content filter*, not a locale; `es-MX` is not ISO-639-1 and collapsed those results to zero natively. The original mistake was centralizing the param in a shared interceptor that rewrote it everywhere. Encoding it per-endpoint makes the divergence visible and grep-able instead of hidden in middleware.
+*Rejected alternative:* a shared request interceptor/default that sets `language` globally — reintroduces the exact bug the native app already paid for.
 
 **ADR-5 — Unencrypted localStorage for the Jellyfin token/session marker (accepted risk).**
-*Decision:* `lib/session/store.ts` persists `{ jellyfinToken, jellyfinUserId, jellyseerrCookiePresent }` in plain localStorage; the `connect.sid` cookie itself stays in the browser's cookie jar (same-origin, not duplicated into localStorage).
-*Rationale:* matches the native app's accepted personal-LAN threat model — this is a household/single-tenant deployment behind the reverse proxy, not a public multi-tenant service. Encrypting client-side storage for a token that must also ride as a query-string `api_key` buys little real security here and adds complexity; documented explicitly as an accepted risk rather than an oversight.
+*Decision:* `lib/session/store.ts` persists `{ jellyfinToken, jellyfinUserId, jellyseerrCookiePresent }` in plain, unencrypted localStorage. The `connect.sid` value itself is NOT duplicated into localStorage — it stays in the browser's same-origin cookie jar and replays automatically via `credentials:'include'`; we persist only a boolean marker that onboarding completed.
+*Rationale:* there is no browser equivalent of Android Keystore, and the Jellyfin token must additionally ride as a query-string `api_key` for `<video>` DirectPlay (§3.3), so client-side encryption buys little real security. This matches the native app's already-documented **personal-LAN threat model** — a household / single-tenant deployment behind the reverse proxy, not a public multi-tenant service (proposal Decision 4, explore.md L54). The realistic XSS-read exposure is accepted explicitly rather than papered over with complexity that adds no real protection here.
+*Tradeoff:* localStorage is XSS-readable; a successful script injection could exfiltrate the Jellyfin token. Accepted for this deployment class, documented as a conscious decision, not an oversight.
+*Rejected alternative:* client-side encryption of the token — provides no meaningful protection against the actual XSS threat (the decrypting code is equally reachable by injected script) while adding complexity, and cannot protect the token once it must appear in the DirectPlay query string anyway.
 
 **ADR-6 — Platform shim seam (`lib/platform/`) built now; webOS impl deferred/stubbed.**
-*Decision:* a `PlatformCapabilities` interface with an active `browser.ts` (no-op navigation, real keyboard) and a stub `webos.ts`, selected at build time via `import.meta.env.VITE_PLATFORM`. All interactive components are built focus-friendly (real `tabindex`, no mouse-only handlers) from day one.
-*Rationale:* keeps the door open for `norigin-spatial-navigation` on a future webOS `.ipk` build without a later restructuring pass, at near-zero MVP cost — the browser build simply never exercises the webOS path.
+*Decision:* a `PlatformCapabilities` interface with an active `browser.ts` (no-op navigation, real keyboard) and a stubbed `webos.ts`, selected at build time via `import.meta.env.VITE_PLATFORM` from `lib/platform/index.ts`. All interactive components (`components/Focusable.tsx` and every primitive) are built focus-friendly — real `tabindex`, no mouse-only handlers — from day one.
+*Rationale:* LG remotes are D-pad-first, so the native "focus-loss" problem class returns for the future webOS `.ipk` target and only that target (it is genuinely N/A for browser/mobile) (proposal Decision 3, explore.md L45). Scoping `norigin-spatial-navigation` behind `lib/platform/webos.ts` gives D-pad directional nav for that one build without adopting LG Enact's full framework and relitigating the decided React stack. Building focusable primitives now keeps the door open at near-zero MVP cost; retrofitting focusability later would be a costly restructuring pass.
+*Tradeoff:* a small, ongoing discipline tax (every interactive primitive must stay focusable) for a target not yet shipping. Accepted because the browser build simply never exercises the webOS path, and the alternative is a full re-layout later.
+*Rejected alternative:* full LG Enact — heavier runtime, reopens the framework choice, overkill for D-pad nav alone (proposal Decision 3).
 
 **ADR-7 — Hand-rolled CSS variables, no component/UI kit.**
-*Decision:* theme tokens as CSS custom properties (§8); no MUI/Chakra/etc.
-*Rationale:* keeps the bundle small for the conservative webOS Chromium build target (ADR-6) and avoids relitigating a UI-kit choice later when the webOS build's stricter constraints are better understood.
+*Decision:* theme tokens as CSS custom properties on `:root` (§8); no MUI/Chakra/or any component library.
+*Rationale:* keeps the bundle small for the conservative webOS Chromium build target, whose version varies hard by TV generation (webOS 3.x ~ Chromium 38 vs webOS 22+ ~ 87-94, explore.md L48) and constrains what a heavy UI kit can safely emit. A minimal hand-rolled surface also avoids relitigating a UI-kit choice later once the webOS build's stricter constraints are better understood (proposal §5, ADR-6). CSS variables map directly off the native `Color.kt`/`Type.kt` tokens, so the theme port stays 1:1.
+*Rejected alternative:* adopt a component/UI kit (MUI/Chakra/etc.) — inflates the bundle against the conservative webOS target and bakes in a dependency that may not tolerate old Chromium, forcing a later removal pass.
 
 ## 13. Open items to validate (carry into tasks/apply)
 
-Reconstructed from the engram summary's "Open validation items" — treat as pointers to re-derive detail from proposal.md/specs, not literal original text:
-
-- **`<video>` DirectPlay `api_key` query-string auth, live** — the MVP's primary go/no-go spike (§3.3, §11); not yet proven against the real server. Blocking for Slice 7 (player).
-- **Web codec support per actual deployment target** (browser + eventual webOS Chromium) — native codec whitelist behavior was never validated on-device; web equivalent needs its own check once playback is live.
-- **Reverse-proxy path-prefix contract** (`/jellyfin/*`, `/jellyseerr/*` exactly matching `infra/Caddyfile`'s `handle_path` strip semantics) — must stay in lockstep between `vite.config.ts` dev proxy and the production Caddy config, or onboarding/API calls silently 404 in one environment and not the other.
-- **webOS `build.target` floor** — the conservative Chromium version for the deferred `.ipk` build was flagged as needing confirmation before that build mode is implemented; not required for MVP browser target.
+- **`<video>` DirectPlay `api_key` query-string auth, live** — the MVP's primary go/no-go spike (§3.3, §11). Does appending `api_key={token}` to `/jellyfin/Videos/{itemId}/stream{container}?static=true&mediaSourceId={id}` authenticate the stream without a 401, with native range requests and working seek? Unproven against the real server; blocking for the player slice. Fallback if rejected: `Blob + createObjectURL` (documented escape hatch, not the default). URL construction is isolated in `lib/domain/streamResolver.ts` so swapping strategy touches one pure function.
+- **Web codec support per actual deployment target** (browser + eventual webOS Chromium) — the native H.264/AAC-only direct-play profile was **never device-confirmed even on Android** (explore.md L35, L42); only the *pattern* (conservative direct-play + server transcode fallback) transfers, not the actual codec table. Web codec support needs its own per-target investigation once playback is live.
+- **Reverse-proxy path-prefix contract** — the client's `/jellyfin/*` and `/jellyseerr/*` prefixes must match the Caddy `handle_path` strip semantics in `infra/Caddyfile` **and** the Vite dev-proxy in `vite.config.ts` exactly. A drift silently 404s onboarding/API calls in one environment but not the other (proposal Risks). Keep `vite.config.ts` and the Caddyfile in lockstep.
+- **webOS `build.target` floor** — the conservative Chromium version for the deferred `.ipk` build (§9) needs confirmation before that build mode is implemented; not required for the MVP browser target.
