@@ -31,15 +31,15 @@ Chain strategy: pending
 
 ## Slice 0: Repo scaffolding
 
-- [ ] 0.1 Init Vite+React+TS project (`package.json`, `tsconfig.json`, `index.html`).
-- [ ] 0.2 Install deps: `react-router-dom`, `@tanstack/react-query`, `zod`, `vite-plugin-pwa`, `vitest`, `@testing-library/react`.
-- [ ] 0.3 Create folder tree per design.md §2: `src/api/schemas`, `src/lib/{http,session,domain,platform}`, `src/hooks`, `src/features/{onboarding,home,search,detail,player}`, `src/components`, `src/auth`, `src/routes`, `src/styles`.
-- [ ] 0.4 `vite.config.ts`: PWA plugin present but inactive for MVP + dev `server.proxy` mapping `/jellyfin` and `/jellyseerr` to local backends (mirrors the reverse-proxy contract for local dev).
-- [ ] 0.5 `.env.development`/`.env.production`: `VITE_JELLYFIN_BASE=/jellyfin`, `VITE_JELLYSEERR_BASE=/jellyseerr`; `.env.webos` stub only.
-- [ ] 0.6 `src/styles/theme.css` (CSS vars per design.md §8) + `src/styles/global.css`.
-- [ ] 0.7 `src/main.tsx` (QueryClientProvider + AuthProvider + RouterProvider) + `src/routes/index.tsx` route-tree stubs (design.md §7).
-- [ ] 0.8 **README**: document reverse proxy as a BLOCKING infra prerequisite (Decision 1 — `/jellyfin/*`/`/jellyseerr/*` same-origin routing must exist before onboarding works) + local dev-proxy usage.
-- [ ] 0.9 `vitest` config + smoke test (app renders without crashing).
+- [x] 0.1 Init Vite+React+TS project (`package.json`, `tsconfig.json`, `index.html`).
+- [x] 0.2 Install deps: `react-router-dom`, `@tanstack/react-query`, `zod`, `vite-plugin-pwa`, `vitest`, `@testing-library/react`.
+- [x] 0.3 Create folder tree per design.md §2: `src/api/schemas`, `src/lib/{http,session,domain,platform}`, `src/hooks`, `src/features/{onboarding,home,search,detail,player}`, `src/components`, `src/auth`, `src/routes`, `src/styles`.
+- [x] 0.4 `vite.config.ts`: PWA plugin present but inactive for MVP + dev `server.proxy` mapping `/jellyfin` and `/jellyseerr` to local backends (mirrors the reverse-proxy contract for local dev).
+- [x] 0.5 `.env.development`/`.env.production`: `VITE_JELLYFIN_BASE=/jellyfin`, `VITE_JELLYSEERR_BASE=/jellyseerr`; `.env.webos` stub only.
+- [x] 0.6 `src/styles/theme.css` (CSS vars per design.md §8) + `src/styles/global.css`.
+- [x] 0.7 `src/main.tsx` (QueryClientProvider + AuthProvider + RouterProvider) + `src/routes/index.tsx` route-tree stubs (design.md §7).
+- [x] 0.8 **README**: document reverse proxy as a BLOCKING infra prerequisite (Decision 1 — `/jellyfin/*`/`/jellyseerr/*` same-origin routing must exist before onboarding works) + local dev-proxy usage.
+- [x] 0.9 `vitest` config + smoke test (app renders without crashing).
 
 ## Slice 1: API client + auth layer
 
