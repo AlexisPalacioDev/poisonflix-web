@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getItem, getPlaybackInfo } from '../api/jellyfin';
+import { createBrowserDeviceProfile } from '../lib/domain/deviceProfile';
 import { resolvePlayback, resumePositionMs, type ResolvedStream } from '../lib/domain/streamResolver';
 import { queryKeys } from './queryKeys';
 import { useAuth } from './useAuth';
@@ -33,7 +34,10 @@ export function usePlaybackInfo(itemId: string) {
     queryKey: queryKeys.playbackInfo(itemId),
     queryFn: async (): Promise<PlaybackData> => {
       const [playbackInfo, item] = await Promise.all([
-        getPlaybackInfo(itemId, { userId }),
+        // A real DeviceProfile (not `null`) is required so Jellyfin actually
+        // enforces codec support instead of assuming DirectPlay is safe -
+        // see deviceProfile.ts's header for the live-confirmed root cause.
+        getPlaybackInfo(itemId, { userId, deviceProfile: createBrowserDeviceProfile() }),
         // Explicit UserData in Fields - PlaybackPositionTicks (resume) lives
         // there and the default `getItem` fields don't request it.
         getItem(userId, itemId, 'ProviderIds,MediaStreams,UserData'),

@@ -902,3 +902,108 @@ playback, Continue Watching/Downloading rows, +18 PIN, TV two-pane detail,
 webOS `.ipk` build) - none of them block the MVP's stated scope: search →
 request → (once fulfilled) play a real DirectPlay-eligible movie, end to end,
 in a real browser, against real backends.
+
+## Slice 8: HLS transcode playback (post-MVP critical fix) — COMPLETE
+
+**Bug report that triggered this batch:** the MVP player only did DirectPlay,
+which silently failed on the user's real library - mostly HEVC/H.265, which
+no browser can decode natively. Confirmed live: The Matrix (itemId
+`57464bb8693566f4b95737a0ea361154`) is HEVC/EAC3/MKV;
+`video.canPlayType('...hvc1...')` returns `""` (unsupported).
+
+### Root cause
+
+`usePlaybackInfo.ts` sent `DeviceProfile: null` on every `PlaybackInfo`
+request. With no profile, Jellyfin assumes a permissive default and reports
+`SupportsDirectPlay: true` even for codecs the browser can't actually decode
+- the client had no way to know playback would fail until the `<video>`
+element silently errored, and the error message ("No se pudo autenticar o
+cargar la reproducción") misleadingly implied an auth problem when the real
+cause was an undeclared codec mismatch.
+
+### What was built
+
+| File | What |
+|---|---|
+| `src/lib/domain/deviceProfile.ts` (new) | `createBrowserDeviceProfile()`, ported from the native `DeviceProfileFactory.kt`. `DirectPlayProfiles`: H.264 video + AAC audio in an `mp4` container only (+ a narrow audio-only profile) - deliberately conservative, matching the native app's "erring toward transcode is safe, erring toward direct-play for something undecodable is not" principle. `TranscodingProfiles`: one HLS profile (`ts` container, h264/aac, `Context: 'Streaming'`). Pure, framework-free, unit-testable without jsdom/DOM. |
+| `src/hooks/usePlaybackInfo.ts` (modified) | `getPlaybackInfo(itemId, { userId, deviceProfile: createBrowserDeviceProfile() })` - the one-line fix that makes Jellyfin actually enforce codec support and return a real `TranscodingUrl` for HEVC/EAC3/MKV instead of a false `SupportsDirectPlay: true`. |
+| `src/lib/domain/streamResolver.ts` | **No change needed** - confirmed correct as-is. `TranscodingUrl` present already resolves to `{kind:'Transcoded', hlsUrl}`, joined onto the same-origin `/jellyfin` base (`joinUrl`); Jellyfin embeds its own `api_key`/`DeviceId` auth into the `TranscodingUrl` it returns, so no extra token handling was needed here. |
+| `src/features/player/VideoSurface.tsx` (rewritten) | Now handles BOTH `PlaybackSource` variants via a `source: PlaybackSource` prop (was `src: string`, DirectPlay-only). `DirectPlay` sets `video.src` directly, unchanged. `Transcoded`: `Hls.isSupported()` -> instantiate `hls.js`, `loadSource`/`attachMedia`, resume-seek wired to `Hls.Events.MANIFEST_PARSED` (not `loadedmetadata` - the carried-forward gotcha from design.md §10/`PlaybackController.kt`), fatal `Hls.Events.ERROR` -> `onError`. No hls.js support but native HLS (`video.canPlayType('application/vnd.apple.mpegurl')`, Safari) -> `video.src` set directly, same seek-timing rule (seeks on `canplay`, not `loadedmetadata`). Neither available -> new `onUnsupported` callback (the now genuinely-rare "can't play this" case). The hls.js instance is destroyed on unmount AND on every source change (a `sourceKey()` helper - `direct:{url}` or `hls:{hlsUrl}` - drives the reset/cleanup effect's dependency). |
+| `src/features/player/PlayerScreen.tsx` (modified) | Removed the old "requiere transcodificación y no es compatible" branch entirely - Transcoded sources now play. Distinguishes 4 error cases instead of 2 generic ones: (1) a real `401` on the `PlaybackInfo` fetch (`isApiError(error) && error.status === 401`) -> "Tu sesión expiró. Volvé a iniciar sesión."; (2) any other `PlaybackInfo` fetch failure (network/server) -> "No se pudo cargar la información de reproducción. Revisá la conexión con el servidor."; (3) a real fatal `<video>`/hls.js error mid-playback -> "No se pudo reproducir este video. Intentá de nuevo." (distinct from the fetch-failure message, since these are different failure points); (4) `onUnsupported` (no hls.js, no native HLS) -> "Este video no se puede reproducir en este navegador." (the now-rare case, replacing the old blanket refusal). |
+| `package.json`/`package-lock.json` | Added `hls.js@^1.6.16` as a runtime dependency. |
+
+### Test files created/rewritten (Vitest)
+
+- `src/lib/domain/deviceProfile.test.ts` (4 tests, new) - DirectPlay profile shape (mp4/h264/aac), explicit assertion that HEVC/H265/EAC3/AC3/DTS are NOT whitelisted anywhere in `DirectPlayProfiles`, HLS TranscodingProfile shape, sane non-zero `MaxStreamingBitrate`.
+- `src/features/player/VideoSurface.test.tsx` (rewritten, 9 tests) - DirectPlay group (4 tests, existing behavior re-verified unchanged: resume-seek-once, no-seek-at-0, guard-resets-on-source-change, play/pause/ended wiring) + new Transcoded group (5 tests): hls.js `loadSource`/`attachMedia` called with the resolved URL, resume seek fires on `MANIFEST_PARSED` and NOT on `loadedmetadata` (the core gotcha-regression test), the hls.js instance is destroyed on both unmount and source-change, a fatal `Hls.Events.ERROR` calls `onError` (a non-fatal one does not), and `onUnsupported` fires when `Hls.isSupported()` is false and jsdom's `canPlayType` (always `""`) can't provide a native fallback. Uses a `vi.hoisted()`-built fake `Hls` class (jsdom has no `MediaSource`, so the real `hls.js` always reports unsupported here) - discovered mid-batch that referencing an outer `class`/`const` from inside a `vi.mock` factory throws a TDZ `ReferenceError` at mock-eval time (`vi.mock` factories are hoisted above every other top-level statement) - fixed by building the fake class and its shared instance-tracking array entirely inside `vi.hoisted()`.
+- `src/features/player/PlayerScreen.test.tsx` (rewritten, 5 tests) - DirectPlay src-resolution (unchanged assertion), **Transcode-only now loads via hls.js instead of refusing** (replaces the old "shows not-supported" test - the behavior it asserted no longer exists), resume-position resolution (unchanged), plus 2 new tests for the honest-error-message requirement: a real `401` (`ApiError`) shows the session message and never mounts `<video>`; any other rejection (`new Error('boom')`) shows the generic load-failure message and explicitly does NOT show the session message (guards against the two branches silently collapsing into one).
+
+### Verification results
+
+- `npm run build` (`tsc -b && vite build`) - succeeded, 141 modules, no type errors. Bundle grew to ~860KB (gzip ~264KB) due to `hls.js` - Vite's chunk-size warning is expected/informational, not a build failure; code-splitting `hls.js` into its own lazy chunk is a reasonable future follow-up, not done in this batch (out of scope - this batch's mandate was "make it play," not "optimize the bundle").
+- `npm test` (`vitest run`) - **129/129 passed** across 23 test files (13 new/changed for this batch: 4 `deviceProfile.test.ts` + 9 rewritten `VideoSurface.test.tsx` + 5 rewritten `PlayerScreen.test.tsx`, net of the tests removed with the old behavior).
+- `npx oxlint` - same 2 pre-existing warnings as every prior slice (vite.config.ts triple-slash-reference; `AuthContext.tsx`'s `only-export-components`), **0 new warnings**.
+
+### Live browser validation (agent-browser, MANDATORY per task instructions) — THE MATRIX (HEVC) GENUINELY PLAYS VIA TRANSCODED HLS
+
+Ran the real dev server (`npm run dev`) against the live containers (`jellyfin`
+healthy, `poisonflix-proxy` up - confirmed via `docker ps` beforehand) and
+drove it with `agent-browser` (headless, `--args "--no-sandbox"`):
+
+1. Logged in (`perroenvenenado`/`pass1234`) at `http://localhost:5173/` → real Home.
+2. Navigated directly to `/player/57464bb8693566f4b95737a0ea361154` (The Matrix, HEVC/EAC3/MKV).
+3. **`POST /jellyfin/Items/57464bb8693566f4b95737a0ea361154/PlaybackInfo` → `200`**, now carrying the real device profile - confirmed via network inspection this is the call that returns a genuine `TranscodingUrl` instead of the old false `SupportsDirectPlay: true`.
+4. **The real HLS chain, all `200`, all through the same-origin `/jellyfin` proxy, zero `401`s**: `GET .../videos/{id}/master.m3u8?...` → `200`, `GET .../videos/{id}/main.m3u8?...` → `200`, then dozens of real `.ts` segment requests (`hls1/main/0.ts`, `1604.ts`, `1605.ts`, ... sequential) each → `200`.
+5. **`video` element state read directly via JS eval** (`hasVideo`, `readyState`, `currentTime`, `videoWidth/Height`, `errorCode`):
+   ```json
+   {"hasVideo":true,"src":"blob:http://localhost:5173/...","readyState":4,
+    "paused":true,"currentTime":4817.627,"videoWidth":1920,"videoHeight":800,
+    "duration":8178.67,"errorCode":null}
+   ```
+   `src` is a `blob:` URL - confirms hls.js's MediaSource Extensions path is genuinely attached (not a raw HLS URL, not native browser HLS). `readyState:4` = `HAVE_ENOUGH_DATA`. `videoWidth:1920`/`videoHeight:800` are real decoded frame dimensions matching the source's actual aspect ratio - not `0`, not a placeholder. `duration:8178.67s` (~2h16m) matches The Matrix's real runtime. `errorCode:null`.
+6. Clicked "Reproducir" (play) and re-read the video state twice, 3s apart:
+   `currentTime` went `4817.627` → `4827.45` → `4838.48` - **genuinely advancing**, not stalled. `paused:false` confirmed.
+7. **Screenshot of the actual decoded frame**: a real, recognizable Matrix (1999) scene (SWAT-team/hooded-figure interrogation-room shot) - not a black screen, not a poster placeholder, not a frozen frame-0.
+8. `agent-browser close --all` + stopped the dev server afterward (confirmed `curl localhost:5173` times out / connection refused).
+
+### Regression check: Night of the Living Dead (H.264) still DirectPlays
+
+Same session, navigated to `/player/5807383ad79299cdb6bd2e496beb3b8a`:
+`video.currentSrc` resolved to the exact same DirectPlay shape as Slice 7
+(`.../Videos/{id}/stream.mp4?static=true&mediaSourceId={id}&api_key={token}`),
+`readyState:4`, `videoWidth:640`/`videoHeight:480` (same known dimensions as
+Slice 7's validation). Clicked play, `currentTime` advanced `0` → `3.065s`
+within ~3s, `paused:false`, `errorCode:null`. **No regression** - the device
+profile change did not affect the DirectPlay path for genuinely
+DirectPlay-eligible content.
+
+### Production redeploy + re-verification at `:8600`
+
+Per this batch's instructions:
+
+```
+npm run build && rm -rf infra/www/* && cp -r dist/* infra/www/ && \
+docker compose -f infra/docker-compose.yml restart caddy
+```
+
+`infra/www/` and `dist/` are both gitignored build-output directories (see
+`.gitignore` lines 11-19) - this redeploy step touches only generated
+artifacts, never source or the `openspec/`/`infra/Caddyfile`/
+`infra/docker-compose.yml` files themselves. `poisonflix-proxy` restarted
+cleanly (`docker ps` confirmed `Up` within 2s), `curl localhost:8600/` → `200`.
+
+Re-ran the exact same live checks against `http://localhost:8600/` (native
+Docker, no virtiofs staleness concern):
+- Logged in fresh at `:8600` → real Home.
+- The Matrix (`/player/57464bb8...`): `hasVideo:true`, `src` a fresh `blob:http://localhost:8600/...` URL, `readyState:4`, `videoWidth:1920`/`videoHeight:800`, `errorCode:null`. Clicked play: `currentTime` advanced `4867.5` → `4871.6` over ~4s. Screenshot captured - a real decoded dark interior frame (Neo's trenchcoat scene), not a black screen.
+- Night of the Living Dead (`/player/5807383ad7...`): `src` resolved to the same DirectPlay shape (fresh `api_key` for the `:8600` session), `readyState:4`, `errorCode:null` - no regression at the production proxy either.
+- `agent-browser close --all` afterward. No throwaway routes/scripts committed; screenshots live in the session scratchpad, not the repo.
+
+**Verdict: the critical playback bug is fixed and live-verified in both dev
+and production topologies.** HEVC/EAC3/MKV content (previously silently
+unplayable) now genuinely transcodes to HLS and plays via hls.js -
+`readyState:4`, real non-zero decoded frame dimensions, `currentTime`
+genuinely advancing, a real recognizable decoded frame on screen, and a
+clean `200`-only HLS manifest/segment chain through the same-origin proxy
+with zero `401`s. H.264/AAC content continues to DirectPlay with no
+regression, in both dev and the redeployed production proxy.

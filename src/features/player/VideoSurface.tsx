@@ -1,36 +1,46 @@
+import Hls from 'hls.js';
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import type { PlaybackSource } from '../../lib/domain/streamResolver';
 import './VideoSurface.css';
 
 // `<video>` wrapper (design.md §10, ← `PlaybackController.kt`, tasks.md
-// 7.2/7.3/7.6). DirectPlay only for the MVP - `PlayerScreen` never mounts
-// this component for a `Transcoded` source; it renders the explicit
-// not-supported state itself instead (player spec: no silent playback
-// attempt). Custom controls sit over the native `<video>` (play/pause, seek
-// bar, volume/mute, back, fullscreen), auto-hiding after inactivity and
+// 7.2/7.3/7.6). Handles BOTH `PlaybackSource` variants:
+// - `DirectPlay` -> `video.src` set directly (existing, live-validated path).
+// - `Transcoded` (server-side HLS transcode) -> `hls.js` when
+//   `Hls.isSupported()`, else native HLS (`video.canPlayType(...)`, i.e.
+//   Safari) via `video.src`, else the genuinely-rare "not playable in this
+//   browser" case surfaced via `onUnsupported`.
+// Custom controls sit over the native `<video>` (play/pause, seek bar,
+// volume/mute, back, fullscreen), auto-hiding after inactivity and
 // keyboard-operable (space/enter toggles play, arrow keys seek/adjust
 // volume) so the same primitive can later opt into webOS spatial nav
 // without restructuring (design.md §9).
 //
-// Carried-forward hls.js design notes (NOT implemented here - deferred per
-// the player spec's Deferred section):
-// 1. Resume-seek-after-ready: under hls.js the seek must be REAPPLIED after
-//    a *second* ready event fires (`PlaybackController.kt` L96-104,
-//    L199-205) - DirectPlay only needs the single seek-once-on-metadata
-//    guard below because the whole file is byte-addressable from the start
-//    (Slice 2's SPIKE VERDICT: GO). Re-verify this guard once transcode
-//    lands.
+// Carried-forward hls.js gotchas (design.md §10, `PlaybackController.kt`):
+// 1. Resume-seek-after-ready: under HLS (hls.js OR native), the resume seek
+//    must be applied only after the manifest/source is genuinely ready
+//    (hls.js's `MANIFEST_PARSED` event, or the video's `canplay` event for
+//    native HLS) - NOT on `loadedmetadata`, which DirectPlay honors but HLS
+//    does not reliably (`PlaybackController.kt` L96-104, L199-205). The
+//    `loadedmetadata` handler below only fires the seek for `DirectPlay`;
+//    `canplay` remains the catch-all for every mode (idempotent via the
+//    seek-once guard).
 // 2. Subtitle id-prefix bug (`PlaybackController.kt` L265-275): hls.js's
 //    text-track ids need prefix/suffix matching, never exact `==`, once
-//    transcode+subtitle track switching lands. N/A for DirectPlay - no
-//    subtitle track switching in this slice.
+//    transcode+subtitle track switching lands (still deferred - this file
+//    only plays video/audio, no subtitle tracks yet).
 
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const SEEK_STEP_SECONDS = 10;
 const VOLUME_STEP = 0.1;
 
+function sourceKey(source: PlaybackSource): string {
+  return source.kind === 'DirectPlay' ? `direct:${source.url}` : `hls:${source.hlsUrl}`;
+}
+
 export interface VideoSurfaceProps {
   videoRef: RefObject<HTMLVideoElement>;
-  src: string;
+  source: PlaybackSource;
   /** Resume position in seconds; `0` means "no seek" (player spec). */
   resumeSeconds: number;
   title: string;
@@ -39,6 +49,8 @@ export interface VideoSurfaceProps {
   onPause: () => void;
   onEnded: () => void;
   onError: () => void;
+  /** Fired when neither hls.js nor native HLS is available for a `Transcoded` source - a genuinely rare "this browser can't play this" case. */
+  onUnsupported: () => void;
 }
 
 function formatTime(totalSeconds: number): string {
@@ -53,7 +65,7 @@ function formatTime(totalSeconds: number): string {
 
 export function VideoSurface({
   videoRef,
-  src,
+  source,
   resumeSeconds,
   title,
   onBack,
@@ -61,6 +73,7 @@ export function VideoSurface({
   onPause,
   onEnded,
   onError,
+  onUnsupported,
 }: VideoSurfaceProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -75,16 +88,19 @@ export function VideoSurface({
   const hasSeekedResumeRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
-  // A new `src` (different item) must reset every per-playback guard/state,
-  // or resume-seek and the displayed clock would silently carry over from
-  // whatever was playing before.
+  const key = sourceKey(source);
+
+  // A new source (different item, or DirectPlay<->Transcoded switch) must
+  // reset every per-playback guard/state, or resume-seek and the displayed
+  // clock would silently carry over from whatever was playing before.
   useEffect(() => {
     hasSeekedResumeRef.current = false;
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
-  }, [src]);
+  }, [key]);
 
   const applyResumeSeekOnce = () => {
     const video = videoRef.current;
@@ -95,6 +111,51 @@ export function VideoSurface({
       setCurrentTime(resumeSeconds);
     }
   };
+
+  // Attaches the resolved source to the <video> element: DirectPlay sets
+  // `src` directly; Transcoded (HLS) prefers hls.js (works in every
+  // evergreen browser lacking native HLS - Chrome, Firefox, Edge), falls
+  // back to native HLS (`video.src`) for Safari, and surfaces the rare
+  // "can't play this" case via `onUnsupported` otherwise.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (source.kind === 'DirectPlay') {
+      video.src = source.url;
+      return undefined;
+    }
+
+    // Transcoded: server-side HLS.
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hlsRef.current = hls;
+      hls.on(Hls.Events.MANIFEST_PARSED, applyResumeSeekOnce);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) onError();
+      });
+      hls.loadSource(source.hlsUrl);
+      hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS (Safari) - no hls.js instance to manage.
+      video.src = source.hlsUrl;
+    } else {
+      onUnsupported();
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
 
   const scheduleHideControls = () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -206,11 +267,16 @@ export function VideoSurface({
         ref={videoRef}
         className="pf-player-surface__video"
         data-testid="pf-video"
-        src={src}
+        // `src` is set imperatively (DirectPlay direct assignment, or hls.js
+        // attachMedia/native-HLS assignment) in the effect above - never via
+        // this JSX attribute, so React never fights hls.js for control of it.
         autoPlay
         onLoadedMetadata={() => {
           setDuration(videoRef.current?.duration ?? 0);
-          applyResumeSeekOnce();
+          // Gotcha (file header, point 1): only DirectPlay's resume seek is
+          // safe on `loadedmetadata` - HLS (hls.js or native) seeks on
+          // MANIFEST_PARSED/`canplay` instead.
+          if (source.kind === 'DirectPlay') applyResumeSeekOnce();
         }}
         onCanPlay={applyResumeSeekOnce}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}

@@ -119,11 +119,27 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 
 **MVP COMPLETE** — all 8 slices (0-7) implemented and live-validated. See apply-progress.md's Slice 7 section for full evidence (real playback, readyState/currentTime/videoWidth numbers, heartbeat cadence confirmed at exactly 10,000ms).
 
+## Slice 8: HLS transcode playback (post-MVP fix) — COMPLETE
+
+Un-deferred from the list below: the MVP shipped DirectPlay-only, which
+silently failed to play any HEVC/EAC3/MKV title (confirmed live: The Matrix,
+itemId `57464bb8693566f4b95737a0ea361154`, `video.canPlayType('...hvc1...')`
+returns `""`). Root cause was a `DeviceProfile: null` on every `PlaybackInfo`
+request, which made Jellyfin assume DirectPlay was always safe.
+
+- [x] 8.1 `src/lib/domain/deviceProfile.ts`: `createBrowserDeviceProfile()`, ported from the native `DeviceProfileFactory.kt` - narrow H.264/AAC/mp4 `DirectPlayProfiles` + an HLS (`ts`, h264/aac) `TranscodingProfile`.
+- [x] 8.2 `usePlaybackInfo.ts` wires the real device profile into every `getPlaybackInfo` call (was `null`).
+- [x] 8.3 `streamResolver.ts` confirmed correct as-is: `TranscodingUrl` -> `Transcoded(hlsUrl)`, joined onto the same-origin `/jellyfin` base with the token Jellyfin embeds in the URL - no change needed.
+- [x] 8.4 `VideoSurface.tsx`: handles both `PlaybackSource` variants - DirectPlay unchanged; Transcoded uses `hls.js` (`Hls.isSupported()`), falls back to native HLS (`video.canPlayType('application/vnd.apple.mpegurl')`, Safari), and surfaces a genuinely-rare `onUnsupported` case otherwise. Resume-seek gotcha carried forward correctly: HLS seeks on `MANIFEST_PARSED`/`canplay`, never on `loadedmetadata` (that stays DirectPlay-only).
+- [x] 8.5 `PlayerScreen.tsx`: removed the old "not supported in this version" branch (replaced by real playback); distinguishes a real 401 on the `PlaybackInfo` fetch (session message) from any other fetch failure (load message) from a mid-playback `<video>`/hls.js fatal error (playback message) from the rare unsupported-browser case.
+- [x] 8.6 Unit tests: `deviceProfile.test.ts` (profile shape, no HEVC/EAC3/AC3/DTS whitelisted), `VideoSurface.test.tsx` (hls.js load + destroy-on-unmount/source-change + fatal-error + unsupported-browser branches, resume-seek-timing guard), `PlayerScreen.test.tsx` (Transcoded now plays instead of refusing, 401-vs-generic error message distinction).
+- [x] 8.7 **Live verification (agent-browser, MANDATORY)**: The Matrix (HEVC) genuinely plays via transcoded HLS - `readyState:4`, real `1920x800` decoded frames, `currentTime` advancing, real HLS manifest/segment requests all `200` through the `/jellyfin` proxy, screenshot of a real decoded frame. Night of the Living Dead (H.264) still DirectPlays with no regression. Re-verified identically against the production Caddy proxy at `:8600` after rebuild+redeploy. See apply-progress.md's Slice 8 section for full evidence.
+
 ## Deferred (explicitly NOT tasks in this MVP)
 
 - webOS `.ipk` build + `norigin-spatial-navigation` wiring (`lib/platform/webos.ts` stays a stub).
 - PWA offline caching / install prompt (plugin present, inactive).
-- hls.js transcode playback + audio/subtitle track switching.
+- Audio/subtitle track switching (transcode playback itself is no longer deferred - see Slice 8).
 - Continue Watching / Downloading polling rows (`Items/Resume`, Jellyseerr request-list poll).
 - +18 PIN gate.
 - 10 genre/category rows.

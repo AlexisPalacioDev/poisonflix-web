@@ -6,6 +6,7 @@ import { PlayerScreen } from './PlayerScreen';
 import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 import { getItem, getPlaybackInfo } from '../../api/jellyfin';
+import { ApiError } from '../../lib/http/errors';
 
 vi.mock('../../api/jellyfin', async () => {
   const actual = await vi.importActual<typeof import('../../api/jellyfin')>('../../api/jellyfin');
@@ -18,6 +19,41 @@ vi.mock('../../api/jellyfin', async () => {
     reportStopped: vi.fn().mockResolvedValue(undefined),
   };
 });
+
+// Same controllable fake as VideoSurface.test.tsx - jsdom has no
+// MediaSource Extensions, so a real hls.js would never actually attach.
+// Built inside `vi.hoisted` because `vi.mock` factories are hoisted above
+// every other top-level statement (referencing an outer `class` declared
+// later in the file hits a TDZ error at mock-eval time).
+const hoisted = vi.hoisted(() => {
+  const instances: InstanceType<typeof FakeHls>[] = [];
+
+  class FakeHls {
+    static Events = { MANIFEST_PARSED: 'hlsManifestParsed', ERROR: 'hlsError' } as const;
+    static isSupported() {
+      return true;
+    }
+
+    handlers: Record<string, (...args: unknown[]) => void> = {};
+    loadSource = vi.fn();
+    attachMedia = vi.fn();
+    destroy = vi.fn();
+
+    constructor() {
+      instances.push(this);
+    }
+
+    on(event: string, cb: (...args: unknown[]) => void) {
+      this.handlers[event] = cb;
+    }
+  }
+
+  return { instances, FakeHls };
+});
+
+const hlsInstances = hoisted.instances;
+
+vi.mock('hls.js', () => ({ default: hoisted.FakeHls }));
 
 const mockedGetPlaybackInfo = vi.mocked(getPlaybackInfo);
 const mockedGetItem = vi.mocked(getItem);
@@ -41,11 +77,13 @@ function renderPlayer(itemId = 'jf-item-1') {
   );
 }
 
-describe('PlayerScreen (player spec: "DirectPlay-only stream resolution")', () => {
+describe('PlayerScreen (player spec: stream resolution + honest error messages)', () => {
   afterEach(() => {
     clearSession();
     mockedGetPlaybackInfo.mockReset();
     mockedGetItem.mockReset();
+    hlsInstances.length = 0;
+    vi.clearAllMocks();
   });
 
   it('DirectPlay: sets the <video> src to the resolved api_key-authenticated URL', async () => {
@@ -76,9 +114,10 @@ describe('PlayerScreen (player spec: "DirectPlay-only stream resolution")', () =
       'src',
       '/jellyfin/Videos/jf-item-1/stream.mp4?static=true&mediaSourceId=ms-1&api_key=tok-1',
     );
+    expect(hlsInstances).toHaveLength(0);
   });
 
-  it('Transcode-only: shows the explicit not-supported state and never renders a <video>', async () => {
+  it('Transcode-only (e.g. HEVC): loads the HLS TranscodingUrl via hls.js instead of refusing playback', async () => {
     mockedGetPlaybackInfo.mockResolvedValue({
       MediaSources: [
         {
@@ -101,8 +140,10 @@ describe('PlayerScreen (player spec: "DirectPlay-only stream resolution")', () =
 
     renderPlayer('jf-item-2');
 
-    await screen.findByText(/no es compatible en esta versi.n/i);
-    expect(screen.queryByTestId('pf-video')).not.toBeInTheDocument();
+    await screen.findByTestId('pf-video');
+    expect(hlsInstances).toHaveLength(1);
+    expect(hlsInstances[0].loadSource).toHaveBeenCalledWith('/jellyfin/videos/item-1/master.m3u8');
+    expect(screen.queryByText(/no es compatible/i)).not.toBeInTheDocument();
   });
 
   it('resolves the resume position from UserData.PlaybackPositionTicks into seconds', async () => {
@@ -135,5 +176,33 @@ describe('PlayerScreen (player spec: "DirectPlay-only stream resolution")', () =
     // by firing the ready event and checking the guard actually applied it.
     fireEvent.loadedMetadata(video);
     expect(video.currentTime).toBe(10);
+  });
+
+  it('a real 401 on the PlaybackInfo fetch shows a session/auth message, not a generic one', async () => {
+    mockedGetPlaybackInfo.mockRejectedValue(new ApiError(401, 'Unauthorized'));
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-4',
+      Name: 'Any movie',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+    } as never);
+
+    renderPlayer('jf-item-4');
+
+    await screen.findByText(/sesión expiró/i);
+    expect(screen.queryByTestId('pf-video')).not.toBeInTheDocument();
+  });
+
+  it('a network/PlaybackInfo failure that is NOT a 401 shows a load-failure message, not the auth one', async () => {
+    mockedGetPlaybackInfo.mockRejectedValue(new Error('boom'));
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-5',
+      Name: 'Any movie',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+    } as never);
+
+    renderPlayer('jf-item-5');
+
+    await screen.findByText(/no se pudo cargar la información de reproducción/i);
+    expect(screen.queryByText(/sesión expiró/i)).not.toBeInTheDocument();
   });
 });
