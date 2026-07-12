@@ -24,10 +24,23 @@ export interface ResolvedStream {
 }
 
 const TICKS_PER_MS = 10_000;
+const TICKS_PER_SECOND = TICKS_PER_MS * 1_000;
 
 /** Jellyfin ticks (100ns units) -> whole milliseconds. */
 export function ticksToMs(ticks: number): number {
   return Math.floor(ticks / TICKS_PER_MS);
+}
+
+/**
+ * Playback position in seconds -> Jellyfin ticks (100ns units). This is the
+ * inverse direction from `resumePositionMs` - used by `usePlaybackHeartbeat`
+ * (Slice 7) to report `PositionTicks` on `Sessions/Playing|Progress|Stopped`
+ * (`JellyfinApi.kt` L102-109). Negative/non-finite input clamps to 0 rather
+ * than sending a nonsensical position to the server.
+ */
+export function secondsToTicks(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return Math.round(seconds * TICKS_PER_SECOND);
 }
 
 /**

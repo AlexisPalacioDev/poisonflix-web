@@ -107,15 +107,17 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 - [x] 6.5 Wire failure: show error, action reverts to pre-submission enabled state, no optimistic change.
 - [x] 6.6 Component test: all 3 badge branches + success/failure status reflection.
 
-## Slice 7: Player (builds on Slice 2's validated spike)
+## Slice 7: Player (builds on Slice 2's validated spike) — COMPLETE
 
-- [ ] 7.1 `src/hooks/usePlaybackInfo.ts`: PlaybackInfo -> resolved source via the validated `streamResolver.ts`, `staleTime: 0`.
-- [ ] 7.2 `src/features/player/VideoSurface.tsx`: `<video>` wrapper; DirectPlay sets `src`; `TranscodingUrl` present -> explicit "not supported in this version" state, no playback attempt.
-- [ ] 7.3 Resume: seek on `canplay`/`loadedmetadata` when resume position > 0; no seek at 0/absent.
-- [ ] 7.4 `src/hooks/usePlaybackHeartbeat.ts`: `Sessions/Playing` on start, `Sessions/Progress` ~10s interval, `Sessions/Stopped` on pause/unmount/navigation; interval cleared on unmount.
-- [ ] 7.5 `src/features/player/PlayerScreen.tsx`: wires info+surface+heartbeat; surfaces a clear playback-auth error on 401/403 instead of a silent black screen.
-- [ ] 7.6 Code comment in `VideoSurface.tsx` carrying forward the two hls.js gotchas (subtitle id-prefix match, resume-seek-after-ready) as design notes only — no implementation.
-- [ ] 7.7 Tests: DirectPlay src set correctly from mocked PlaybackInfo; transcode-only movie shows not-supported state without attempting playback.
+- [x] 7.1 `src/hooks/usePlaybackInfo.ts`: PlaybackInfo -> resolved source via the validated `streamResolver.ts`, `staleTime: 0`.
+- [x] 7.2 `src/features/player/VideoSurface.tsx`: `<video>` wrapper; DirectPlay sets `src`; `TranscodingUrl` present -> explicit "not supported in this version" state, no playback attempt.
+- [x] 7.3 Resume: seek on `canplay`/`loadedmetadata` when resume position > 0; no seek at 0/absent.
+- [x] 7.4 `src/hooks/usePlaybackHeartbeat.ts`: `Sessions/Playing` on start, `Sessions/Progress` ~10s interval, `Sessions/Stopped` on pause/unmount/navigation; interval cleared on unmount.
+- [x] 7.5 `src/features/player/PlayerScreen.tsx`: wires info+surface+heartbeat; surfaces a clear playback-auth error on 401/403 instead of a silent black screen.
+- [x] 7.6 Code comment in `VideoSurface.tsx` carrying forward the two hls.js gotchas (subtitle id-prefix match, resume-seek-after-ready) as design notes only — no implementation.
+- [x] 7.7 Tests: DirectPlay src set correctly from mocked PlaybackInfo; transcode-only movie shows not-supported state without attempting playback.
+
+**MVP COMPLETE** — all 8 slices (0-7) implemented and live-validated. See apply-progress.md's Slice 7 section for full evidence (real playback, readyState/currentTime/videoWidth numbers, heartbeat cadence confirmed at exactly 10,000ms).
 
 ## Deferred (explicitly NOT tasks in this MVP)
 

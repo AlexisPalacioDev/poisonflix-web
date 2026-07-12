@@ -1,0 +1,33 @@
+/* Player screen (player spec) - full-bleed <video> surface; non-playing
+   states (loading/error/not-supported) render as a centered status card. */
+
+.pf-player-screen {
+  min-height: 100vh;
+  background: #000;
+}
+
+.pf-player-screen__status {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--pf-text);
+  text-align: center;
+  padding: 24px;
+}
+
+.pf-player-screen__status--error {
+  color: var(--pf-danger);
+}
+
+.pf-player-screen__status button {
+  padding: 10px 24px;
+  border-radius: 999px;
+  border: 2px solid var(--pf-gold);
+  background: transparent;
+  color: var(--pf-gold);
+  cursor: pointer;
+  font-weight: 600;
+}

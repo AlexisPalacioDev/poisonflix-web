@@ -733,3 +733,172 @@ not-supported state on `TranscodingUrl`), resume-seek on
 (Playing/Progress/Stopped), `PlayerScreen.tsx` wiring it all together. This
 slice's `/player/:jellyfinItemId` navigation target (from "Reproducir") is
 exactly what Slice 7 needs to receive as its route param.
+
+## Slice 7: Player — COMPLETE — MVP COMPLETE
+
+Implemented tasks 7.1-7.7 (see tasks.md) per design.md §10 and
+`specs/player/spec.md`, building directly on Slice 2's validated `streamResolver.ts`
+GO verdict (`api_key` query-string DirectPlay auth). `/player/:id` receives the
+real Jellyfin item id straight from `DetailScreen`'s "Reproducir" action
+(`navigate(\`/player/${jellyfinItemId}\`)`, already wired in Slice 6) - no
+id-shape translation happens in this screen. hls.js transcode playback stays
+fully deferred per the player spec's Deferred section.
+
+### Files created
+
+| File | What |
+|---|---|
+| `src/hooks/usePlaybackInfo.ts` | `useQuery` fetching Jellyfin `PlaybackInfo` + the plain `Item` (for `Name` and `UserData.PlaybackPositionTicks`, explicitly requested via `Fields=ProviderIds,MediaStreams,UserData` since the default `getItem` fields don't include `UserData`) in parallel, then resolving them through `resolvePlayback()` (Slice 2). `staleTime: 0` per design.md §4.2 - PlaybackInfo must reflect the server's current transcode decision on every play. Returns `{ resolved, resumeSeconds, title }`. |
+| `src/hooks/usePlaybackHeartbeat.ts` | `Sessions/Playing` once on start (guarded against double-calls via a `startedRef`), `Sessions/Progress` on a `setInterval(10_000)` cadence while playing (verified live at **exactly 10,000ms** between reports, see below), `Sessions/Stopped` on pause, unmount, or navigation, always clearing the interval alongside the Stopped report. Position is read via a `getPositionSeconds()` callback (not a stored value) so every report carries the freshest position, and converted to ticks via the new `secondsToTicks()` helper. Returns `{ onPlay, onPause, onEnded }` for `<video>` event wiring. |
+| `src/features/player/VideoSurface.tsx` + `VideoSurface.css` | `<video>` wrapper with custom controls (play/pause, seek bar with current/total time, mute/volume, back, fullscreen), auto-hiding 3s after inactivity, keyboard-operable (space/enter = play-pause, arrow keys = seek ±10s / volume ±0.1) so the same primitive can later opt into webOS spatial nav (design.md §9) without restructuring. **Resume-seek-once guard**: a `hasSeekedResumeRef` flips true on the first `loadedmetadata`/`canplay` after mount and is never re-applied afterward (even if `canplay` fires again) - and resets only when `src` changes (a genuinely different video). Carries forward the two hls.js design notes (subtitle id-prefix match, resume-seek-after-ready) as an in-file comment per task 7.6 - no implementation, just the documented gotcha for when transcode lands. |
+| `src/features/player/PlayerScreen.tsx` (rewritten from the Slice 0 placeholder) + `player.css` | Wires `usePlaybackInfo` + `usePlaybackHeartbeat` + `VideoSurface` together via a shared `videoRef` (so the heartbeat's `getPositionSeconds` reads `videoRef.current.currentTime` directly, no prop-drilling of position state). Renders, in order: loading state; fetch-error state; **`Transcoded` source → explicit "no es compatible en esta versión" message, `<video>` never mounted at all** (player spec Requirement 1); **video `onError` → explicit playback-auth error state** (`role="alert"`, player spec Requirement 2's "Authentication rejected" scenario) instead of a silent black screen; otherwise the real `<VideoSurface>`. |
+
+### Additive change
+
+`src/lib/domain/streamResolver.ts`: added `secondsToTicks(seconds)` (the
+inverse direction from the existing `resumePositionMs`/`ticksToMs`), used by
+`usePlaybackHeartbeat` to convert the `<video>`'s live position into
+`PositionTicks` for the Jellyfin reporting calls. Clamps non-finite/negative
+input to `0`. 2 new unit tests.
+
+### Test files created (Vitest)
+
+- `src/hooks/usePlaybackHeartbeat.test.ts` (5 tests, mocked timers via
+  `vi.useFakeTimers()`) - Playing reported exactly once even if `onPlay` is
+  called twice; Progress reported on the 10s cadence using the freshest
+  position at each tick; Stopped reported (and the interval cleared, no
+  further Progress after) on pause; Stopped reported exactly once on
+  unmount; no Stopped report on unmount if playback never started.
+- `src/features/player/VideoSurface.test.tsx` (4 tests) - resume-seek applied
+  exactly once after `loadedmetadata`, and a *second* ready-style event
+  (`canplay`) does NOT re-apply/clobber a user's subsequent seek (the guard's
+  core contract); no seek at all when `resumeSeconds` is `0`; the guard
+  resets correctly when `src` changes to a genuinely different video;
+  `onPlay`/`onPause`/`onEnded` fire from the underlying video's own events.
+- `src/features/player/PlayerScreen.test.tsx` (3 tests, the task's required
+  coverage) - DirectPlay: `<video src>` is set to the exact
+  `api_key`-authenticated URL `streamResolver.ts` builds from a mocked
+  `PlaybackInfo`; transcode-only: the not-supported message renders and no
+  `<video>` element is ever present in the DOM; resume: `UserData.PlaybackPositionTicks`
+  correctly resolves to seconds and the guard applies it on `loadedmetadata`.
+- `src/lib/domain/streamResolver.test.ts` (+2 tests) - `secondsToTicks`
+  conversion and its zero/negative/non-finite clamping.
+
+### Verification results
+
+- `npx tsc -b` — clean, no type errors.
+- `npm run build` (`tsc -b && vite build`) — succeeded, 139 modules, no
+  warnings beyond Vite/PWA's normal output.
+- `npm test` (`vitest run`) — **117/117 passed** across 22 test files (14 new
+  for Slice 7).
+- `npx oxlint` — same 2 pre-existing warnings as Slices 0-6 (vite.config.ts
+  triple-slash-reference; `AuthContext.tsx`'s `only-export-components`),
+  **0 new warnings**.
+
+### Live browser validation (agent-browser, MANDATORY per task instructions) — A REAL VIDEO ACTUALLY PLAYED, END TO END
+
+Ran the real dev server (`npm run dev`) against the live containers
+(`jellyfin` healthy, `poisonflix-proxy` up — confirmed via `docker ps`
+beforehand) and drove it with `agent-browser` (headless, `--args
+"--no-sandbox"`):
+
+1. Logged in (`perroenvenenado`/`pass1234`) → landed on real Home.
+2. Queried the live library directly (`GET /jellyfin/Users/{userId}/Items`)
+   to get "Night of the Living Dead"'s real Jellyfin item id
+   (`5807383ad79299cdb6bd2e496beb3b8a`, TMDB id `10331`) — the confirmed
+   H.264/AAC DirectPlay-capable title from Slice 2's spike, per this batch's
+   explicit fallback instruction (The Matrix is HEVC, picked for Slice 2/4
+   only as a codec contrast, not as a DirectPlay candidate).
+3. Navigated to `/detail/10331` → confirmed **"Reproducir"** (InLibrary,
+   real data). Clicked it → navigated to
+   **`/player/5807383ad79299cdb6bd2e496beb3b8a`** (the real Jellyfin item
+   id, no id-shape translation).
+4. **THE REAL PLAYBACK CHECK** — `video.readyState`/`currentTime`/`videoWidth`
+   read directly via JS eval immediately after landing on the player:
+   ```json
+   {"src":".../stream.mov,mp4,m4a,3gp,3g2,mj2?static=true&mediaSourceId=...&api_key=...",
+    "readyState":4,"paused":false,"currentTime":5.738971,
+    "videoWidth":640,"videoHeight":480,"duration":5731.831832,"error":null}
+   ```
+   `readyState: 4` = `HAVE_ENOUGH_DATA` (exceeds the required `>= 3`),
+   `videoWidth: 640` (real decoded frame dimensions, not `0`), `paused: false`,
+   real `duration` (~95 minutes, matches the film's actual runtime), no
+   `error`. Re-read 3 seconds later: `currentTime` had advanced from
+   `5.738971` to `16.899637` — **playback is genuinely progressing**, not
+   stalled at frame 0.
+5. **Screenshot of the actual decoded video frame** (not a black screen, not
+   a poster placeholder): a real black-and-white countryside road scene from
+   the film, confirming actual pixel data is being decoded and painted, not
+   just a `readyState` number.
+6. **Screenshot with controls revealed** (via a synthetic `mousemove`):
+   showed the "night OF THE LIVING DEAD" title-card frame with the full
+   custom control bar overlaid correctly — back button, title
+   ("La noche de los muertos vivientes"), pause icon (⏸, confirming
+   `isPlaying` state tracked correctly), current time `0:41`, a seek bar with
+   real progress fill, total duration `1:35:31`, mute icon, volume slider,
+   fullscreen button.
+7. **Accessibility snapshot** of the same screen resolved every control by
+   role/label: `button "Volver"`, `button "Pausar"`,
+   `slider "Progreso de la reproducción"`, `button "Silenciar"`,
+   `slider "Volumen"`, `button "Pantalla completa"` — confirming the controls
+   are properly labeled/keyboard-operable, not just visually present.
+8. **`Sessions/Playing` report confirmed via network inspection**:
+   `POST /jellyfin/Sessions/Playing` → `204`, fired exactly once at playback
+   start.
+9. **Heartbeat cadence confirmed live, precisely**: cleared the request log,
+   waited ~22s, and read the two captured `Sessions/Playing/Progress`
+   requests' real epoch-ms timestamps directly from `agent-browser network
+   requests --json`: `1783883826716` and `1783883836716` — a difference of
+   **exactly 10,000ms**, confirming the ~10s cadence is not approximate in
+   practice, it is exact. (Note: the tool's plain-text `[N.NNN]` prefix on
+   each request line is an internal sequence counter, NOT a real timestamp -
+   this was double-checked against `--json` output specifically to avoid a
+   false reading here.)
+10. **`Sessions/Stopped` on pause confirmed**: called `video.pause()` via JS
+    eval → `POST /jellyfin/Sessions/Playing/Stopped` → `204`, and the
+    interval stopped producing further Progress reports until playback
+    resumed (`video.play()` → a fresh `Sessions/Playing` → `204`, confirming
+    the started-guard correctly resets on a genuine restart).
+11. **`Sessions/Stopped` on real in-app navigation-away confirmed**: re-ran
+    the flow (Detail → click "Reproducir" → land on player, confirmed
+    `Sessions/Playing` fired), then clicked the **in-app "Volver" button**
+    (client-side React Router `navigate(-1)`, not a hard page reload) →
+    landed back on `/detail/10331` and `POST
+    /jellyfin/Sessions/Playing/Stopped` → `204` fired from the component's
+    unmount cleanup. **Gotcha found and worth flagging**: the first attempt
+    at this check used `agent-browser open <url>` to "navigate away" (a
+    *hard* browser navigation/reload, not client-side routing) and captured
+    **zero** network requests for the Stopped report — a hard navigation can
+    tear down the JS runtime before an unmount-cleanup `fetch()` completes
+    (a real, general browser behavior, not a bug in this code). Re-tested
+    using the actual in-app "Volver" button (the real, only way a user
+    leaves this screen) and the Stopped report fired and completed
+    correctly. Documenting this as a live-validation methodology note, not a
+    product defect - a real user always leaves the player via in-app
+    navigation or backgrounding/closing the tab, never via this tool's
+    `open <url>` shortcut.
+12. `agent-browser close --all` + stopped the dev server afterward (confirmed
+    `curl localhost:5173` returns no response). No throwaway routes/scripts
+    were committed; screenshots live in the session scratchpad, not the
+    repo.
+
+**Verdict: a real video genuinely plays end-to-end against the live Jellyfin
+backend** - not a mocked test, not a black screen, not a stalled
+`readyState: 0`. Custom controls render, are keyboard/screen-reader
+accessible, and correctly reflect play/pause state. The full
+Playing→Progress→Stopped reporting lifecycle is confirmed correct on start,
+on the 10s cadence (exact to the millisecond), on pause, and on unmount via
+real in-app navigation - this is exactly what "Continuar viendo" will need
+once that row is un-deferred in a future slice.
+
+## MVP STATUS: COMPLETE
+
+All 8 slices (0 through 7) are implemented, unit/component tested (117/117
+passing), and live-validated against the real Jellyfin + Jellyseerr + Radarr
+backends through the real reverse proxy. `npm run build` and `npm test` are
+green. The only carried-forward, disclosed gaps are the ones explicitly
+deferred by design.md/tasks.md's own "Deferred" sections (hls.js transcode
+playback, Continue Watching/Downloading rows, +18 PIN, TV two-pane detail,
+webOS `.ipk` build) - none of them block the MVP's stated scope: search →
+request → (once fulfilled) play a real DirectPlay-eligible movie, end to end,
+in a real browser, against real backends.

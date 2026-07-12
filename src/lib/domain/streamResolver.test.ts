@@ -5,6 +5,7 @@ import {
   resolvePlayback,
   resolveStreamSource,
   resumePositionMs,
+  secondsToTicks,
   ticksToMs,
 } from './streamResolver';
 
@@ -44,6 +45,19 @@ describe('resumePositionMs', () => {
     expect(resumePositionMs(-5)).toBe(0);
     expect(resumePositionMs(null)).toBe(0);
     expect(resumePositionMs(undefined)).toBe(0);
+  });
+});
+
+describe('secondsToTicks', () => {
+  it('converts a positive seconds value to Jellyfin ticks (100ns units)', () => {
+    expect(secondsToTicks(10)).toBe(100_000_000);
+    expect(secondsToTicks(1.5)).toBe(15_000_000);
+  });
+
+  it('clamps zero/negative/non-finite input to 0', () => {
+    expect(secondsToTicks(0)).toBe(0);
+    expect(secondsToTicks(-5)).toBe(0);
+    expect(secondsToTicks(Number.NaN)).toBe(0);
   });
 });
 
