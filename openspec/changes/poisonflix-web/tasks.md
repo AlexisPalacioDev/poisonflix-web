@@ -88,9 +88,9 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 
 ## Slice 5: Search
 
-- [ ] 5.1 `src/hooks/useDebouncedValue.ts`: 350ms debounce primitive.
+- [x] 5.1 `src/hooks/useDebouncedValue.ts`: 350ms debounce primitive. **Done in Slice 1** (pulled forward, see note there) — do not redo.
 - [ ] 5.2 `src/lib/domain/dedup.ts`: `distinctBy(id)`.
-- [ ] 5.3 `src/lib/domain/libraryIndex.ts`: badge resolver — TMDB id match + title+year fallback -> `InLibrary|Requesting|Requestable`.
+- [x] 5.3 `src/lib/domain/libraryIndex.ts`: badge resolver — TMDB id match + title+year fallback -> `InLibrary|Requesting|Requestable`. **Done in Slice 1** (pulled forward, see note there) — do not redo.
 - [ ] 5.4 `src/hooks/useSearch.ts`: `enabled` gated on length>=2 of debounced value, dedup + badge join, `staleTime` ~30s.
 - [ ] 5.5 `src/features/search/SearchScreen.tsx`: input + results carousel + large preview panel.
 - [ ] 5.6 Unit tests: debounce (below-min, rapid-retype, single-fire-on-settle), `dedup.ts`, `libraryIndex.ts` (all 4 branches).
