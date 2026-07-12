@@ -640,13 +640,96 @@ encoding issue) was caught and fixed specifically because live validation
 was run against the real Jellyseerr instance instead of stopping at mocked
 component tests.
 
+### Next up (superseded — see Slice 6 section below)
+
+## Slice 6: Detail + Request — COMPLETE
+
+Implemented tasks 6.1-6.6 (see tasks.md) per design.md §4.4/§7 and
+`specs/detail-request/spec.md`. Movies-only MVP (TV two-pane detail stays
+deferred per the spec's Deferred section). Reused Slice 5's
+`LibraryIndex`/`TitleStatus` join verbatim — Detail needed no new domain
+rule, only a new data source to feed it.
+
+### Files created
+
+| File | What |
+|---|---|
+| `src/hooks/useMovieDetail.ts` | Fetch + badge (tasks.md 6.1). `:id` is the TMDB id (design.md §7), so detail comes from Jellyseerr's `/api/v1/movie/{tmdbId}` (new `getMovieDetails`, not a direct Jellyfin lookup), then correlated against `useLibraryRow()` (same cache key as Home/Search — no extra Jellyfin fetch) through the exact same `LibraryIndex.resolve()` Search's badge join uses, so an `InLibrary` result carries the real Jellyfin item id "Reproducir" needs for `/player/:id`. |
+| `src/hooks/useRequestMedia.ts` | Thin `useMutation` wrapper around `requestMedia({mediaType:'movie', mediaId})` (tasks.md 6.2). Deliberately no `onSuccess`/`onMutate` inside the hook — the detail-request spec's "no optimistic update" requirement means status derivation must stay in the calling component, not get baked into the hook where a future caller could silently regress it. |
+| `src/features/detail/DetailScreen.tsx` (rewritten from the Slice 0 placeholder) + `detail.css` | Dark hero-backdrop (TMDB `w1280`) + poster (`w500`) + title/year/rating/overview layout mirroring `DetailScreen.kt`. Context-aware `DetailAction` per the spec's Requirement 1: `InLibrary` → green "Reproducir" (`Pedir` never rendered at all, not just disabled) navigating to `/player/:jellyfinItemId`; `Requestable` → enabled gold "Pedir"; `Requesting` → disabled outline button showing `jellyseerrStatusLabel(status)` (e.g. "Pendiente"/"Descargando"), preventing a duplicate submit. A local `overrideStatus` state is set **only** inside the mutation's `onSuccess` from `response.media.status` via the new shared `statusFromJellyseerrStatus()` helper (Requirement 3) — on failure it is left untouched, so the displayed status silently falls back to the still-`Requestable` value `useMovieDetail` already had, and only `requestMutation.isError` drives a separate `role="alert"` error message. `overrideStatus` and the mutation's error state both reset on route-id change so navigating detail→detail never carries over stale state. |
+
+### Additive changes to existing files (flagged, not silent)
+
+- `src/lib/domain/libraryIndex.ts`: extracted the tail of `resolve()` (the AVAILABLE(5)→Requestable belt-and-suspenders rule + the Requesting branch) into a new exported `statusFromJellyseerrStatus(jellyseerrStatus)` pure function, called both from `resolve()` internally and from `DetailScreen`'s `onSuccess` handler. This means the request flow derives its post-success status via the *exact same rule* `resolve()` already uses, instead of duplicating or re-deriving it — a real refactor, not just an addition, but behavior-preserving (existing `resolve()` tests pass unmodified).
+- `src/api/schemas/jellyseerr.ts` + `src/api/jellyseerr.ts`: added `JellyseerrMovieDetailsSchema`/`JellyseerrMovieDetails` and `getMovieDetails(tmdbId)` → `GET /api/v1/movie/{tmdbId}?language=es-MX`. `language=es-MX` here mirrors `search`/`discoverTrending` (a single-item locale lookup, confirmed live to return the real Spanish overview) — explicitly NOT the `discover/movies|tv` content-filter case ADR-4 warns about, since this hits a single already-known movie, not a discovery listing.
+- `src/lib/domain/posterUrl.ts`: `tmdbPosterUrl`'s `size` union extended (additively) with `'w1280'` for Detail's wider backdrop image; `'w342'`/`'w500'` behavior and existing tests unchanged.
+
+### Test files created/extended (Vitest)
+
+- `src/lib/domain/libraryIndex.test.ts` (5 new tests) — `statusFromJellyseerrStatus`: `null`→Requestable, `5`→Requestable (same belt-and-suspenders rule), `2`/`3`/`4`→Requesting carrying the raw status through.
+- `src/features/detail/DetailScreen.test.tsx` (5 tests, the task's required coverage) — all 3 badge branches (InLibrary hides Pedir/shows Reproducir + clicking it navigates to `/player/:jellyfinItemId` via a test-only route; Requestable shows enabled Pedir; Requesting shows a disabled status-labeled button, no Pedir) **plus** the two request-flow scenarios: successful request updates the displayed status from the mocked `response.media.status` (not an assumed value) and re-hides Pedir; failed request shows a `role="alert"` error while the Pedir button stays enabled/Requestable (no optimistic flip).
+
+### Verification results
+
+- `npm run build` (`tsc -b && vite build`) — succeeded, no type errors, 133 modules.
+- `npm test` (`vitest run`) — **103/103 passed** across 19 test files (10 new for Slice 6).
+- `npx oxlint` — same 2 pre-existing warnings as Slices 0-5, **0 new warnings**.
+
+### Live browser validation (agent-browser, MANDATORY per task instructions) — REAL REQUEST EXERCISED, EXACTLY ONCE
+
+Ran the real dev server (`npm run dev`) against the live containers (`jellyfin`
+healthy, `jellyseerr` up, `poisonflix-proxy` up — confirmed via `docker ps`
+beforehand) and drove it with `agent-browser` (headless, `--args
+"--no-sandbox"`):
+
+1. Logged in (`perroenvenenado`/`pass1234`) → landed on real Home.
+2. **InLibrary check**: navigated directly to `/detail/603` (The Matrix,
+   TMDB id already confirmed in Slice 4/5's live validation). Screenshot
+   confirmed the full dark hero-backdrop + poster + "Matrix"/1999/★8.3 +
+   Spanish overview + a single green **"Reproducir"** button — **no "Pedir"
+   button present at all**, confirming Requirement 1's "InLibrary item hides
+   the action" scenario against real data. Clicked "Reproducir" → confirmed
+   (via a test-only route swap, not committed) navigation targets
+   `/player/jf-<realItemId>`, i.e. the real Jellyfin item id, not the TMDB
+   id — proving the InLibrary→Player id handoff design.md §7 calls for.
+3. **Requestable check**: searched "Big Buck Bunny" from `/search`, clicked
+   through to its detail at **`/detail/10378`** (TMDB id). Screenshot
+   confirmed poster/backdrop/title/year/rating/overview plus a single
+   enabled gold **"Pedir"** button — no "Reproducir" — confirming
+   Requirement 1's "Requestable item shows the action" scenario.
+4. **THE REAL REQUEST — exercised exactly once, as instructed**: clicked
+   "Pedir" on **Big Buck Bunny (2008), TMDB id 10378** (chosen deliberately
+   for being a tiny, free, open-source short film — the lowest-stakes real
+   title available to prove the flow, not a large/TV title). Confirmed via
+   `agent-browser network requests`: `POST /jellyseerr/api/v1/request` →
+   **`201`**. The UI immediately updated to a disabled **"Pendiente"**
+   button — this is `response.media.status` (2 = PENDING) driving the
+   display via `statusFromJellyseerrStatus`, not an optimistic assumption.
+   Reloading `/detail/10378` fresh afterward (a real Jellyseerr re-fetch,
+   not cached local state) showed the button now reading **"Descargando"**
+   (status 3 = PROCESSING) — confirming Jellyseerr/Radarr picked up the
+   request server-side and began processing it for real.
+   **⚠️ USER ACTION NEEDED IF UNWANTED: this created a real Radarr download
+   request for "Big Buck Bunny" (2008, TMDB id 10378) in Jellyseerr/Radarr.
+   Cancel it from the Jellyseerr or Radarr UI if you don't want it.**
+5. `agent-browser close --all` + stopped the dev server afterward (confirmed
+   `curl localhost:5173` fails to connect). No throwaway routes/scripts were
+   committed; screenshots live in the session scratchpad, not the repo.
+
+**Verdict: the context-aware action (Reproducir vs Pedir), the InLibrary→real
+Jellyfin item id handoff, and the full request→response.media.status→UI
+update chain all work end-to-end against real, live Jellyfin + Jellyseerr +
+Radarr data** — not just mocked component tests. One real, deliberately
+low-stakes request was submitted as instructed; it is disclosed above with
+its exact title/id for the user to cancel if unwanted.
+
 ### Next up
 
-Slice 6 (Detail + Request): `useMovieDetail.ts` (fetch + badge, key
-`['jellyfin','item',itemId]`), `useRequestMedia.ts` (`useMutation` → `POST
-api/v1/request`), `DetailScreen.tsx` replacing its current placeholder with
-context-aware actions (`Requestable`→enabled "Pedir", `Requesting`→disabled,
-`InLibrary`→no action), wiring success/failure to `response.media.status`
-without any optimistic local state. Search's `LibraryIndex`/`TitleStatus`
-join (this slice) is exactly what Slice 6 needs to decide which action to
-show, per design.md §4.4/§7.
+Slice 7 (Player): `usePlaybackInfo.ts` (PlaybackInfo → resolved source via
+the already-validated `streamResolver.ts`, Slice 2's GO verdict),
+`VideoSurface.tsx` (`<video>` wrapper, DirectPlay only, explicit
+not-supported state on `TranscodingUrl`), resume-seek on
+`canplay`/`loadedmetadata`, `usePlaybackHeartbeat.ts`
+(Playing/Progress/Stopped), `PlayerScreen.tsx` wiring it all together. This
+slice's `/player/:jellyfinItemId` navigation target (from "Reproducir") is
+exactly what Slice 7 needs to receive as its route param.

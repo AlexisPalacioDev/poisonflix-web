@@ -98,14 +98,14 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 
 **Bug found + fixed during live validation:** `api/jellyseerr.ts`'s `search()` built its query string via `URLSearchParams`, which encodes spaces as `+`. Jellyseerr's `/api/v1/search` endpoint strictly rejects that (`400 "Parameter 'query' must be url encoded"`) — confirmed live via curl against the real backend. Fixed by percent-encoding the `query` param with `encodeURIComponent` directly instead of folding it into `URLSearchParams`, keeping `page`/`language` on `URLSearchParams` since those never contain spaces. This was invisible until Search because `discover/trending`'s params never contain spaces.
 
-## Slice 6: Detail + Request
+## Slice 6: Detail + Request — COMPLETE
 
-- [ ] 6.1 `src/hooks/useMovieDetail.ts`: fetch + badge, key `['jellyfin','item',itemId]`.
-- [ ] 6.2 `src/hooks/useRequestMedia.ts`: `useMutation` -> `POST api/v1/request` `{mediaType:'movie', mediaId}`.
-- [ ] 6.3 `src/features/detail/DetailScreen.tsx`: context-aware action — `Requestable`=enabled Pedir, `Requesting`=disabled, `InLibrary`=no action.
-- [ ] 6.4 Wire success: reflect `response.media.status` (not an assumed local status).
-- [ ] 6.5 Wire failure: show error, action reverts to pre-submission enabled state, no optimistic change.
-- [ ] 6.6 Component test: all 3 badge branches + success/failure status reflection.
+- [x] 6.1 `src/hooks/useMovieDetail.ts`: fetch + badge, key `['jellyfin','item',itemId]`.
+- [x] 6.2 `src/hooks/useRequestMedia.ts`: `useMutation` -> `POST api/v1/request` `{mediaType:'movie', mediaId}`.
+- [x] 6.3 `src/features/detail/DetailScreen.tsx`: context-aware action — `Requestable`=enabled Pedir, `Requesting`=disabled, `InLibrary`=no action (shows "Reproducir" instead, per this batch's explicit task scope).
+- [x] 6.4 Wire success: reflect `response.media.status` (not an assumed local status).
+- [x] 6.5 Wire failure: show error, action reverts to pre-submission enabled state, no optimistic change.
+- [x] 6.6 Component test: all 3 badge branches + success/failure status reflection.
 
 ## Slice 7: Player (builds on Slice 2's validated spike)
 

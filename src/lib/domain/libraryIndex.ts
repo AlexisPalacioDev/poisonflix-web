@@ -39,6 +39,27 @@ function normalizedKey(title: string, year: number): string {
   return `${title.trim().toLowerCase()}|${year}`;
 }
 
+/**
+ * Maps a raw Jellyseerr `mediaInfo.status` (1-5, or `null` when no Jellyseerr
+ * media record exists yet) to a `TitleStatus`, independent of any Jellyfin
+ * library match. Extracted as its own pure function (not just inlined in
+ * `resolve`) so the request flow (detail-request spec: "status reflects
+ * server response, no optimistic update") can derive the post-request status
+ * from `response.media.status` using the exact same rule `resolve` uses for
+ * its own tail case, instead of re-deriving or duplicating the AVAILABLE(5)
+ * belt-and-suspenders logic a second time.
+ */
+export function statusFromJellyseerrStatus(jellyseerrStatus: number | null): TitleStatus {
+  // 5 = AVAILABLE is Jellyseerr's own "already in library" signal.
+  // Jellyfin presence above already covers the reproducible case; this is
+  // belt-and-suspenders for correlation drift between the two backends.
+  if (jellyseerrStatus == null || jellyseerrStatus === 5) {
+    return { kind: 'Requestable' };
+  }
+
+  return { kind: 'Requesting', jellyseerrStatus };
+}
+
 export class LibraryIndex {
   // tmdbId (as Jellyfin's string ProviderIds value) -> jellyfinItemId.
   private readonly byTmdbId = new Map<string, string>();
@@ -84,13 +105,6 @@ export class LibraryIndex {
       }
     }
 
-    // 5 = AVAILABLE is Jellyseerr's own "already in library" signal.
-    // Jellyfin presence above already covers the reproducible case; this is
-    // belt-and-suspenders for correlation drift between the two backends.
-    if (jellyseerrStatus == null || jellyseerrStatus === 5) {
-      return { kind: 'Requestable' };
-    }
-
-    return { kind: 'Requesting', jellyseerrStatus };
+    return statusFromJellyseerrStatus(jellyseerrStatus);
   }
 }

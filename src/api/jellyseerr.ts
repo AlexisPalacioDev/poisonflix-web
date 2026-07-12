@@ -1,9 +1,11 @@
 import { apiFetch } from '../lib/http/client';
 import {
+  JellyseerrMovieDetailsSchema,
   JellyseerrRequestDtoSchema,
   JellyseerrRequestListResponseSchema,
   JellyseerrSearchResponseSchema,
   JellyseerrUserSchema,
+  type JellyseerrMovieDetails,
   type JellyseerrRequestDto,
   type JellyseerrRequestListResponse,
   type JellyseerrSearchResponse,
@@ -88,6 +90,20 @@ export async function discoverTv({ genre, page = 1 }: DiscoverByGenreParams = {}
   if (genre != null) qs.set('genre', String(genre));
   return apiFetch('jellyseerr', `/api/v1/discover/tv?${qs.toString()}`, {
     schema: JellyseerrSearchResponseSchema,
+  });
+}
+
+/**
+ * Movie detail screen source (detail-request spec). `language=es-MX` here
+ * mirrors `search`/`discoverTrending` - this is a single-item locale lookup
+ * (like TMDB's own `/movie/{id}?language=` param), not the `discover/*`
+ * content-filter case ADR-4 documents, so it does NOT collapse results the
+ * way `discover/movies|tv` does.
+ */
+export async function getMovieDetails(tmdbId: number): Promise<JellyseerrMovieDetails> {
+  const qs = new URLSearchParams({ language: SPANISH_LATINO });
+  return apiFetch('jellyseerr', `/api/v1/movie/${tmdbId}?${qs.toString()}`, {
+    schema: JellyseerrMovieDetailsSchema,
   });
 }
 

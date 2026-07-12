@@ -67,6 +67,28 @@ export const JellyseerrSearchResponseSchema = z.object({
 export type JellyseerrSearchResponse = z.infer<typeof JellyseerrSearchResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Movie details: GET /api/v1/movie/{tmdbId} - detail screen (detail-request
+// spec). Same envelope family as the search-result schema above, plus the
+// field the detail screen needs that a search-result summary doesn't carry
+// (`backdropPath` for the hero image). `title` is non-optional here (unlike
+// the search-result schema's movie/tv union) since this endpoint is
+// movie-only (TV two-pane detail is deferred per the detail-request spec).
+// ---------------------------------------------------------------------------
+
+export const JellyseerrMovieDetailsSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  overview: z.string().nullable().optional(),
+  releaseDate: z.string().nullable().optional(),
+  posterPath: z.string().nullable().optional(),
+  backdropPath: z.string().nullable().optional(),
+  voteAverage: z.number().nullable().optional(),
+  runtime: z.number().nullable().optional(),
+  mediaInfo: JellyseerrMediaInfoSchema.nullable().optional(),
+});
+export type JellyseerrMovieDetails = z.infer<typeof JellyseerrMovieDetailsSchema>;
+
+// ---------------------------------------------------------------------------
 // Request creation/listing: POST /api/v1/request, GET /api/v1/request
 // ---------------------------------------------------------------------------
 

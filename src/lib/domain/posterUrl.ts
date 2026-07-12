@@ -37,10 +37,12 @@ export function jellyfinPosterUrl(
  * TMDB's public image CDN, or `null` when absent. `size` defaults to the
  * carousel-friendly `w342`; Search's big preview panel requests the wider
  * `w500` variant for its larger poster (search spec: "big preview panel").
+ * `w1280` (additive, Slice 6) is Detail's hero backdrop size - same `path`
+ * shape, just a wider TMDB image bucket, so this stays one function.
  */
 export function tmdbPosterUrl(
   posterPath: string | null | undefined,
-  size: 'w342' | 'w500' = 'w342',
+  size: 'w342' | 'w500' | 'w1280' = 'w342',
 ): string | null {
   if (!posterPath) return null;
   return `${TMDB_IMAGE_ORIGIN}/${size}${posterPath}`;

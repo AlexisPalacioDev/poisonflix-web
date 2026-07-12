@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
-import { jellyseerrStatusLabel, LibraryIndex } from './libraryIndex';
+import { jellyseerrStatusLabel, LibraryIndex, statusFromJellyseerrStatus } from './libraryIndex';
 
 function item(overrides: Partial<JellyfinItem> & { Id: string; Name: string }): JellyfinItem {
   return overrides as JellyfinItem;
@@ -70,6 +70,20 @@ describe('LibraryIndex.resolve', () => {
     const status = index.resolve(603, 'The Matrix', 1999, null);
 
     expect(status).toEqual({ kind: 'InLibrary', jellyfinItemId: 'jf-primary', matchedByFallback: false });
+  });
+});
+
+describe('statusFromJellyseerrStatus (detail-request spec: reflect response.media.status)', () => {
+  it('maps null to Requestable (no Jellyseerr media record yet)', () => {
+    expect(statusFromJellyseerrStatus(null)).toEqual({ kind: 'Requestable' });
+  });
+
+  it('maps AVAILABLE(5) to Requestable, mirroring LibraryIndex.resolve\'s own belt-and-suspenders rule', () => {
+    expect(statusFromJellyseerrStatus(5)).toEqual({ kind: 'Requestable' });
+  });
+
+  it.each([2, 3, 4])('maps status %i to Requesting, carrying the raw status through', (status) => {
+    expect(statusFromJellyseerrStatus(status)).toEqual({ kind: 'Requesting', jellyseerrStatus: status });
   });
 });
 
