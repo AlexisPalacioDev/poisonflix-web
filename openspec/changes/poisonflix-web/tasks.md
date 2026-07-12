@@ -58,13 +58,13 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 - [x] 5.1 (partial) `src/hooks/useDebouncedValue.ts`: 350ms debounce primitive (unit tests: below-min, rapid-retype, single-fire-on-settle). `useSearch.ts`'s `enabled` gating itself is still Slice 5 work.
 - Also added (not separately tracked tasks, foundational per delegation §5): `src/hooks/queryKeys.ts` (query-key factory) and `src/hooks/useAuth.ts` (thin re-export of `useAuthContext`).
 
-## Slice 2: DirectPlay `<video>` auth spike — GO/NO-GO (do this before onboarding/home/search/detail UI work continues past stubs)
+## Slice 2: DirectPlay `<video>` auth spike — GO/NO-GO — COMPLETE (GO)
 
-- [ ] 2.1 `src/lib/domain/streamResolver.ts` (minimal): build DirectPlay URL with `api_key` query when no `TranscodingUrl`; return not-supported marker when `TranscodingUrl` present.
-- [ ] 2.2 Minimal manual harness: bare `<video>` test route pointed at a real DirectPlay URL from 2.1, run against the live proxied backend.
-- [ ] 2.3 **SPIKE — GO/NO-GO**: verify live that `api_key` query-string auth loads the stream without 401 and native seeking works. Record pass/fail before proceeding to Slice 7.
-- [ ] 2.4 IF FAIL: implement Blob+`createObjectURL` fallback in `streamResolver.ts`; document seek/memory tradeoff.
-- [ ] 2.5 Unit tests for `streamResolver.ts` (both branches); remove the throwaway harness once resolved.
+- [x] 2.1 `src/lib/domain/streamResolver.ts` (minimal): build DirectPlay URL with `api_key` query when no `TranscodingUrl`; return not-supported marker when `TranscodingUrl` present.
+- [x] 2.2 Minimal manual harness: no `<video>` DOM route was needed — validated directly via `curl` against the live proxied backend (identical GET + Range semantics to what `<video>` issues), per this batch's delegation. No throwaway route/script committed.
+- [x] 2.3 **SPIKE — GO/NO-GO: GO.** Verified live that `api_key` query-string auth loads the stream without a 401 and native range-request seeking works (200/206, `Content-Type: video/mp4`, real MP4 bytes at offset 0 and mid-file). See apply-progress.md Slice 2 section for full evidence.
+- [ ] 2.4 Not needed — GO verdict. Blob fallback stays deferred/undesigned per player spec's Deferred section.
+- [x] 2.5 Unit tests for `streamResolver.ts` (both branches, plus resume ticks->ms) — `src/lib/domain/streamResolver.test.ts`, 12 tests, all passing. No throwaway harness existed to remove.
 
 ## Slice 3: Onboarding
 

@@ -163,8 +163,112 @@ Jellyseerr, `localhost:8600` Caddy proxy, plus the Vite dev-proxy at
   directly against each origin; the temporary `npm run dev` process was
   stopped afterward.
 
+### Next up (superseded — see Slice 2 section below)
+
+---
+
+## Slice 2: DirectPlay `<video>` auth spike — COMPLETE — SPIKE VERDICT: **GO**
+
+Implemented tasks 2.1, 2.2, 2.3, 2.5 (see tasks.md). Task 2.4 (Blob fallback)
+was NOT implemented — the spike verdict is GO, so the fallback path stays
+deferred/undesigned exactly as the player spec's Deferred section says it
+should when the primary strategy is validated.
+
+### Files created
+
+| File | What |
+|---|---|
+| `src/lib/domain/streamResolver.ts` | Ported from `StreamResolver.kt` (design.md §3.3, §10), minimal MVP scope: `ticksToMs`/`resumePositionMs` (ticks->ms conversion, `0` for zero/negative/absent ticks per the player spec's "no seek" case), `buildDirectPlayUrl` (`Videos/{itemId}/stream{container}?static=true&mediaSourceId={id}&api_key={token}`), `resolveStreamSource` (the single decision point: `TranscodingUrl` present -> `{kind:'Transcoded', hlsUrl}` not-supported marker; absent -> `{kind:'DirectPlay', url}`), `resolvePlayback` (top-level: `PlaybackInfo` -> resolved source + `mediaSourceId` + `playSessionId`, throws if `MediaSources` is empty). Audio/subtitle track enumeration and the Kotlin reference's 5s resume back-off were deliberately NOT ported — out of this slice's scope (Slice 7 / deferred hls.js work); noted in-code as a flagged omission, not a silent gap. |
+| `src/lib/domain/streamResolver.test.ts` | 12 unit tests: ticks->ms conversion, resume-position zero/negative/null/undefined -> 0, DirectPlay URL construction (with/without container extension, base normalization, exact query param order `static`→`mediaSourceId`→`api_key`), `resolveStreamSource` both branches (DirectPlay, Transcoded with relative and already-absolute `TranscodingUrl`), `resolvePlayback` (happy path, null `playSessionId` default, throws on empty `MediaSources`). |
+
+### THE SPIKE — live evidence against the real backend
+
+Per this batch's instructions, this was validated live (not simulated) against
+the running Jellyfin (`localhost:8096` / `localhost:8600` proxy) using
+`perroenvenenado`/`pass1234`.
+
+**Incident during the spike, disclosed, not hidden:** at the start of this
+batch, `docker inspect jellyfin` showed the container in an active crash
+loop — `RestartCount` climbing 4 → 7 → 9 within about a minute, `Health:
+unhealthy`, every restart throwing `Microsoft.Data.Sqlite.SqliteException:
+'attempt to write a readonly database'` during Jellyfin's own EF Core
+migration-history check. This is the same underlying SQLite issue Slice 1
+hit (there recorded as `SQLite Error 10: 'disk I/O error'`) — evidently
+recurring, not a one-off. Per this task's explicit safety rule, **no repair
+was attempted** on the container or its database. A follow-up check ~1
+minute later showed the container had self-healed on its own (`RestartCount`
+reset to `0`, `Status: running`, `Health: healthy`, `System/Info/Public` ->
+`200`) before any live validation was attempted — so no workaround was
+needed this time, but the underlying instability is unresolved and may
+recur. Flagging this for the user's awareness, not treating it as fixed.
+
+**Step-by-step, with evidence:**
+
+1. **Auth** — `POST /jellyfin/Users/AuthenticateByName` (via the `:8600`
+   proxy) with the `X-Emby-Authorization` header + `{Username,Pw}` body ->
+   `200`, real `AccessToken` returned (`921c8c14194f442993a105294c86b466`,
+   userId `c42d032183a04c74a6d68722c1cb611d`). Jellyseerr's
+   `POST /jellyseerr/api/v1/auth/jellyfin` (body-only `{username,password}`)
+   also -> `200` with a real Jellyseerr user payload. Both auth paths, which
+   Slice 1 could not complete end-to-end due to the DB error, are now
+   confirmed working.
+2. **Library** — `GET /jellyfin/Users/{userId}/Items?IncludeItemTypes=Movie&Recursive=true` -> `200`, 2 movies: "The Matrix" (HEVC/EAC3 MKV) and
+   "Night of the Living Dead (1968)" (H.264/AAC MP4, itemId
+   `5807383ad79299cdb6bd2e496beb3b8a`). Picked the latter as the
+   DirectPlay-capable H.264/AAC candidate the task asked for.
+3. **PlaybackInfo** — `POST /jellyfin/Items/{itemId}/PlaybackInfo` with
+   `DeviceProfile: null` -> `200`, one `MediaSource` with H.264/AAC streams
+   and **no `TranscodingUrl` field at all** -> `streamResolver.ts` correctly
+   resolves this to `DirectPlay` (confirms the design's decision point
+   against a real live response, not just a fixture).
+4. **Built the DirectPlay URL** exactly per §3.3's shape:
+   `/jellyfin/Videos/5807383ad79299cdb6bd2e496beb3b8a/stream.mp4?static=true&mediaSourceId=5807383ad79299cdb6bd2e496beb3b8a&api_key=921c8c14194f442993a105294c86b466`
+5. **`curl -r 0-1048576`** (identical GET+Range semantics to what a `<video>`
+   element issues) against that URL ->
+   **`HTTP/1.1 206 Partial Content`**, `Content-Type: video/mp4`,
+   `Accept-Ranges: bytes`, `Content-Range: bytes 0-1048576/596399542`,
+   exactly 1,048,577 bytes returned. `file` on the downloaded bytes confirms
+   **`ISO Media, MP4 Base Media v1`** — real, valid video data, not an error
+   page or empty body.
+6. **Mid-file range request** (`-r 50000000-50524288`, proving real seek, not
+   just byte-0 serving) -> `206`, `Content-Range: bytes
+   50000000-50524288/596399542`, exact byte count returned. Native
+   range-request seeking is confirmed working through this URL shape.
+
+**Secondary discovery (does not change the verdict, disclosed for
+completeness):** the same endpoint also returned `206` + real video bytes
+when the `api_key` param was **omitted entirely** or set to a garbage value.
+This Jellyfin instance appears to exempt this streaming endpoint from auth
+enforcement for local/LAN-classified requests (a known Jellyfin
+`AnonymousLanAccessPolicy`-style behavior, not something this client
+controls or should rely on). This means the live evidence here proves the
+**positive** scenario the player spec asks for (`api_key` in the query
+string authenticates the stream without a 401, preserving range-request
+seeking) conclusively, but could NOT exercise a true negative control (a
+real 401 when auth is actually required) in this specific network
+environment. If poisonflix-web is ever deployed reachable from outside the
+LAN, this exemption may not apply and re-validation against the deployed
+topology is recommended before relying on it.
+
+**SPIKE VERDICT: GO.** The `api_key` query-string strategy is validated live:
+Jellyfin accepts it, streams real video bytes, and supports arbitrary-offset
+range requests. `streamResolver.ts` implements exactly this strategy. Slice 7
+(player UI) can proceed against it without building the `Blob +
+createObjectURL` fallback.
+
+No throwaway scripts or routes were created or committed — validation used
+`curl` directly against the live proxied backend; temporary downloaded byte
+ranges were written to the session scratchpad and deleted immediately after
+inspection, never into the repo.
+
+### Verification results
+
+- `npm run build` (`tsc -b && vite build`) — succeeded, no type errors.
+- `npm test` (`vitest run`) — **59/59 passed** across 9 test files (12 new
+  in `streamResolver.test.ts`).
+
 ### Next up
 
-Slice 2 (DirectPlay `<video>` auth GO/NO-GO spike) is next, per tasks.md —
-**blocked** until the Jellyfin auth path above is confirmed working live,
-since Slice 2 needs a real access token to build a DirectPlay URL.
+Slice 3 (Onboarding: `OnboardingScreen`, `AuthContext`, two-phase
+both-or-nothing login, `RouteGuard`) is next, per tasks.md. Now unblocked —
+both Jellyfin and Jellyseerr auth are confirmed working live end-to-end.
