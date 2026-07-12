@@ -539,10 +539,114 @@ browser** — not just mocked component tests — and row isolation is now both
 unit-tested (mocked failures) and structurally visible in the real UI (two
 independent `region`s, two independent query states).
 
-### Next up
+### Next up (superseded by the Slice 5 section below — kept for history)
 
 Slice 5 (Search: `useDebouncedValue` already done in Slice 1, `dedup.ts`,
 `useSearch.ts`, `SearchScreen.tsx` reusing `Row`/`PosterCard` from this
 slice, `StatusBadge` wired via `libraryIndex.ts`'s join) is next, per
 tasks.md. The search route already exists and the header's search icon
 already links to it; Slice 5 replaces the placeholder with the real screen.
+
+## Slice 5: Search — COMPLETE
+
+Implemented per tasks.md Slice 5 / design.md §4.3-§4.4 / specs/search/spec.md,
+mirroring `SearchViewModel.kt` + `SearchScreen.kt`'s two-part layout
+(carousel + big preview) minus the native on-screen keyboard (browser has a
+real one, per this batch's explicit scope instruction) and minus TV/series
+two-pane detail (spec's Deferred section).
+
+### Files created
+
+| File | What |
+|---|---|
+| `src/lib/domain/dedup.ts` | `distinctBy<T,K>(items, keyFn)` — generic dedup-by-key, ported from `SearchRepositoryImpl.kt` L23. Kept framework/network-free like the rest of `lib/domain/`. |
+| `src/hooks/useSearch.ts` | Search's ViewModel-equivalent. `useDebouncedValue(rawQuery, 350)` + `enabled: trimmed.length >= 2` gates the Jellyseerr `search` query (design.md §4.3) — below 2 chars, no request fires. On success: `distinctBy(id)`, filter to `movie`/`tv` (TV search results themselves are in-scope per spec; only the two-pane season/episode *detail* is deferred), then join each result against a `LibraryIndex` built from **`useLibraryRow()` reused as-is** (same query key as Home, so no duplicate Jellyfin fetch when Home already populated the cache) to attach a `TitleStatus`. `staleTime` 30s per design.md §4.2. Exports small pure helpers `resultTitle`/`resultYear` (title/name and releaseDate/firstAirDate split, same movie/tv duality Home's mapper already handles). |
+| `src/features/search/SearchScreen.tsx` (rewritten from the Slice 0 placeholder) + `search.css` | A plain `<input type="search">` (no custom on-screen keyboard — explicit scope decision, see task instructions) feeds `useSearch`. Results render via the **same `Row`+`PosterCard` from Slice 4**, reusing Row's built-in loading/error/empty states for free: passing `enabled ? "Sin resultados para ..." : "Escribí al menos 2 caracteres para buscar."` as `emptyMessage` means the below-minimum state, the zero-results state, and the loading/error states are all just Row's existing state machine — no new conditional rendering needed. `BigPreview` (local component) renders the selected result's poster (TMDB `w500`, wider than the carousel's `w342`), title, year, rating, `StatusBadge`, and overview; shows a neutral placeholder message when nothing is selected. Auto-selects the first result once entries load (`selectedEntry` falls back to `entries[0]` when `selectedId` doesn't match any current entry) — purely derived state, no effect, mirroring `SearchViewModel.kt`'s "auto-select first result" (L102/L130) without its imperative style. |
+| `src/components/PosterCard.tsx` (extended, additive) | Added an **optional** `onFocus?: (item: PosterItem) => void` prop, fired on both `onFocus` and `onMouseEnter` — this is what lets Search's carousel drive the big preview as the user moves across results (search spec: "Selecting a result shows its preview") while `onClick` still navigates to `/detail/:id` unchanged. Home doesn't pass it, so Home's behavior is byte-for-byte unchanged (verified: `HomeScreen.test.tsx` and `PosterCard.test.tsx` still pass unmodified). |
+| `src/lib/domain/posterUrl.ts` (extended, additive) | `tmdbPosterUrl(posterPath, size: 'w342'\|'w500' = 'w342')` — added an optional `size` param (default preserves the exact old behavior/tests) so Search's big preview can request TMDB's wider `w500` variant instead of the carousel's `w342`. |
+
+### Test files created (Vitest)
+
+- `src/lib/domain/dedup.test.ts` (3 tests) — duplicate keys collapse to first occurrence (search spec: "Duplicate TMDB ids collapse to one"), empty array passthrough, already-unique passthrough.
+- `src/features/search/SearchScreen.test.tsx` (3 tests) — below-2-chars: no `search()` call issued even after the debounce window elapses, non-error empty-state message shown, no `alert` role rendered; debounce+dedup+badge-join: a duplicated TMDB id renders as exactly one carousel button, `LibraryIndex`-resolved `En biblioteca`/`Pedir` badges render correctly, big preview auto-selects the first result; selecting a different carousel result (via `fireEvent.focus`) updates the big preview to that result — the task's explicitly required component-test scenario (5.7).
+- `libraryIndex.ts` and the debounce primitive itself were already fully unit-tested in Slice 1 (pulled forward there) — not retested here, per tasks.md's own note not to redo that coverage.
+
+### Bug found + fixed during live validation (not caught by unit/component tests, since those mock the API layer)
+
+`api/jellyseerr.ts`'s `search(query, page)` built its whole query string via
+`new URLSearchParams({ query, page, language })`, which encodes spaces as
+`+` (the `application/x-www-form-urlencoded` convention). Live validation
+against the real Jellyseerr backend showed every multi-word query (e.g.
+"Breaking Bad") failing with `400 {"message":"Parameter 'query' must be url
+encoded. Its value may not contain reserved characters."}` — confirmed via
+direct `curl` against `:5055` with both a `+`-encoded and a `%20`-encoded
+query, isolating the cause precisely (not a cookie/auth issue, even though
+the error response wording sounds auth-related when a session truly is
+missing — a different 400 body from the *same endpoint* for a *different*
+reason, worth noting as a footgun for future debugging). Fixed by building
+the `query` param with `encodeURIComponent` directly and keeping only
+`page`/`language` on `URLSearchParams` (they never contain spaces). This
+bug was invisible in Slices 1-4 because `discover/trending`'s query string
+has no space-containing params — it only surfaces once a real user types a
+multi-word search, which is exactly what Slice 5's live validation is for.
+
+### Verification results
+
+- `npm run build` (`tsc -b && vite build`) — succeeded, no type errors, 130 modules.
+- `npm test` (`vitest run`) — **93/93 passed** across 18 test files (6 new for Slice 5: `dedup.test.ts` + `SearchScreen.test.tsx`, plus the extended `posterUrl.ts`/`PosterCard.tsx` still covered by their existing Slice 4 tests unmodified).
+- `npx oxlint` — same 2 pre-existing warnings as Slices 0-4 (vite.config.ts triple-slash-reference; `AuthContext.tsx`'s `only-export-components`), **0 new warnings**.
+
+### Live browser validation (agent-browser, MANDATORY per task instructions)
+
+Ran the real dev server (`npm run dev`) against the live containers (`jellyfin`,
+`jellyseerr` on `:5055`, `poisonflix-proxy` all already up) and drove it with
+`agent-browser` (headless, `--args "--no-sandbox"`):
+
+1. Opened `http://localhost:5173/` → redirected to `/onboarding` (no session).
+2. Filled `perroenvenenado`/`pass1234`, clicked `Conectar` → landed on real Home
+   (Library + Trending rows populated with live data, same as Slice 4).
+3. Clicked the header's search icon → `/search`. Confirmed the **below-2-chars
+   empty state**: typed `a`, no request issued, "Escribí al menos 2
+   caracteres para buscar." shown (not an error) alongside the big preview's
+   neutral placeholder.
+4. Typed "Breaking Bad" → hit the `URLSearchParams`/`+` bug above (row-scoped
+   `400` error, confirmed via `agent-browser network requests` + a direct
+   `curl` reproduction against `:5055` to isolate root cause before touching
+   any code). Fixed `api/jellyseerr.ts`'s `search()`, Vite HMR picked it up
+   live.
+5. Retyped "Breaking Bad" → **debounced results rendered**: 14+ real
+   Jellyseerr/TMDB results (Breaking Bad, El Camino, Original Minisodes,
+   Breaking Bad Wolf, …), all real posters, all badged `Pedir` (correctly
+   `Requestable` — none of these are in the seeded library). Big preview
+   auto-selected "Breaking Bad" showing **2008, ★8.9, Pedir badge, and the
+   real Spanish-language overview** ("Un profesor de Química de secundaria
+   con cáncer terminal…") — screenshot captured.
+6. Typed "Matrix" → confirmed the **InLibrary join against real data**: the
+   "Matrix" result (Jellyfin library item's `ProviderIds.Tmdb` matching
+   Jellyseerr's TMDB id) rendered a green **"En biblioteca"** badge on both
+   the carousel poster and the big preview, while every other Matrix-titled
+   result (Threat Matrix, Matrix recargado, Sexual Matrix, …) correctly
+   showed `Pedir` — screenshot captured, confirming the badge join isn't
+   just unit-tested with fixtures but resolves correctly end-to-end against
+   the real Jellyfin + Jellyseerr data.
+7. `agent-browser close --all` + stopped the dev server afterward (confirmed
+   port `:5173` no longer listening). No throwaway routes/scripts committed;
+   screenshots live in the session scratchpad, not the repo.
+
+**Verdict: debounce, dedup, the carousel+big-preview layout, and the
+InLibrary/Requestable badge join all work end-to-end against real, live
+backend data** — plus a real production bug (the `URLSearchParams` `+`
+encoding issue) was caught and fixed specifically because live validation
+was run against the real Jellyseerr instance instead of stopping at mocked
+component tests.
+
+### Next up
+
+Slice 6 (Detail + Request): `useMovieDetail.ts` (fetch + badge, key
+`['jellyfin','item',itemId]`), `useRequestMedia.ts` (`useMutation` → `POST
+api/v1/request`), `DetailScreen.tsx` replacing its current placeholder with
+context-aware actions (`Requestable`→enabled "Pedir", `Requesting`→disabled,
+`InLibrary`→no action), wiring success/failure to `response.media.status`
+without any optimistic local state. Search's `LibraryIndex`/`TitleStatus`
+join (this slice) is exactly what Slice 6 needs to decide which action to
+show, per design.md §4.4/§7.

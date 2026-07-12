@@ -8,7 +8,7 @@ import type { JellyfinItem } from '../../api/schemas/jellyfin';
 const JELLYFIN_BASE = import.meta.env.VITE_JELLYFIN_BASE ?? '/jellyfin';
 // TMDB's image CDN is a public, external origin (not proxied) - Jellyseerr
 // itself returns raw TMDB-relative paths, not resolved URLs.
-const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w342';
+const TMDB_IMAGE_ORIGIN = 'https://image.tmdb.org/t/p';
 
 /**
  * Builds a Jellyfin `Items/{id}/Images/Primary` URL for a library item, or
@@ -34,9 +34,14 @@ export function jellyfinPosterUrl(
 
 /**
  * Resolves a Jellyseerr/TMDB `posterPath` (e.g. `/abc123.jpg`) against
- * TMDB's public image CDN, or `null` when absent.
+ * TMDB's public image CDN, or `null` when absent. `size` defaults to the
+ * carousel-friendly `w342`; Search's big preview panel requests the wider
+ * `w500` variant for its larger poster (search spec: "big preview panel").
  */
-export function tmdbPosterUrl(posterPath: string | null | undefined): string | null {
+export function tmdbPosterUrl(
+  posterPath: string | null | undefined,
+  size: 'w342' | 'w500' = 'w342',
+): string | null {
   if (!posterPath) return null;
-  return `${TMDB_IMAGE_BASE}${posterPath}`;
+  return `${TMDB_IMAGE_ORIGIN}/${size}${posterPath}`;
 }

@@ -86,15 +86,17 @@ Pulled forward from Slice 5 into this batch (pure, framework-free, no UI depende
 - [x] 4.5 `src/features/home/HomeScreen.tsx`: mounts exactly Library + Trending rows.
 - [x] 4.6 Test: mocked Trending failure leaves Library rendering normally, and vice versa (row isolation).
 
-## Slice 5: Search
+## Slice 5: Search — COMPLETE
 
 - [x] 5.1 `src/hooks/useDebouncedValue.ts`: 350ms debounce primitive. **Done in Slice 1** (pulled forward, see note there) — do not redo.
-- [ ] 5.2 `src/lib/domain/dedup.ts`: `distinctBy(id)`.
+- [x] 5.2 `src/lib/domain/dedup.ts`: `distinctBy(id)`.
 - [x] 5.3 `src/lib/domain/libraryIndex.ts`: badge resolver — TMDB id match + title+year fallback -> `InLibrary|Requesting|Requestable`. **Done in Slice 1** (pulled forward, see note there) — do not redo.
-- [ ] 5.4 `src/hooks/useSearch.ts`: `enabled` gated on length>=2 of debounced value, dedup + badge join, `staleTime` ~30s.
-- [ ] 5.5 `src/features/search/SearchScreen.tsx`: input + results carousel + large preview panel.
-- [ ] 5.6 Unit tests: debounce (below-min, rapid-retype, single-fire-on-settle), `dedup.ts`, `libraryIndex.ts` (all 4 branches).
-- [ ] 5.7 Component test: selecting a carousel result updates the preview.
+- [x] 5.4 `src/hooks/useSearch.ts`: `enabled` gated on length>=2 of debounced value, dedup + badge join, `staleTime` ~30s. Reuses `useLibraryRow()` (same query key as Home) to build the `LibraryIndex` instead of issuing a second Jellyfin fetch.
+- [x] 5.5 `src/features/search/SearchScreen.tsx`: input + results carousel (reuses `Row`/`PosterCard`) + big preview panel (`BigPreview`, title/year/rating/overview/badge). Auto-selects the first result once results load, mirroring `SearchViewModel.kt`. Clicking a poster navigates to `/detail/:id` (Slice 6 placeholder); focus/hover on a poster selects it for the preview without navigating (extended `PosterCard` with an optional `onFocus` callback, additive — Home's usage unaffected).
+- [x] 5.6 Unit tests: debounce (already covered in Slice 1), `dedup.ts` (3 tests: collapse duplicates, empty array, already-unique passthrough), `libraryIndex.ts` (already covered in Slice 1, all 4 branches).
+- [x] 5.7 Component test: `SearchScreen.test.tsx` — below-2-chars empty state (no request, no error), debounce+dedup+badge join with real component rendering, and selecting a different carousel result (via focus) updates the big preview.
+
+**Bug found + fixed during live validation:** `api/jellyseerr.ts`'s `search()` built its query string via `URLSearchParams`, which encodes spaces as `+`. Jellyseerr's `/api/v1/search` endpoint strictly rejects that (`400 "Parameter 'query' must be url encoded"`) — confirmed live via curl against the real backend. Fixed by percent-encoding the `query` param with `encodeURIComponent` directly instead of folding it into `URLSearchParams`, keeping `page`/`language` on `URLSearchParams` since those never contain spaces. This was invisible until Search because `discover/trending`'s params never contain spaces.
 
 ## Slice 6: Detail + Request
 

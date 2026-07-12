@@ -21,9 +21,14 @@ export interface PosterItem {
 
 interface PosterCardProps {
   item: PosterItem;
+  /** Fired on focus/hover, BEFORE any navigation - Search's carousel uses
+   * this to drive its big preview panel as the user moves across results
+   * (search spec: "Selecting a result shows its preview"), without changing
+   * Home's usage (optional, no-op when omitted). */
+  onFocus?: (item: PosterItem) => void;
 }
 
-export function PosterCard({ item }: PosterCardProps) {
+export function PosterCard({ item, onFocus }: PosterCardProps) {
   const navigate = useNavigate();
 
   // A native <button> is real-tabindex + Enter/Space-activatable out of the
@@ -31,7 +36,13 @@ export function PosterCard({ item }: PosterCardProps) {
   // also a plain click target for touch/mouse - no extra wiring needed for
   // either input mode.
   return (
-    <button type="button" className="pf-poster-card" onClick={() => navigate(`/detail/${item.id}`)}>
+    <button
+      type="button"
+      className="pf-poster-card"
+      onClick={() => navigate(`/detail/${item.id}`)}
+      onFocus={() => onFocus?.(item)}
+      onMouseEnter={() => onFocus?.(item)}
+    >
       <span className="pf-poster-card__art">
         {item.imageUrl ? (
           <img src={item.imageUrl} alt="" loading="lazy" />

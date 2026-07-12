@@ -35,10 +35,20 @@ export async function authJellyfin({ username, password }: AuthJellyfinParams): 
   });
 }
 
-/** TMDB-backed multi-search; movie/tv results carry an embedded `mediaInfo` once tracked. */
+/**
+ * TMDB-backed multi-search; movie/tv results carry an embedded `mediaInfo`
+ * once tracked.
+ *
+ * `query` is percent-encoded via `encodeURIComponent` rather than folded into
+ * `URLSearchParams` - confirmed live that Jellyseerr's search endpoint
+ * rejects `URLSearchParams`'s `+`-for-space encoding with 400 ("Parameter
+ * 'query' must be url encoded"), even though `discover/trending`'s
+ * space-free params never exposed this. Multi-word queries (e.g. "Breaking
+ * Bad") would otherwise 400 on every keystroke that settles.
+ */
 export async function search(query: string, page = 1): Promise<JellyseerrSearchResponse> {
-  const qs = new URLSearchParams({ query, page: String(page), language: SPANISH_LATINO });
-  return apiFetch('jellyseerr', `/api/v1/search?${qs.toString()}`, {
+  const qs = new URLSearchParams({ page: String(page), language: SPANISH_LATINO });
+  return apiFetch('jellyseerr', `/api/v1/search?query=${encodeURIComponent(query)}&${qs.toString()}`, {
     schema: JellyseerrSearchResponseSchema,
   });
 }
