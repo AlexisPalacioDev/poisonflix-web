@@ -1,11 +1,14 @@
 import { apiFetch } from '../lib/http/client';
+import { tmdbLanguageParam } from '../lib/domain/languageSettings';
 import {
   JellyseerrMovieDetailsSchema,
+  JellyseerrTvDetailsSchema,
   JellyseerrRequestDtoSchema,
   JellyseerrRequestListResponseSchema,
   JellyseerrSearchResponseSchema,
   JellyseerrUserSchema,
   type JellyseerrMovieDetails,
+  type JellyseerrTvDetails,
   type JellyseerrRequestDto,
   type JellyseerrRequestListResponse,
   type JellyseerrSearchResponse,
@@ -13,8 +16,6 @@ import {
 } from './schemas/jellyseerr';
 
 // Jellyseerr REST client, ported from `JellyseerrApi.kt` (design.md §3.2).
-
-const SPANISH_LATINO = 'es-MX';
 
 export interface AuthJellyfinParams {
   username: string;
@@ -47,17 +48,24 @@ export async function authJellyfin({ username, password }: AuthJellyfinParams): 
  * 'query' must be url encoded"), even though `discover/trending`'s
  * space-free params never exposed this. Multi-word queries (e.g. "Breaking
  * Bad") would otherwise 400 on every keystroke that settles.
+ *
+ * `language` is read dynamically via `tmdbLanguageParam()` (the header's
+ * ES⇄EN toggle) on every call, not captured once at module load.
  */
 export async function search(query: string, page = 1): Promise<JellyseerrSearchResponse> {
-  const qs = new URLSearchParams({ page: String(page), language: SPANISH_LATINO });
+  const qs = new URLSearchParams({ page: String(page), language: tmdbLanguageParam() });
   return apiFetch('jellyseerr', `/api/v1/search?query=${encodeURIComponent(query)}&${qs.toString()}`, {
     schema: JellyseerrSearchResponseSchema,
   });
 }
 
-/** Home's Trending row source - mixed movie/tv trending list. */
+/**
+ * Home's Trending row source - mixed movie/tv trending list. `language` is
+ * read dynamically via `tmdbLanguageParam()` (the header's ES⇄EN toggle) on
+ * every call.
+ */
 export async function discoverTrending(page = 1): Promise<JellyseerrSearchResponse> {
-  const qs = new URLSearchParams({ page: String(page), language: SPANISH_LATINO });
+  const qs = new URLSearchParams({ page: String(page), language: tmdbLanguageParam() });
   return apiFetch('jellyseerr', `/api/v1/discover/trending?${qs.toString()}`, {
     schema: JellyseerrSearchResponseSchema,
   });
@@ -74,7 +82,9 @@ export interface DiscoverByGenreParams {
  * there (unlike `discover/trending`/`search`), and `es-MX` (not an
  * ISO-639-1 code) collapses results to zero. Encode this per-endpoint;
  * never centralize it into a shared interceptor/default (that was the
- * original native `LanguageInterceptor.kt` footgun).
+ * original native `LanguageInterceptor.kt` footgun). This holds regardless of
+ * the header's ES⇄EN toggle - `discover/movies|tv` stays language-free even
+ * when `tmdbLanguageParam()` would resolve to `'en'`.
  */
 export async function discoverMovies({ genre, page = 1 }: DiscoverByGenreParams = {}): Promise<JellyseerrSearchResponse> {
   const qs = new URLSearchParams({ page: String(page) });
@@ -94,36 +104,61 @@ export async function discoverTv({ genre, page = 1 }: DiscoverByGenreParams = {}
 }
 
 /**
- * Movie detail screen source (detail-request spec). `language=es-MX` here
- * mirrors `search`/`discoverTrending` - this is a single-item locale lookup
- * (like TMDB's own `/movie/{id}?language=` param), not the `discover/*`
+ * Movie detail screen source (detail-request spec). `language` here mirrors
+ * `search`/`discoverTrending` - this is a single-item locale lookup (like
+ * TMDB's own `/movie/{id}?language=` param), not the `discover/*`
  * content-filter case ADR-4 documents, so it does NOT collapse results the
- * way `discover/movies|tv` does.
+ * way `discover/movies|tv` does. Read dynamically via `tmdbLanguageParam()`
+ * (the header's ES⇄EN toggle) on every call.
  */
 export async function getMovieDetails(tmdbId: number): Promise<JellyseerrMovieDetails> {
-  const qs = new URLSearchParams({ language: SPANISH_LATINO });
+  const qs = new URLSearchParams({ language: tmdbLanguageParam() });
   return apiFetch('jellyseerr', `/api/v1/movie/${tmdbId}?${qs.toString()}`, {
     schema: JellyseerrMovieDetailsSchema,
+  });
+}
+
+/**
+ * TV detail screen source, ported from {@link getMovieDetails}. Same
+ * single-item locale lookup rationale (ADR-4 does NOT apply — this is not a
+ * `discover/*` content filter). `useTitleDetail` normalizes the TMDB TV field
+ * names onto the shared detail shape. `language` is read dynamically via
+ * `tmdbLanguageParam()` (the header's ES⇄EN toggle) on every call.
+ */
+export async function getTvDetails(tmdbId: number): Promise<JellyseerrTvDetails> {
+  const qs = new URLSearchParams({ language: tmdbLanguageParam() });
+  return apiFetch('jellyseerr', `/api/v1/tv/${tmdbId}?${qs.toString()}`, {
+    schema: JellyseerrTvDetailsSchema,
   });
 }
 
 export interface RequestMediaParams {
   mediaType: 'movie' | 'tv';
   mediaId: number;
+  /**
+   * TV only: which seasons to request. Jellyseerr requires a `seasons` value
+   * for a `tv` request; `'all'` asks for the whole series (the sensible default
+   * until a per-season TV detail lands). Omitted entirely for movies so the
+   * movie request body stays exactly `{ mediaType, mediaId }`.
+   */
+  seasons?: 'all' | number[];
 }
 
-export async function requestMedia({ mediaType, mediaId }: RequestMediaParams): Promise<JellyseerrRequestDto> {
+export async function requestMedia({ mediaType, mediaId, seasons }: RequestMediaParams): Promise<JellyseerrRequestDto> {
+  const body: Record<string, unknown> = { mediaType, mediaId };
+  if (mediaType === 'tv') {
+    body.seasons = seasons ?? 'all';
+  }
   return apiFetch('jellyseerr', '/api/v1/request', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mediaType, mediaId }),
+    body: JSON.stringify(body),
     schema: JellyseerrRequestDtoSchema,
   });
 }
 
 /**
- * Active Jellyseerr requests - reserved for the deferred Downloads screen
- * (tasks.md Slice 1, note "deferred"). Not called from any UI yet.
+ * Active Jellyseerr requests - Downloads screen source (projector-feature-map.md §9).
  */
 export async function getRequests(
   filter = 'all',
@@ -134,4 +169,13 @@ export async function getRequests(
   return apiFetch('jellyseerr', `/api/v1/request?${qs.toString()}`, {
     schema: JellyseerrRequestListResponseSchema,
   });
+}
+
+/**
+ * Cancels a Jellyseerr request (Downloads screen's cancel flow, last step of
+ * `useCancelDownload`'s best-effort chain) so the title leaves the requests
+ * list. 204 No Content - no schema to validate.
+ */
+export async function deleteRequest(requestId: number): Promise<void> {
+  await apiFetch('jellyseerr', `/api/v1/request/${requestId}`, { method: 'DELETE' });
 }

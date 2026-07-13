@@ -47,6 +47,12 @@
   letter-spacing: -0.02em;
 }
 
+.pf-header__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .pf-header__search {
   display: inline-flex;
   align-items: center;
@@ -75,6 +81,17 @@
   color: var(--pf-gold);
 }
 
+/* LanguageChip reuses `.pf-header__search`'s pill styling but is a <button>,
+   not a <Link>, and has no icon - its "ES"/"EN" label is the whole affordance,
+   so it must stay visible even where the search/downloads labels collapse to
+   icon-only below (see the max-width rule). */
+.pf-header__lang-chip {
+  font: inherit;
+  cursor: pointer;
+  min-width: 40px;
+  justify-content: center;
+}
+
 @media (max-width: 640px) {
   .pf-header__search-label {
     display: none;
@@ -84,5 +101,14 @@
     width: 40px;
     justify-content: center;
     padding: 0;
+  }
+
+  .pf-header__lang-chip {
+    width: auto;
+    padding: 0 12px;
+  }
+
+  .pf-header__lang-chip .pf-header__search-label {
+    display: inline;
   }
 }

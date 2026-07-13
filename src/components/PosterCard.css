@@ -68,8 +68,31 @@
 
 .pf-poster-card__badge {
   position: absolute;
-  top: 8px;
+  bottom: 14px;
   left: 8px;
+}
+
+/* Watch-progress treatment (ported from `PosterCard.kt`): dims the art so
+   the gold bar reads clearly on top of it. Bar-only (no dim) is the default
+   when `dimUnwatched` is omitted/false. */
+.pf-poster-card__art--dim img,
+.pf-poster-card__art--dim .pf-poster-card__placeholder {
+  filter: brightness(0.55);
+}
+
+.pf-poster-card__progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.pf-poster-card__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-gold);
 }
 
 .pf-poster-card__title {

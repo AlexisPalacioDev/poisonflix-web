@@ -58,6 +58,21 @@ function noop() {
   /* test double */
 }
 
+// New audio/subtitle track props (player spec §8) - not under test in this
+// file's DirectPlay/Transcoded source-handling suites, so every render below
+// gets inert defaults (no tracks, no-op handlers). Track-menu-specific
+// behavior is exercised in `PlayerScreen.test.tsx` instead.
+const trackMenuDefaultProps = {
+  audioTracks: [],
+  subtitleTracks: [],
+  selectedAudioIndex: null,
+  selectedSubtitleIndex: null,
+  onAudioApplied: noop,
+  onAudioSwitchUnavailable: noop,
+  onSubtitleApplied: noop,
+  buildSubtitleUrl: () => '',
+};
+
 const directPlaySource = { kind: 'DirectPlay' as const, url: '/jellyfin/Videos/item-1/stream.mp4' };
 const transcodedSource = { kind: 'Transcoded' as const, hlsUrl: '/jellyfin/videos/item-1/master.m3u8' };
 
@@ -73,6 +88,7 @@ describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', ()
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={directPlaySource}
         resumeSeconds={42}
         title="Test movie"
@@ -103,6 +119,7 @@ describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', ()
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={{ kind: 'DirectPlay', url: '/jellyfin/Videos/item-2/stream.mp4' }}
         resumeSeconds={0}
         title="Test movie"
@@ -127,6 +144,7 @@ describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', ()
     const { rerender } = render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={{ kind: 'DirectPlay', url: '/jellyfin/Videos/item-1/stream.mp4' }}
         resumeSeconds={10}
         title="First movie"
@@ -146,6 +164,7 @@ describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', ()
     rerender(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={{ kind: 'DirectPlay', url: '/jellyfin/Videos/item-2/stream.mp4' }}
         resumeSeconds={77}
         title="Second movie"
@@ -171,6 +190,7 @@ describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', ()
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={directPlaySource}
         resumeSeconds={0}
         title="Test movie"
@@ -198,6 +218,7 @@ describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', ()
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={directPlaySource}
         resumeSeconds={0}
         title="Test movie"
@@ -223,6 +244,7 @@ describe('VideoSurface — Transcoded (hls.js seam, design.md §10)', () => {
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={transcodedSource}
         resumeSeconds={30}
         title="Transcoded movie"
@@ -256,6 +278,7 @@ describe('VideoSurface — Transcoded (hls.js seam, design.md §10)', () => {
     const { rerender, unmount } = render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={transcodedSource}
         resumeSeconds={0}
         title="Transcoded movie"
@@ -274,6 +297,7 @@ describe('VideoSurface — Transcoded (hls.js seam, design.md §10)', () => {
     rerender(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={{ kind: 'Transcoded', hlsUrl: '/jellyfin/videos/item-2/master.m3u8' }}
         resumeSeconds={0}
         title="Another transcoded movie"
@@ -298,6 +322,7 @@ describe('VideoSurface — Transcoded (hls.js seam, design.md §10)', () => {
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={transcodedSource}
         resumeSeconds={0}
         title="Transcoded movie"
@@ -324,6 +349,7 @@ describe('VideoSurface — Transcoded (hls.js seam, design.md §10)', () => {
     render(
       <VideoSurface
         videoRef={videoRef}
+        {...trackMenuDefaultProps}
         source={transcodedSource}
         resumeSeconds={0}
         title="Transcoded movie"

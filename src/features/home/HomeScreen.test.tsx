@@ -1,18 +1,61 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HomeScreen } from './HomeScreen';
 import { AuthProvider } from '../../auth/AuthContext';
+import { NORMAL_CATEGORIES } from '../../lib/domain/categories';
 import { clearSession, setSession } from '../../lib/session/store';
-import { getItems } from '../../api/jellyfin';
-import { discoverTrending } from '../../api/jellyseerr';
+import { getItems, getResumeItems } from '../../api/jellyfin';
+import { discoverMovies, discoverTrending, getMovieDetails, getRequests, getTvDetails } from '../../api/jellyseerr';
+import { getRadarrMovies, getRadarrQueue, getSonarrQueue, getSonarrSeries } from '../../api/arr';
 
-vi.mock('../../api/jellyfin', () => ({ getItems: vi.fn() }));
-vi.mock('../../api/jellyseerr', () => ({ discoverTrending: vi.fn() }));
+vi.mock('../../api/jellyfin', () => ({ getItems: vi.fn(), getResumeItems: vi.fn() }));
+vi.mock('../../api/jellyseerr', () => ({
+  discoverTrending: vi.fn(),
+  discoverMovies: vi.fn(),
+  getRequests: vi.fn(),
+  getMovieDetails: vi.fn(),
+  getTvDetails: vi.fn(),
+}));
+vi.mock('../../api/arr', () => ({
+  getRadarrMovies: vi.fn(),
+  getRadarrQueue: vi.fn(),
+  getSonarrQueue: vi.fn(),
+  getSonarrSeries: vi.fn(),
+}));
 
 const mockedGetItems = vi.mocked(getItems);
 const mockedDiscoverTrending = vi.mocked(discoverTrending);
+const mockedDiscoverMovies = vi.mocked(discoverMovies);
+// New rows' data sources - defaulted to empty/idle in `beforeEach` below so
+// every pre-existing test in this file renders the two new rows as hidden
+// (no items) without needing its own mocking, per their "nothing when
+// empty" contract (ContinueWatchingRow.tsx, DownloadingRow.tsx).
+const mockedGetResumeItems = vi.mocked(getResumeItems);
+const mockedGetRequests = vi.mocked(getRequests);
+const mockedGetMovieDetails = vi.mocked(getMovieDetails);
+const mockedGetTvDetails = vi.mocked(getTvDetails);
+const mockedGetRadarrMovies = vi.mocked(getRadarrMovies);
+const mockedGetRadarrQueue = vi.mocked(getRadarrQueue);
+const mockedGetSonarrQueue = vi.mocked(getSonarrQueue);
+const mockedGetSonarrSeries = vi.mocked(getSonarrSeries);
+
+beforeEach(() => {
+  mockedGetResumeItems.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 });
+  mockedGetRequests.mockResolvedValue({ results: [] });
+  mockedGetMovieDetails.mockResolvedValue(undefined as never);
+  mockedGetTvDetails.mockResolvedValue(undefined as never);
+  mockedGetRadarrMovies.mockResolvedValue([]);
+  mockedGetRadarrQueue.mockResolvedValue({ records: [] });
+  mockedGetSonarrQueue.mockResolvedValue({ records: [] });
+  mockedGetSonarrSeries.mockResolvedValue([]);
+});
+
+// Empty-but-valid envelope so the 10 genre rows' discover half settles
+// without contributing extra titles - tests below only care about the
+// Library/Trending row behavior plus the genre rows' own region/title wiring.
+const EMPTY_DISCOVER_FIXTURE = { page: 1, totalPages: 0, totalResults: 0, results: [] };
 
 const LIBRARY_FIXTURE = {
   Items: [{ Id: 'jf-1', Name: 'The Matrix', ProviderIds: { Tmdb: '603' }, ImageTags: null }],
@@ -43,6 +86,19 @@ const TRENDING_FIXTURE = {
   ],
 };
 
+// The 10 genre rows call the same mocked `getItems` as the Library row, so a
+// blanket `mockResolvedValue(LIBRARY_FIXTURE)` would make every genre row
+// ALSO resolve "The Matrix" - colliding with the Library row's own instance
+// under `screen.findByText`. Scoping by the (only the Library row omits)
+// `genres` param keeps each row's fixture where it belongs, same as a real
+// Jellyfin server would.
+function mockGetItemsScoped(libraryFixture: unknown) {
+  mockedGetItems.mockImplementation(async (_userId, params) => {
+    if (params?.genres) return { Items: [], TotalRecordCount: 0, StartIndex: 0 } as never;
+    return libraryFixture as never;
+  });
+}
+
 function renderHome() {
   setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -63,11 +119,15 @@ describe('HomeScreen - row isolation (home spec)', () => {
     clearSession();
     mockedGetItems.mockReset();
     mockedDiscoverTrending.mockReset();
+    mockedDiscoverMovies.mockReset();
+    mockedGetResumeItems.mockReset();
+    mockedGetRequests.mockReset();
   });
 
   it('renders exactly the Library and Trending row titles (fixed MVP row set)', async () => {
-    mockedGetItems.mockResolvedValue(LIBRARY_FIXTURE as never);
+    mockGetItemsScoped(LIBRARY_FIXTURE);
     mockedDiscoverTrending.mockResolvedValue(TRENDING_FIXTURE as never);
+    mockedDiscoverMovies.mockResolvedValue(EMPTY_DISCOVER_FIXTURE as never);
 
     renderHome();
 
@@ -78,8 +138,9 @@ describe('HomeScreen - row isolation (home spec)', () => {
   });
 
   it('Trending fails: Library still renders its items normally (row isolation)', async () => {
-    mockedGetItems.mockResolvedValue(LIBRARY_FIXTURE as never);
+    mockGetItemsScoped(LIBRARY_FIXTURE);
     mockedDiscoverTrending.mockRejectedValue(new Error('jellyseerr down'));
+    mockedDiscoverMovies.mockResolvedValue(EMPTY_DISCOVER_FIXTURE as never);
 
     renderHome();
 
@@ -95,6 +156,7 @@ describe('HomeScreen - row isolation (home spec)', () => {
   it('Library fails: Trending still renders its items normally (row isolation)', async () => {
     mockedGetItems.mockRejectedValue(new Error('jellyfin down'));
     mockedDiscoverTrending.mockResolvedValue(TRENDING_FIXTURE as never);
+    mockedDiscoverMovies.mockResolvedValue(EMPTY_DISCOVER_FIXTURE as never);
 
     renderHome();
 
@@ -104,6 +166,83 @@ describe('HomeScreen - row isolation (home spec)', () => {
     // Library row shows its own row-scoped error, not a screen-wide blank.
     const libraryRow = screen.getByRole('region', { name: 'Tu biblioteca' });
     expect(libraryRow).toHaveTextContent(/no se pudo cargar/i);
-    expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
+    expect(within(libraryRow).getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
+  });
+});
+
+describe('HomeScreen - genre/category rows (projector-feature-map.md §3)', () => {
+  afterEach(() => {
+    clearSession();
+    mockedGetItems.mockReset();
+    mockedDiscoverTrending.mockReset();
+    mockedDiscoverMovies.mockReset();
+    mockedGetResumeItems.mockReset();
+    mockedGetRequests.mockReset();
+  });
+
+  it('renders all 10 genre rows, in catalog order, each a landmark region by its label', async () => {
+    mockGetItemsScoped(LIBRARY_FIXTURE);
+    mockedDiscoverTrending.mockResolvedValue(TRENDING_FIXTURE as never);
+    mockedDiscoverMovies.mockResolvedValue(EMPTY_DISCOVER_FIXTURE as never);
+
+    renderHome();
+
+    expect(await screen.findByText('The Matrix')).toBeInTheDocument();
+
+    for (const category of NORMAL_CATEGORIES) {
+      expect(screen.getByRole('region', { name: category.label })).toBeInTheDocument();
+    }
+
+    // Every genre row queries its own Jellyfin genre + TMDB discover genre id -
+    // wait for the last category's calls to have landed before asserting,
+    // since all 10 rows' queries settle asynchronously in parallel.
+    const lastCategory = NORMAL_CATEGORIES[NORMAL_CATEGORIES.length - 1];
+    await waitFor(() =>
+      expect(mockedDiscoverMovies).toHaveBeenCalledWith({ genre: lastCategory.tmdbGenreId }),
+    );
+
+    for (const category of NORMAL_CATEGORIES) {
+      expect(mockedGetItems).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({ genres: category.jellyfinGenre }),
+      );
+      expect(mockedDiscoverMovies).toHaveBeenCalledWith({ genre: category.tmdbGenreId });
+    }
+  });
+
+  it('shows a PEDIR badge only on a genre row item that is not in the library', async () => {
+    mockedGetItems.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
+    mockedDiscoverTrending.mockResolvedValue(TRENDING_FIXTURE as never);
+    mockedDiscoverMovies.mockImplementation(async ({ genre }) => {
+      if (genre !== NORMAL_CATEGORIES[0].tmdbGenreId) return EMPTY_DISCOVER_FIXTURE as never;
+      return {
+        page: 1,
+        totalPages: 1,
+        totalResults: 1,
+        results: [
+          {
+            id: 500,
+            mediaType: 'movie',
+            title: 'Unowned Action Movie',
+            name: null,
+            releaseDate: '2023-01-01',
+            firstAirDate: null,
+            overview: null,
+            posterPath: '/action.jpg',
+            backdropPath: null,
+            voteAverage: 7,
+            adult: false,
+            genreIds: [],
+            mediaInfo: null,
+          },
+        ],
+      } as never;
+    });
+
+    renderHome();
+
+    const actionRow = screen.getByRole('region', { name: NORMAL_CATEGORIES[0].label });
+    expect(await within(actionRow).findByText('Unowned Action Movie')).toBeInTheDocument();
+    expect(actionRow).toHaveTextContent('PEDIR');
   });
 });

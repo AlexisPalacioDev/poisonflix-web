@@ -1,3 +1,7 @@
+import { AdultSection } from './AdultSection';
+import { ContinueWatchingRow } from './ContinueWatchingRow';
+import { DownloadingRow } from './DownloadingRow';
+import { GenreRow } from './GenreRow';
 import { Header } from '../../components/Header';
 import { Hero, HeroSkeleton, type HeroFeature } from '../../components/Hero';
 import { PosterCard, type PosterItem } from '../../components/PosterCard';
@@ -5,15 +9,19 @@ import { Row } from '../../components/Row';
 import { useLibraryRow } from '../../hooks/useLibraryRow';
 import { useTrendingRow } from '../../hooks/useTrendingRow';
 import { useAuth } from '../../hooks/useAuth';
+import { NORMAL_CATEGORIES } from '../../lib/domain/categories';
 import { displayTitle } from '../../lib/domain/displayTitle';
 import { jellyfinBackdropUrl, jellyfinPosterUrl, tmdbPosterUrl } from '../../lib/domain/posterUrl';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
 import './home.css';
 
-// Home screen (home spec's "Fixed MVP row set"): a featured hero banner on top
-// of EXACTLY the Library and Trending rows, each fed by an independent useQuery
-// hook (ADR-3). Deferred: Continue Watching, Downloading, genre rows, +18 PIN.
+// Home screen (home spec's "Fixed MVP row set" + projector-feature-map.md §3's
+// 10 mixed genre rows): a featured hero banner on top of the Continue
+// Watching, Downloading, Library and Trending rows, then one row per
+// `NORMAL_CATEGORIES` entry, each fed by an independent useQuery hook
+// (ADR-3), and finally the +18 section (`AdultSection.tsx`, projector-feature-map.md
+// §3) - locked by default, never persisted across a reload.
 
 function parseYear(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
@@ -65,7 +73,7 @@ function libraryFeature(item: JellyfinItem, token: string | null): Featured {
       backdropUrl: jellyfinBackdropUrl(item, token),
       year: item.ProductionYear ?? parseYear(item.PremiereDate),
       rating: item.CommunityRating ?? null,
-      detailTo: `/detail/${item.ProviderIds?.Tmdb ?? item.Id}`,
+      detailTo: `/detail/${item.ProviderIds?.Tmdb ?? item.Id}${item.Type === 'Series' ? '?type=tv' : ''}`,
       playTo: `/player/${item.Id}`,
     },
   };
@@ -80,7 +88,7 @@ function trendingFeature(result: JellyseerrSearchResult): Featured {
       backdropUrl: tmdbPosterUrl(result.backdropPath, 'w1280'),
       year: parseYear(result.releaseDate ?? result.firstAirDate),
       rating: result.voteAverage ?? null,
-      detailTo: `/detail/${result.id}`,
+      detailTo: `/detail/${result.id}${result.mediaType === 'tv' ? '?type=tv' : ''}`,
       playTo: null,
     },
   };
@@ -139,6 +147,9 @@ export function HomeScreen() {
       {heroSettled && featured ? <Hero feature={featured.feature} /> : <HeroSkeleton />}
 
       <div className="pf-home__rows">
+        <ContinueWatchingRow />
+        <DownloadingRow />
+
         <Row
           title="Tu biblioteca"
           items={library.isSuccess ? libraryItems : undefined}
@@ -158,6 +169,12 @@ export function HomeScreen() {
           renderItem={(item) => <PosterCard key={item.id} item={item} />}
           emptyMessage="No hay tendencias para mostrar ahora mismo."
         />
+
+        {NORMAL_CATEGORIES.map((category) => (
+          <GenreRow key={category.id} category={category} />
+        ))}
+
+        <AdultSection />
       </div>
     </main>
   );

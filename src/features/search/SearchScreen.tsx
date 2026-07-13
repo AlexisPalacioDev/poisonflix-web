@@ -6,6 +6,9 @@ import { StatusBadge, type StatusBadgeVariant } from '../../components/StatusBad
 import { jellyseerrStatusLabel, type TitleStatus } from '../../lib/domain/libraryIndex';
 import { tmdbPosterUrl } from '../../lib/domain/posterUrl';
 import { resultTitle, resultYear, useSearch, type SearchResultEntry } from '../../hooks/useSearch';
+import { useTitleDetail, type MediaType } from '../../hooks/useTitleDetail';
+import { useLibraryItem } from '../../hooks/useLibraryItem';
+import { audioLanguagesOf } from '../detail/audioLanguages';
 import './search.css';
 
 // Search screen (design.md §7 `/search`, search spec), ported from
@@ -15,6 +18,13 @@ import './search.css';
 // keyboard from the native app is intentionally NOT built here - the browser
 // already has a real keyboard (design.md §8), so the query field is a plain
 // focused `<input>`.
+//
+// Big-preview enrichment (feature-map §5 "Richer search UX", last piece of
+// that section - the on-screen `PoisonKeyboard` itself stays a deliberate
+// non-port): the preview also fetches the SELECTED result's full per-item
+// detail via `useTitleDetail` (same hook Detail uses) to show the richer
+// overview + the "Audio disponible" line, reusing `audioLanguagesOf` +
+// `useLibraryItem` exactly like DetailScreen does.
 
 function badgeProps(status: TitleStatus): { variant: StatusBadgeVariant; label: string } {
   switch (status.kind) {
@@ -34,6 +44,8 @@ function toPosterItem(entry: SearchResultEntry): PosterItem {
     id: String(entry.result.id),
     title: resultTitle(entry.result),
     imageUrl: tmdbPosterUrl(entry.result.posterPath),
+    // Carry movie/tv so the detail route can fetch the right endpoint.
+    mediaType: entry.result.mediaType === 'tv' ? 'tv' : 'movie',
     badge: <StatusBadge variant={variant} label={label} />,
   };
 }
@@ -49,6 +61,14 @@ export function SearchScreen() {
   // whenever the selection is stale (new search settled, or nothing picked
   // yet), fall back to the first entry so the preview panel is never blank
   // once results exist - purely derived, no effect needed.
+  //
+  // Empty-results decision (walkthrough §21): the native app has a bug/
+  // inconsistency where the preview keeps showing the last/recommended title
+  // even when the carousel has zero matches. `entries` being empty already
+  // makes both the `find` and the `entries[0]` fallback resolve to
+  // `undefined` here, so `selectedEntry` naturally becomes `null` and
+  // `BigPreview` renders its empty state instead - the web deliberately picks
+  // "clear on empty results" as the cleaner behavior, not a bug to replicate.
   const selectedEntry =
     (selectedId != null ? entries.find((entry) => String(entry.result.id) === selectedId) : undefined) ??
     entries[0] ??
@@ -92,6 +112,30 @@ export function SearchScreen() {
 }
 
 function BigPreview({ entry }: { entry: SearchResultEntry | null }) {
+  // Fetch the SELECTED result's full detail only (feature-map §5) - never
+  // the whole carousel - reusing `useTitleDetail`'s shared `queryKeys.detail`
+  // cache, so re-selecting a previously-viewed result is served from cache
+  // instead of refetching. Hooks must run unconditionally (rules of hooks),
+  // so with no selection this just calls the hook with an empty id: inside
+  // `useTitleDetail`, `Number('')` is not finite, so `validId` is false and
+  // the query stays disabled - no request fires while nothing is selected.
+  // Typing doesn't cause extra fetches either: `entries` (and therefore
+  // `selectedEntry`) only changes once the debounced query settles, not on
+  // every keystroke.
+  const mediaType: MediaType = entry ? (entry.result.mediaType === 'tv' ? 'tv' : 'movie') : 'movie';
+  const tmdbId = entry ? String(entry.result.id) : '';
+  const { detail } = useTitleDetail(tmdbId, mediaType);
+
+  // "Audio disponible" line (DetailScreen parity): movie-only, since a
+  // Jellyfin Series item carries no MediaStreams of its own (only its
+  // episodes do). Uses the search entry's own `status` - already resolved
+  // against the same LibraryIndex/library query `useSearch` and DetailScreen
+  // share - instead of waiting on the (independent) detail fetch to settle.
+  const libraryItemId =
+    entry && mediaType === 'movie' && entry.status.kind === 'InLibrary' ? entry.status.jellyfinItemId : null;
+  const { item: libraryItem } = useLibraryItem(libraryItemId);
+  const audioLanguages = useMemo(() => audioLanguagesOf(libraryItem), [libraryItem]);
+
   if (!entry) {
     return (
       <div className="pf-search__preview pf-search__preview--empty">
@@ -105,6 +149,10 @@ function BigPreview({ entry }: { entry: SearchResultEntry | null }) {
   const year = resultYear(result);
   const posterUrl = tmdbPosterUrl(result.posterPath, 'w500');
   const { variant, label } = badgeProps(status);
+  // Richer overview from the fetched full detail, falling back to the search
+  // result's own (list-shaped) overview while the detail fetch is in flight
+  // or unavailable, so the preview never regresses to blank.
+  const overview = detail?.overview ?? result.overview ?? null;
 
   return (
     <div className="pf-search__preview">
@@ -127,7 +175,13 @@ function BigPreview({ entry }: { entry: SearchResultEntry | null }) {
           <StatusBadge variant={variant} label={label} />
         </div>
 
-        {result.overview && <p className="pf-search__preview-overview">{result.overview}</p>}
+        {overview && <p className="pf-search__preview-overview">{overview}</p>}
+
+        {audioLanguages.length > 0 && (
+          <p className="pf-search__preview-audio" role="status">
+            Audio disponible: {audioLanguages.join(' · ')}
+          </p>
+        )}
       </div>
     </div>
   );

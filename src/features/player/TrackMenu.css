@@ -1,0 +1,85 @@
+/* Audio/subtitle track picker overlay (player spec §8, ← `TrackMenu.kt`'s
+   sheet). Centered card over a dimmed backdrop, consistent with the rest of
+   the player's dark/gold visual language (theme.css tokens). */
+
+.pf-track-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.75);
+}
+
+.pf-track-menu__sheet {
+  width: min(90vw, 420px);
+  max-height: min(80vh, 520px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  border-radius: var(--pf-radius-lg, 16px);
+  background: var(--pf-surface, #12151c);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-track-menu__title {
+  margin: 0 0 4px;
+  color: var(--pf-text, #f4f6fb);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.pf-track-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-track-menu__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: var(--pf-radius-md, 10px);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pf-text, #f4f6fb);
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.pf-track-menu__option:hover,
+.pf-track-menu__option:focus-visible {
+  background: rgba(242, 193, 78, 0.16);
+  outline: 2px solid var(--pf-gold, #f2c14e);
+  outline-offset: -2px;
+}
+
+.pf-track-menu__option--selected {
+  background: var(--pf-gold, #f2c14e);
+  color: #0a0c10;
+  font-weight: 700;
+}
+
+.pf-track-menu__option--dismiss {
+  margin-top: 8px;
+  text-align: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.pf-track-menu__option--expand {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.pf-track-menu__check {
+  font-weight: 700;
+}

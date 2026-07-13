@@ -1,0 +1,77 @@
+/* Home's +18 section (projector-feature-map.md §3, walkthrough §8-11) - the
+   last section on Home. Locked state renders one gated tile, poster-shaped;
+   unlocked state renders the "BUSCAR EN +18" pill above the +18 Row. */
+
+.pf-adult-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+  padding: 0 var(--pf-gutter);
+}
+
+.pf-adult-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 160px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--pf-radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--pf-surface);
+  color: var(--pf-gold);
+  cursor: pointer;
+  transition:
+    box-shadow var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-adult-locked:hover,
+.pf-adult-locked:focus-visible {
+  box-shadow: var(--pf-shadow-card-hover);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.pf-adult-locked:focus-visible {
+  box-shadow: var(--pf-ring);
+}
+
+.pf-adult-locked__label {
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+
+.pf-adult-locked__sublabel {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--pf-text-dim);
+}
+
+.pf-adult-search-pill {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-gold);
+  color: var(--pf-bg);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  transition: background var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-adult-search-pill:hover,
+.pf-adult-search-pill:focus-visible {
+  background: var(--pf-gold-dim);
+  outline: none;
+}
+
+.pf-adult-search-pill:focus-visible {
+  box-shadow: var(--pf-ring);
+}

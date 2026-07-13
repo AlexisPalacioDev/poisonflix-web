@@ -1,6 +1,8 @@
 import Hls from 'hls.js';
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { PlaybackSource } from '../../lib/domain/streamResolver';
+import { audioTracksOf, subtitleTracksOf, trackLabel, type MediaStreamTrack } from './mediaStreamTracks';
+import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import './VideoSurface.css';
 
 // `<video>` wrapper (design.md §10, ← `PlaybackController.kt`, tasks.md
@@ -11,10 +13,10 @@ import './VideoSurface.css';
 //   Safari) via `video.src`, else the genuinely-rare "not playable in this
 //   browser" case surfaced via `onUnsupported`.
 // Custom controls sit over the native `<video>` (play/pause, seek bar,
-// volume/mute, back, fullscreen), auto-hiding after inactivity and
-// keyboard-operable (space/enter toggles play, arrow keys seek/adjust
-// volume) so the same primitive can later opt into webOS spatial nav
-// without restructuring (design.md §9).
+// volume/mute, back, fullscreen, audio/subtitle track menus), auto-hiding
+// after inactivity and keyboard-operable (space/enter toggles play, arrow
+// keys seek/adjust volume) so the same primitive can later opt into webOS
+// spatial nav without restructuring (design.md §9).
 //
 // Carried-forward hls.js gotchas (design.md §10, `PlaybackController.kt`):
 // 1. Resume-seek-after-ready: under HLS (hls.js OR native), the resume seek
@@ -25,18 +27,71 @@ import './VideoSurface.css';
 //    `loadedmetadata` handler below only fires the seek for `DirectPlay`;
 //    `canplay` remains the catch-all for every mode (idempotent via the
 //    seek-once guard).
-// 2. Subtitle id-prefix bug (`PlaybackController.kt` L265-275): hls.js's
-//    text-track ids need prefix/suffix matching, never exact `==`, once
-//    transcode+subtitle track switching lands (still deferred - this file
-//    only plays video/audio, no subtitle tracks yet).
+//
+// ## Audio/subtitle track switching (player spec §8, projector-feature-map.md
+// §8, ← `TrackMenu.kt` + `PlayerViewModel.selectAudio`/`switchAudioUnderTranscode`
+// + `PlaybackController.selectAudioTrack`/`selectSubtitleTrack`)
+//
+// Audio:
+// - DirectPlay: the browser's `HTMLVideoElement.audioTracks` API (feature-
+//   detected - it's a real but inconsistently-implemented W3C API; Chrome
+//   ships it, Firefox/Safari support varies) - tracks are correlated to
+//   Jellyfin's `MediaStream`s by ORDINAL position (Nth audio MediaStream <->
+//   Nth `audioTracks` entry), same assumption (and same "not verified against
+//   a real multi-audio-track file" caveat) as `PlaybackController.kt`'s
+//   header.
+// - Transcoded: `hls.audioTracks`/`hls.audioTrack`, same ordinal correlation,
+//   ONLY attempted when hls.js actually offers more than one audio rendition
+//   (`hls.audioTracks.length > 1`) - in practice a Jellyfin HLS transcode
+//   almost always muxes exactly ONE server-picked audio stream, so this path
+//   is rarely available; that's expected, not a bug.
+// - Fallback (whenever neither of the above applies - most Transcoded
+//   sessions, or a browser without `audioTracks`): `onAudioSwitchUnavailable`
+//   signals the parent (`PlayerScreen`) to re-resolve `PlaybackInfo` with the
+//   picked `AudioStreamIndex` and reopen at the saved position - the actual
+//   primary path for transcode audio switching, ported as
+//   `switchAudioUnderTranscode`.
+//
+// Subtitles:
+// - DirectPlay: sideloaded `<track kind="subtitles">` elements (one per
+//   subtitle MediaStream, `src` built by `buildSubtitleDeliveryUrl`),
+//   toggled via each track's own `.track.mode` ('showing'/'disabled') -
+//   matched by OUR OWN stable `track.index` key, so there's no id-prefix
+//   ambiguity to guard against on this path (unlike the Kotlin reference's
+//   Media3 `Format.id` matching).
+// - Transcoded: `hls.subtitleTracks`/`hls.subtitleTrack` (`-1` disables),
+//   ordinal-matched like audio. hls.js's own `MediaPlaylist.id` is a plain
+//   ordinal number it hands out itself (not a prefixed string), so the
+//   Kotlin reference's `":"`-prefix `Format.id` quirk (a Media3-specific
+//   bug) has no direct equivalent here - documented rather than blindly
+//   ported, since guarding against a bug that can't occur on this API would
+//   just be dead code.
+// - Native HLS (Safari, no hls.js instance): audio/subtitle switching is NOT
+//   implemented - `hlsRef.current` is null on this path, so a selection just
+//   falls through to `onAudioSwitchUnavailable`/is a no-op for subtitles.
+//   Flagged here explicitly as the one genuinely-partial corner of this
+//   feature.
 
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const SEEK_STEP_SECONDS = 10;
 const VOLUME_STEP = 0.1;
 
+/** Minimal shape of the experimental `HTMLMediaElement.audioTracks` W3C API
+ * - not in TS's `lib.dom.d.ts` (it's still non-standard/partially shipped),
+ * so this is declared locally rather than widening a shared type. */
+interface BrowserAudioTrack {
+  enabled: boolean;
+}
+interface BrowserAudioTrackList {
+  readonly length: number;
+  [index: number]: BrowserAudioTrack;
+}
+
 function sourceKey(source: PlaybackSource): string {
   return source.kind === 'DirectPlay' ? `direct:${source.url}` : `hls:${source.hlsUrl}`;
 }
+
+type ActiveMenu = 'audio' | 'subtitle' | null;
 
 export interface VideoSurfaceProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -51,6 +106,19 @@ export interface VideoSurfaceProps {
   onError: () => void;
   /** Fired when neither hls.js nor native HLS is available for a `Transcoded` source - a genuinely rare "this browser can't play this" case. */
   onUnsupported: () => void;
+  /** Audio/subtitle MediaStreams for this item, enumerated up-front (player spec §8). */
+  audioTracks: MediaStreamTrack[];
+  subtitleTracks: MediaStreamTrack[];
+  /** `null` == no subtitle selected ("Ninguno"). */
+  selectedAudioIndex: number | null;
+  selectedSubtitleIndex: number | null;
+  /** An in-band audio switch (browser `audioTracks` or hls.js) succeeded. */
+  onAudioApplied: (track: MediaStreamTrack) => void;
+  /** Neither switching path was available - the parent must re-resolve
+   * `PlaybackInfo` with this track's index and reopen (see file header). */
+  onAudioSwitchUnavailable: (track: MediaStreamTrack) => void;
+  onSubtitleApplied: (track: MediaStreamTrack | null) => void;
+  buildSubtitleUrl: (track: MediaStreamTrack) => string;
 }
 
 function formatTime(totalSeconds: number): string {
@@ -74,6 +142,14 @@ export function VideoSurface({
   onEnded,
   onError,
   onUnsupported,
+  audioTracks,
+  subtitleTracks,
+  selectedAudioIndex,
+  selectedSubtitleIndex,
+  onAudioApplied,
+  onAudioSwitchUnavailable,
+  onSubtitleApplied,
+  buildSubtitleUrl,
 }: VideoSurfaceProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -81,6 +157,7 @@ export function VideoSurface({
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
 
   // Resume-seek-once guard (player spec: "only when position > 0"; carried
   // forward gotcha: never seek before metadata is actually ready, and never
@@ -90,6 +167,19 @@ export function VideoSurface({
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
+  // Initial-subtitle-apply-once guard + latest-value refs so the source-setup
+  // effect (keyed only on `key`, see below) can read the CURRENT selection
+  // without re-running every time the parent updates it (e.g. after the user
+  // picks a track, which is applied directly by the select handlers instead).
+  const initialSubtitleAppliedRef = useRef(false);
+  const subtitleTracksRef = useRef(subtitleTracks);
+  subtitleTracksRef.current = subtitleTracks;
+  const selectedSubtitleIndexRef = useRef(selectedSubtitleIndex);
+  selectedSubtitleIndexRef.current = selectedSubtitleIndex;
+  const audioTracksRef = useRef(audioTracks);
+  audioTracksRef.current = audioTracks;
+  const trackElsRef = useRef<Map<number, HTMLTrackElement>>(new Map());
+
   const key = sourceKey(source);
 
   // A new source (different item, or DirectPlay<->Transcoded switch) must
@@ -97,9 +187,11 @@ export function VideoSurface({
   // clock would silently carry over from whatever was playing before.
   useEffect(() => {
     hasSeekedResumeRef.current = false;
+    initialSubtitleAppliedRef.current = false;
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
+    setActiveMenu(null);
   }, [key]);
 
   const applyResumeSeekOnce = () => {
@@ -110,6 +202,35 @@ export function VideoSurface({
       video.currentTime = resumeSeconds;
       setCurrentTime(resumeSeconds);
     }
+  };
+
+  /** Applies `track` (or clears, for `null` == "Ninguno") on the CURRENT
+   * source - DirectPlay's sideloaded `<track>` elements, or hls.js's
+   * `subtitleTrack` under transcode. No-ops (documented limitation) under
+   * native Safari HLS, which has no hls.js instance to act on. */
+  const applySubtitle = (track: MediaStreamTrack | null) => {
+    if (source.kind === 'DirectPlay') {
+      for (const [idx, el] of trackElsRef.current) {
+        if (el.track) el.track.mode = track && idx === track.index ? 'showing' : 'disabled';
+      }
+    } else if (hlsRef.current) {
+      const hls = hlsRef.current;
+      if (!track) {
+        hls.subtitleTrack = -1;
+      } else {
+        const ordinal = subtitleTracksRef.current.findIndex((t) => t.index === track.index);
+        const hlsTrack = ordinal >= 0 ? hls.subtitleTracks[ordinal] : undefined;
+        if (hlsTrack) hls.subtitleTrack = hlsTrack.id;
+      }
+    }
+  };
+
+  const applyInitialSubtitleOnce = () => {
+    if (initialSubtitleAppliedRef.current) return;
+    initialSubtitleAppliedRef.current = true;
+    const idx = selectedSubtitleIndexRef.current;
+    const track = idx == null ? null : (subtitleTracksRef.current.find((t) => t.index === idx) ?? null);
+    applySubtitle(track);
   };
 
   // Attaches the resolved source to the <video> element: DirectPlay sets
@@ -128,6 +249,7 @@ export function VideoSurface({
 
     if (source.kind === 'DirectPlay') {
       video.src = source.url;
+      applyInitialSubtitleOnce();
       return undefined;
     }
 
@@ -135,14 +257,18 @@ export function VideoSurface({
     if (Hls.isSupported()) {
       const hls = new Hls();
       hlsRef.current = hls;
-      hls.on(Hls.Events.MANIFEST_PARSED, applyResumeSeekOnce);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        applyResumeSeekOnce();
+        applyInitialSubtitleOnce();
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) onError();
       });
       hls.loadSource(source.hlsUrl);
       hls.attachMedia(video);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native HLS (Safari) - no hls.js instance to manage.
+      // Native HLS (Safari) - no hls.js instance to manage; audio/subtitle
+      // switching is unavailable on this path (see file header).
       video.src = source.hlsUrl;
     } else {
       onUnsupported();
@@ -160,7 +286,7 @@ export function VideoSurface({
   const scheduleHideControls = () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) setControlsVisible(false);
+      if (videoRef.current && !videoRef.current.paused && activeMenu == null) setControlsVisible(false);
     }, CONTROLS_HIDE_DELAY_MS);
   };
 
@@ -227,7 +353,37 @@ export function VideoSurface({
     }
   };
 
+  const handleSelectAudio = (track: MediaStreamTrack) => {
+    let applied = false;
+    if (source.kind === 'DirectPlay') {
+      const webVideo = videoRef.current as unknown as { audioTracks?: BrowserAudioTrackList } | null;
+      const list = webVideo?.audioTracks;
+      if (list && list.length > 0) {
+        const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
+        for (let i = 0; i < list.length; i += 1) list[i].enabled = i === ordinal;
+        applied = true;
+      }
+    } else if (hlsRef.current && hlsRef.current.audioTracks.length > 1) {
+      const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
+      const hlsTrack = ordinal >= 0 ? hlsRef.current.audioTracks[ordinal] : undefined;
+      if (hlsTrack) {
+        hlsRef.current.audioTrack = hlsTrack.id;
+        applied = true;
+      }
+    }
+    setActiveMenu(null);
+    if (applied) onAudioApplied(track);
+    else onAudioSwitchUnavailable(track);
+  };
+
+  const handleSelectSubtitle = (track: MediaStreamTrack | null) => {
+    applySubtitle(track);
+    setActiveMenu(null);
+    onSubtitleApplied(track);
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (activeMenu != null) return; // menu owns keyboard input while open
     revealControls();
     switch (event.key) {
       case ' ':
@@ -254,6 +410,9 @@ export function VideoSurface({
     }
   };
 
+  const subtitles = subtitleTracksOf(subtitleTracks);
+  const audios = audioTracksOf(audioTracks);
+
   return (
     <div
       ref={containerRef}
@@ -262,7 +421,6 @@ export function VideoSurface({
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption -- subtitle tracks are deferred (hls.js seam, see file header) */}
       <video
         ref={videoRef}
         className="pf-player-surface__video"
@@ -278,7 +436,10 @@ export function VideoSurface({
           // MANIFEST_PARSED/`canplay` instead.
           if (source.kind === 'DirectPlay') applyResumeSeekOnce();
         }}
-        onCanPlay={applyResumeSeekOnce}
+        onCanPlay={() => {
+          applyResumeSeekOnce();
+          applyInitialSubtitleOnce();
+        }}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
         onPlay={() => {
           setIsPlaying(true);
@@ -293,7 +454,23 @@ export function VideoSurface({
           onEnded();
         }}
         onError={onError}
-      />
+      >
+        {source.kind === 'DirectPlay'
+          ? subtitles.map((track) => (
+              <track
+                key={track.index}
+                ref={(el) => {
+                  if (el) trackElsRef.current.set(track.index, el);
+                  else trackElsRef.current.delete(track.index);
+                }}
+                kind="subtitles"
+                src={buildSubtitleUrl(track)}
+                srcLang={track.language ?? undefined}
+                label={trackLabel(track)}
+              />
+            ))
+          : null}
+      </video>
 
       <div className={`pf-player-surface__controls${controlsVisible ? '' : ' pf-player-surface__controls--hidden'}`}>
         <button type="button" className="pf-player-surface__back" onClick={onBack} aria-label="Volver">
@@ -301,6 +478,29 @@ export function VideoSurface({
         </button>
 
         <span className="pf-player-surface__title">{title}</span>
+
+        <div className="pf-player-surface__top-right">
+          {audios.length > 0 ? (
+            <button
+              type="button"
+              className="pf-player-surface__track-button"
+              onClick={() => setActiveMenu('audio')}
+              aria-label="Audio"
+              aria-haspopup="dialog"
+            >
+              🎧
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="pf-player-surface__track-button"
+            onClick={() => setActiveMenu('subtitle')}
+            aria-label="Subtítulos"
+            aria-haspopup="dialog"
+          >
+            💬
+          </button>
+        </div>
 
         <div className="pf-player-surface__bar">
           <button
@@ -357,6 +557,23 @@ export function VideoSurface({
           </button>
         </div>
       </div>
+
+      {activeMenu === 'audio' ? (
+        <AudioTrackMenu
+          tracks={audioTracks}
+          selectedIndex={selectedAudioIndex}
+          onSelect={handleSelectAudio}
+          onDismiss={() => setActiveMenu(null)}
+        />
+      ) : null}
+      {activeMenu === 'subtitle' ? (
+        <SubtitleTrackMenu
+          tracks={subtitleTracks}
+          selectedIndex={selectedSubtitleIndex}
+          onSelect={handleSelectSubtitle}
+          onDismiss={() => setActiveMenu(null)}
+        />
+      ) : null}
     </div>
   );
 }

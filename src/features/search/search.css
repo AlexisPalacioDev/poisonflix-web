@@ -105,6 +105,15 @@
   line-height: 1.6;
 }
 
+/* "Audio disponible" line (feature-map §5 big-preview enrichment) - same
+   toxic-green InLibrary-associated color as Detail's `.pf-detail__audio`. */
+.pf-search__preview-audio {
+  margin: 0;
+  color: var(--pf-available);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
 @media (max-width: 720px) {
   .pf-search__preview {
     flex-direction: column;

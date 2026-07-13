@@ -180,6 +180,419 @@
   color: var(--pf-danger);
 }
 
+/* Availability preview (feature B): torrent presence + languages, shown
+   before the "Pedir" action so the user sees what's actually out there. */
+.pf-availability {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--pf-radius-lg);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  max-width: 65ch;
+}
+
+.pf-availability__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.pf-availability__label {
+  color: var(--pf-text);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.pf-availability__label--none {
+  color: var(--pf-danger);
+}
+
+.pf-availability--loading .pf-availability__label,
+.pf-availability--muted .pf-availability__label {
+  color: var(--pf-text-dim);
+  font-weight: 600;
+}
+
+.pf-availability__meta {
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-availability__langs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pf-availability__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.82rem;
+}
+
+.pf-availability__chip-name {
+  color: var(--pf-text);
+  font-weight: 600;
+}
+
+.pf-availability__chip-count {
+  color: var(--pf-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Audio disponible" line (Detail enhancements, feature-map §7, walkthrough
+   §15) - toxic-green, same InLibrary-associated color as the rest of the app. */
+.pf-detail__audio {
+  margin: 0;
+  color: var(--pf-available);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+/* Live download-% hint under the primary action (Detail enhancements,
+   feature-map §7 "Live download-% polling on Detail"). */
+.pf-detail__progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: var(--pf-space-2xs);
+}
+
+.pf-detail__progress-track {
+  flex: 1;
+  max-width: 220px;
+  height: 5px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.pf-detail__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-gold);
+  border-radius: var(--pf-radius-pill);
+}
+
+.pf-detail__progress-label {
+  color: var(--pf-gold);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Secondary action (exactly one per status, Detail enhancements §3): outline
+   button so it never competes visually with the gold/green primary action. */
+.pf-detail__secondary {
+  align-self: flex-start;
+  padding: 10px 24px;
+  border-radius: var(--pf-radius-pill);
+  border: 1px solid var(--pf-danger);
+  background: transparent;
+  color: var(--pf-danger);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-detail__secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+   TV series two-pane layout (Detail enhancements, feature-map §7 "TV SERIES
+   layout", walkthrough §19/§20), ported from `SeriesDetailContent.kt`.
+   --------------------------------------------------------------------------- */
+
+.pf-detail__content--series {
+  align-items: flex-start;
+}
+
+.pf-series-detail {
+  display: flex;
+  gap: clamp(24px, 4vw, 48px);
+  width: 100%;
+}
+
+.pf-series-detail__left {
+  flex: 0 0 auto;
+  width: clamp(200px, 22vw, 280px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+
+.pf-series-detail__poster {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--pf-radius-lg);
+  overflow: hidden;
+  background: var(--pf-surface);
+  box-shadow: var(--pf-shadow-hero);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pf-series-detail__poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pf-series-detail__play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--pf-available);
+  color: #06210a;
+  font-size: 1.1rem;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(140, 255, 90, 0.32);
+}
+
+.pf-series-detail__title {
+  margin: 0;
+  color: var(--pf-text);
+  font-size: 1.3rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-series-detail__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pf-series-detail__progress-track {
+  display: block;
+  width: 100%;
+  height: 5px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.pf-series-detail__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-gold);
+}
+
+.pf-series-detail__progress-label {
+  color: var(--pf-gold);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-series-detail__delete {
+  align-self: flex-start;
+}
+
+.pf-series-detail__seasons-label {
+  margin: var(--pf-space-xs) 0 0;
+  color: var(--pf-text-dim);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.pf-series-detail__seasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-2xs);
+  overflow-y: auto;
+}
+
+.pf-season-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: var(--pf-radius-sm);
+  border: 1px solid transparent;
+  background: var(--pf-surface);
+  color: var(--pf-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pf-season-row--selected {
+  border-color: var(--pf-gold);
+  background: var(--pf-surface-2);
+  color: var(--pf-gold);
+}
+
+.pf-season-row__title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.pf-season-row__count {
+  font-size: 0.78rem;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.pf-series-detail__right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+
+.pf-series-detail__season-heading {
+  margin: 0;
+  color: var(--pf-gold);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.pf-series-detail__hint {
+  color: var(--pf-text-dim);
+}
+
+.pf-episode-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+
+.pf-episode-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px;
+  border-radius: var(--pf-radius-sm);
+  border: 1px solid transparent;
+  background: var(--pf-surface);
+  color: var(--pf-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pf-episode-row:focus-visible,
+.pf-episode-row:hover {
+  border-color: var(--pf-gold);
+}
+
+.pf-episode-row__still {
+  flex: 0 0 auto;
+  width: 112px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+  background: var(--pf-surface-2);
+}
+
+.pf-episode-row__still img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pf-episode-row__still-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pf-episode-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pf-episode-row__title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-episode-row__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+
+.pf-episode-row__status--available {
+  color: var(--pf-available);
+}
+
+.pf-episode-row__status--downloading {
+  color: var(--pf-gold);
+}
+
+.pf-episode-row__status--missing {
+  color: var(--pf-text-dim);
+}
+
+.pf-episode-row__mini-track {
+  display: inline-block;
+  width: 60px;
+  height: 4px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.pf-episode-row__mini-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-gold);
+}
+
+@media (max-width: 900px) {
+  .pf-series-detail {
+    flex-direction: column;
+  }
+
+  .pf-series-detail__left {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .pf-series-detail__poster {
+    width: 140px;
+  }
+}
+
 @media (max-width: 720px) {
   .pf-detail__content {
     flex-direction: column;

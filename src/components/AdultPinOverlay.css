@@ -1,0 +1,113 @@
+/* AdultPinOverlay - full-screen PIN gate for the +18 section, ported from
+   `AdultPinOverlay.kt`. Reuses ConfirmOverlay's dimmed backdrop + centered
+   card convention, with a numeric keypad instead of confirm/dismiss actions. */
+
+.pf-adult-pin {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.9);
+  z-index: 100;
+  padding: var(--pf-space-md);
+}
+
+.pf-adult-pin__card {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--pf-surface);
+  border-radius: var(--pf-radius-lg);
+  box-shadow: var(--pf-shadow-hero);
+  padding: var(--pf-space-lg);
+}
+
+.pf-adult-pin__heading {
+  margin: 0;
+  letter-spacing: 0.08em;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--pf-gold);
+  text-transform: uppercase;
+}
+
+.pf-adult-pin__subheading {
+  margin: 8px 0 22px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+
+.pf-adult-pin__dots {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.pf-adult-pin__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--pf-surface-2);
+  transition: background var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-adult-pin__dot--filled {
+  background: var(--pf-gold);
+}
+
+.pf-adult-pin__error {
+  min-height: 1.2em;
+  margin: 0 0 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--pf-gold);
+  text-transform: uppercase;
+}
+
+.pf-adult-pin__keypad {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pf-adult-pin__row {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+}
+
+.pf-adult-pin__key {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--pf-radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--pf-surface-2);
+  color: var(--pf-text);
+  font-size: 1.15rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-adult-pin__key--wide {
+  width: 128px;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+}
+
+.pf-adult-pin__key:hover,
+.pf-adult-pin__key:focus-visible {
+  background: var(--pf-gold);
+  color: var(--pf-bg);
+  outline: none;
+}
+
+.pf-adult-pin__key:focus-visible {
+  box-shadow: var(--pf-ring);
+}

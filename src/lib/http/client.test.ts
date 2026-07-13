@@ -66,6 +66,23 @@ describe('apiFetch', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['radarr', 'sonarr', 'prowlarr'] as const)(
+    'does NOT clear the session on a 401 from %s (proxy has no API key; must not log the user out)',
+    async (backend) => {
+      setSession({ jellyfinToken: 'tok-live', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const err = await apiFetch(backend, '/api/v3/queue').catch((e) => e);
+
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(401);
+      // The user's Jellyfin/Jellyseerr session must survive an unconfigured
+      // *arr/indexer proxy 401 - otherwise the download-% poll logs them out.
+      expect(getSession()).not.toBeNull();
+    },
+  );
+
   it('throws NetworkError when fetch itself rejects (connectivity/proxy failure)', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);

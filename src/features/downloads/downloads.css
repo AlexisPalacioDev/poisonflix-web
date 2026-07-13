@@ -1,0 +1,120 @@
+/* Downloads screen (projector-feature-map.md §9, walkthrough §14) - a
+   dedicated grid (not a horizontal Row rail) since every item here is
+   equally "current", unlike Home's rows of many titles. */
+
+.pf-downloads {
+  flex: 1;
+  min-height: 100%;
+  padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
+  padding-bottom: var(--pf-space-2xl);
+  padding-left: var(--pf-gutter);
+  padding-right: var(--pf-gutter);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+}
+
+.pf-downloads__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pf-downloads__title {
+  margin: 0;
+  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-weight: 800;
+  color: var(--pf-text);
+}
+
+.pf-downloads__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--pf-text);
+  cursor: pointer;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-downloads__refresh:hover,
+.pf-downloads__refresh:focus-visible {
+  background: rgba(242, 193, 78, 0.14);
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
+.pf-downloads__refresh:active {
+  transform: scale(0.92);
+}
+
+.pf-downloads__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 20px 18px;
+}
+
+.pf-downloads__skeleton-card {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--pf-radius-md);
+}
+
+.pf-downloads__status {
+  color: var(--pf-text-dim);
+  font-size: 0.95rem;
+}
+
+.pf-downloads__status--error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--pf-danger);
+}
+
+.pf-downloads__retry {
+  background: transparent;
+  border: 1px solid var(--pf-danger);
+  color: var(--pf-danger);
+  border-radius: var(--pf-radius-sm);
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-downloads__retry:hover,
+.pf-downloads__retry:focus-visible {
+  background: rgba(229, 72, 77, 0.14);
+}
+
+.pf-downloads__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-2xl) 0;
+  color: var(--pf-text-dim);
+  text-align: center;
+}
+
+.pf-downloads__empty-mark {
+  width: 96px;
+  height: 96px;
+}
+
+@media (max-width: 640px) {
+  .pf-downloads__grid {
+    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+    gap: 16px 12px;
+  }
+}

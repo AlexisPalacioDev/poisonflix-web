@@ -89,6 +89,26 @@ export const JellyseerrMovieDetailsSchema = z.object({
 export type JellyseerrMovieDetails = z.infer<typeof JellyseerrMovieDetailsSchema>;
 
 // ---------------------------------------------------------------------------
+// TV details: GET /api/v1/tv/{tmdbId}. TMDB's TV shape names the fields
+// differently from movies (`name`/`firstAirDate`/`episodeRunTime[]` instead of
+// `title`/`releaseDate`/`runtime`); useTitleDetail normalizes them onto the
+// same internal detail shape so the detail screen stays media-type-agnostic.
+// ---------------------------------------------------------------------------
+
+export const JellyseerrTvDetailsSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  overview: z.string().nullable().optional(),
+  firstAirDate: z.string().nullable().optional(),
+  posterPath: z.string().nullable().optional(),
+  backdropPath: z.string().nullable().optional(),
+  voteAverage: z.number().nullable().optional(),
+  episodeRunTime: z.array(z.number()).nullable().optional().default([]),
+  mediaInfo: JellyseerrMediaInfoSchema.nullable().optional(),
+});
+export type JellyseerrTvDetails = z.infer<typeof JellyseerrTvDetailsSchema>;
+
+// ---------------------------------------------------------------------------
 // Request creation/listing: POST /api/v1/request, GET /api/v1/request
 // ---------------------------------------------------------------------------
 

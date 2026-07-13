@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { requestMedia } from '../api/jellyseerr';
 import type { JellyseerrRequestDto } from '../api/schemas/jellyseerr';
+import type { MediaType } from './useTitleDetail';
 
 // "Pedir" mutation (design.md §2 `useRequestMedia`, tasks.md 6.2), ported
 // from `DetailRepositoryImpl.requestMedia` (L120-134, detail-request spec).
@@ -9,8 +10,13 @@ import type { JellyseerrRequestDto } from '../api/schemas/jellyseerr';
 // `response.media.status` (not an assumed local value) and to NEVER
 // optimistically flip before the server confirms, so the status derivation
 // stays in the calling component (`DetailScreen`), not baked into this hook.
-export function useRequestMedia() {
+//
+// `mediaType` is now a parameter (was hardcoded 'movie'): a TV request goes out
+// as `{ mediaType: 'tv', ..., seasons: 'all' }` (whole series, set in the API
+// layer), while a movie request body stays exactly `{ mediaType: 'movie',
+// mediaId }` — unchanged.
+export function useRequestMedia(mediaType: MediaType) {
   return useMutation<JellyseerrRequestDto, unknown, number>({
-    mutationFn: (tmdbId: number) => requestMedia({ mediaType: 'movie', mediaId: tmdbId }),
+    mutationFn: (tmdbId: number) => requestMedia({ mediaType, mediaId: tmdbId }),
   });
 }
