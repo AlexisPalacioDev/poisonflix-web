@@ -33,17 +33,60 @@ export default defineConfig({
     proxy: {
       // Mirrors infra/Caddyfile's `handle_path /jellyfin/*` (strips the
       // /jellyfin prefix before reverse-proxying to Jellyfin) so dev is
-      // same-origin exactly like production.
+      // same-origin exactly like production. Targets are env-overridable so a
+      // dev machine that reaches the backends on a LAN IP (e.g. 192.168.1.61)
+      // instead of localhost can point the proxy without editing this file.
       '/jellyfin': {
-        target: 'http://localhost:8096',
+        target: process.env.JELLYFIN_TARGET ?? 'http://localhost:8096',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/jellyfin/, ''),
       },
       // Mirrors infra/Caddyfile's `handle_path /jellyseerr/*`.
       '/jellyseerr': {
-        target: 'http://localhost:5055',
+        target: process.env.JELLYSEERR_TARGET ?? 'http://localhost:5055',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/jellyseerr/, ''),
+      },
+      // Prowlarr manual search for the availability preview. The API key is
+      // injected here (server-side) from PROWLARR_API_KEY so it never ships in
+      // the client bundle — the browser calls /prowlarr/* with no credential.
+      // Mirrors infra/Caddyfile's `handle_path /prowlarr/*` (header_up X-Api-Key).
+      '/prowlarr': {
+        target: process.env.PROWLARR_TARGET ?? 'http://localhost:9696',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/prowlarr/, ''),
+        configure: (proxy) => {
+          const key = process.env.PROWLARR_API_KEY;
+          if (key) {
+            proxy.on('proxyReq', (proxyReq) => proxyReq.setHeader('X-Api-Key', key));
+          }
+        },
+      },
+      // Radarr (movies) and Sonarr (series) power live download-% (queue),
+      // library delete, and download cancel. Same server-side X-Api-Key
+      // injection pattern as Prowlarr so the key never ships to the client.
+      // Mirror these `handle_path` blocks in infra/Caddyfile for production.
+      '/radarr': {
+        target: process.env.RADARR_TARGET ?? 'http://localhost:7878',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/radarr/, ''),
+        configure: (proxy) => {
+          const key = process.env.RADARR_API_KEY;
+          if (key) {
+            proxy.on('proxyReq', (proxyReq) => proxyReq.setHeader('X-Api-Key', key));
+          }
+        },
+      },
+      '/sonarr': {
+        target: process.env.SONARR_TARGET ?? 'http://localhost:8989',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/sonarr/, ''),
+        configure: (proxy) => {
+          const key = process.env.SONARR_API_KEY;
+          if (key) {
+            proxy.on('proxyReq', (proxyReq) => proxyReq.setHeader('X-Api-Key', key));
+          }
+        },
       },
     },
   },

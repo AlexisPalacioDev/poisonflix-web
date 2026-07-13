@@ -20,6 +20,24 @@
 		reverse_proxy jellyseerr:5055
 	}
 
+	# Prowlarr manual search (availability preview) -> strip /prowlarr prefix.
+	# The API key is injected here so it never reaches the browser; set
+	# PROWLARR_API_KEY in the proxy service env (see docker-compose.yml).
+	handle_path /prowlarr/* {
+		reverse_proxy prowlarr:9696 {
+			header_up X-Api-Key {$PROWLARR_API_KEY}
+		}
+	}
+
+	# Native Android APK self-update channel: serves the version manifest + the
+	# APK binary for the projector's in-app updater (poisonflix Kotlin app polls
+	# /updates/version.json on launch). Static files from ./updates (mounted in
+	# docker-compose.yml). handle_path strips the /updates prefix.
+	handle_path /updates/* {
+		root * /updates
+		file_server
+	}
+
 	# Everything else: serve the built web app (SPA fallback to index.html).
 	handle {
 		root * /srv
