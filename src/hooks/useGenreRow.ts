@@ -31,6 +31,9 @@ export interface GenreRowItem {
   id: string;
   title: string;
   status: TitleStatus;
+  /** TMDB reuses ids across the movie/tv namespaces, so a TV entry must be
+   * tagged or /detail/:id opens the unrelated movie with the same id. */
+  mediaType: 'movie' | 'tv';
   /** Set for library-sourced items; poster resolves via `jellyfinPosterUrl`
    * (needs the session token, which this hook doesn't carry - left to the caller). */
   jellyfinItem?: JellyfinItem;
@@ -49,6 +52,7 @@ function fromLibraryItem(item: JellyfinItem): GenreRowItem {
     id: item.ProviderIds?.Tmdb ?? item.Id,
     title: displayTitle(item.Name),
     status: { kind: 'InLibrary', jellyfinItemId: item.Id, matchedByFallback: false },
+    mediaType: item.Type === 'Series' ? 'tv' : 'movie',
     jellyfinItem: item,
   };
 }
@@ -78,7 +82,13 @@ export function mergeGenreRow(
     const status = libraryIndex.resolve(result.id, title, year, result.mediaInfo?.status ?? null);
     if (status.kind === 'InLibrary') continue;
 
-    discoverRowItems.push({ id: String(result.id), title, status, posterPath: result.posterPath });
+    discoverRowItems.push({
+      id: String(result.id),
+      title,
+      status,
+      mediaType: result.mediaType === 'tv' ? 'tv' : 'movie',
+      posterPath: result.posterPath,
+    });
   }
 
   // Library wins on id collision (`distinctBy` keeps the first occurrence) -

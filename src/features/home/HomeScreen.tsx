@@ -48,6 +48,10 @@ function toTrendingPosterItem(result: JellyseerrSearchResult): PosterItem {
     id: String(result.id),
     title: result.title ?? result.name ?? 'Sin título',
     imageUrl: tmdbPosterUrl(result.posterPath),
+    // TMDB reuses numeric ids across the movie and tv namespaces, so a TV
+    // result MUST be tagged - otherwise /detail/:id resolves it as the movie
+    // with the same id and opens a completely unrelated title.
+    mediaType: result.mediaType === 'tv' ? 'tv' : 'movie',
   };
 }
 

@@ -21,6 +21,7 @@ function toGenreRowPosterItem(entry: GenreRowItem, token: string | null): Poster
     id: entry.id,
     title: entry.title,
     imageUrl,
+    mediaType: entry.mediaType,
     // PEDIR pill only on unowned titles (projector-feature-map.md §3's
     // MediaRow badge rule) - InLibrary items render with no badge; anything
     // else (Requesting/Requestable) is still "not yet in your library".

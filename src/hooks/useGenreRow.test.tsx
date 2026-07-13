@@ -69,7 +69,7 @@ describe('mergeGenreRow (pure merge/dedup/status logic)', () => {
     const merged = mergeGenreRow([], discover);
 
     expect(merged).toEqual([
-      { id: '27205', title: 'Inception', status: { kind: 'Requestable' }, posterPath: null },
+      { id: '27205', title: 'Inception', status: { kind: 'Requestable' }, mediaType: 'movie', posterPath: null },
     ]);
   });
 
@@ -136,9 +136,10 @@ describe('useGenreRow (wired hook: fetches + merges both sources)', () => {
         id: '1',
         title: 'Owned Title',
         status: { kind: 'InLibrary', jellyfinItemId: 'jf-1', matchedByFallback: false },
+        mediaType: 'movie',
         jellyfinItem: expect.objectContaining({ Id: 'jf-1' }),
       },
-      { id: '2', title: 'Requestable Title', status: { kind: 'Requestable' }, posterPath: null },
+      { id: '2', title: 'Requestable Title', status: { kind: 'Requestable' }, mediaType: 'movie', posterPath: null },
     ]);
 
     expect(mockedGetItems).toHaveBeenCalledWith(
@@ -166,6 +167,7 @@ describe('useGenreRow (wired hook: fetches + merges both sources)', () => {
         id: '1',
         title: 'Owned Title',
         status: { kind: 'InLibrary', jellyfinItemId: 'jf-1', matchedByFallback: false },
+        mediaType: 'movie',
         jellyfinItem: expect.objectContaining({ Id: 'jf-1' }),
       },
     ]);
