@@ -118,3 +118,19 @@
     gap: 16px 12px;
   }
 }
+
+/* +18 section: downloaded adult titles, deletable in place (PIN-gated). */
+.pf-downloads__adult {
+  margin-top: var(--pf-space-2xl);
+}
+.pf-downloads__adult-title {
+  font-size: var(--pf-text-lg, 1.25rem);
+  font-weight: 700;
+  color: var(--pf-text);
+  margin: 0 0 var(--pf-space-2xs);
+}
+.pf-downloads__adult-hint {
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+  margin: 0 0 var(--pf-space-md);
+}

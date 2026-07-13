@@ -6,8 +6,13 @@ import { PosterCard, type PosterItem } from '../../components/PosterCard';
 import { StatusBadge, type StatusBadgeVariant } from '../../components/StatusBadge';
 import { useCancelDownload } from '../../hooks/useCancelDownload';
 import { useDownloads, type DownloadItem } from '../../hooks/useDownloads';
+import { useAdultLibraryItems, useDeleteAdultItem } from '../../hooks/useAdultLibrary';
+import { useAdultUnlocked } from '../../hooks/useAdultUnlocked';
+import { useAuth } from '../../hooks/useAuth';
 import { queryKeys } from '../../hooks/queryKeys';
-import { tmdbPosterUrl } from '../../lib/domain/posterUrl';
+import { displayTitle } from '../../lib/domain/displayTitle';
+import { jellyfinPosterUrl, tmdbPosterUrl } from '../../lib/domain/posterUrl';
+import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import { PoisonMark } from '../onboarding/PoisonMark';
 import './downloads.css';
 
@@ -38,10 +43,28 @@ function toPosterItem(item: DownloadItem): PosterItem {
   };
 }
 
+function toAdultPosterItem(item: JellyfinItem, token: string | null): PosterItem {
+  return {
+    id: item.Id,
+    title: displayTitle(item.Name),
+    imageUrl: jellyfinPosterUrl(item, token),
+  };
+}
+
 export function DownloadsScreen() {
   const { items, isLoading, isError, refetch } = useDownloads();
   const cancelDownload = useCancelDownload();
   const queryClient = useQueryClient();
+
+  // +18: adult titles live in the "Adultos" Jellyfin library (grabbed via
+  // Prowlarr, never a Jellyseerr request), so they only appear here once the
+  // PIN is unlocked - the one place to delete them straight through Jellyfin.
+  const { session } = useAuth();
+  const token = session?.jellyfinToken ?? null;
+  const adultUnlocked = useAdultUnlocked();
+  const adultLibrary = useAdultLibraryItems();
+  const deleteAdult = useDeleteAdultItem();
+  const [pendingAdultDelete, setPendingAdultDelete] = useState<JellyfinItem | null>(null);
 
   const [pendingCancel, setPendingCancel] = useState<DownloadItem | null>(null);
   // Optimistically hidden request ids - removed the instant the user
@@ -140,6 +163,23 @@ export function DownloadsScreen() {
         </div>
       )}
 
+      {adultUnlocked && (adultLibrary.data?.length ?? 0) > 0 && (
+        <section className="pf-downloads__adult" aria-label="+18">
+          <h2 className="pf-downloads__adult-title">+18</h2>
+          <p className="pf-downloads__adult-hint">Mantené presionado un título para eliminarlo.</p>
+          <div className="pf-downloads__grid">
+            {adultLibrary.data?.map((item) => (
+              <PosterCard
+                key={item.Id}
+                item={toAdultPosterItem(item, token)}
+                to="/downloads"
+                onLongClick={() => setPendingAdultDelete(item)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       <ConfirmOverlay
         open={pendingCancel != null}
         title="Cancelar descarga"
@@ -149,6 +189,25 @@ export function DownloadsScreen() {
         danger
         onConfirm={handleConfirmCancel}
         onDismiss={() => setPendingCancel(null)}
+      />
+
+      <ConfirmOverlay
+        open={pendingAdultDelete != null}
+        title="Eliminar +18"
+        message={
+          pendingAdultDelete
+            ? `¿Eliminar "${displayTitle(pendingAdultDelete.Name)}"? Se borrará el archivo y no se puede deshacer.`
+            : ''
+        }
+        confirmLabel="Sí, eliminar"
+        dismissLabel="No, conservar"
+        danger
+        onConfirm={() => {
+          const target = pendingAdultDelete;
+          setPendingAdultDelete(null);
+          if (target) deleteAdult.mutate(target.Id);
+        }}
+        onDismiss={() => setPendingAdultDelete(null)}
       />
     </main>
   );

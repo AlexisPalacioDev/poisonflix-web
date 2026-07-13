@@ -47,14 +47,22 @@ function toDownloadItem(
   const tmdbId = request.media.tmdbId ?? null;
   const enriched = tmdbId != null ? enrichment.get(tmdbId) : undefined;
   const title = enriched?.title ?? (tmdbId != null ? String(tmdbId) : `#${request.id}`);
+  const status = request.media.status;
+  const percent = tmdbId != null ? progressByTmdbId.get(tmdbId) : undefined;
+
+  // "Próximamente": the request is approved/queued (Pendiente) or Jellyseerr
+  // reports "Descargando" but there's no actual Radarr/Sonarr queue progress
+  // yet - i.e. the download hasn't really started. Anything with live progress
+  // or already (partially) available keeps its real status.
+  const notStarted = (status === 2 || status === 3) && percent == null;
 
   return {
     id: request.id,
     tmdbId,
     title,
     posterPath: enriched?.posterPath ?? null,
-    statusLabel: jellyseerrStatusLabel(request.media.status),
-    percent: tmdbId != null ? progressByTmdbId.get(tmdbId) : undefined,
+    statusLabel: notStarted ? 'Próximamente' : jellyseerrStatusLabel(status),
+    percent,
   };
 }
 
