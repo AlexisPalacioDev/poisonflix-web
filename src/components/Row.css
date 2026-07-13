@@ -49,7 +49,11 @@
   display: flex;
   gap: 18px;
   overflow-x: auto;
-  padding: 6px var(--pf-gutter) 18px;
+  /* Generous top/bottom padding so a hovered card's lift + scale
+     (translateY(-6px) scale(1.04)) is NOT clipped: `overflow-x: auto` forces
+     `overflow-y` to compute to `auto` too (CSS overflow spec), which would
+     otherwise crop the top of the raised poster. */
+  padding: 22px var(--pf-gutter) 26px;
   scroll-snap-type: x proximity;
   scroll-behavior: smooth;
   /* Soft fade at the left/right edges so cards dissolve into the page rather

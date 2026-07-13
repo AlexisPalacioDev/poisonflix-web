@@ -109,9 +109,10 @@ export interface GetResumeItemsParams {
 }
 
 /**
- * "Continuar viendo" row source - reserved for the deferred Continue Watching
- * row (tasks.md Slice 1, note "deferred"). Signature only; not called from
- * any UI yet.
+ * "Continuar viendo" row source (Home's Continue Watching row, via
+ * `useResumeRow`). Returns the raw Jellyfin resume feed across every readable
+ * library; the +18 "Adultos" library is filtered out downstream in
+ * `useResumeRow` (same PIN-gate exclusion as `useLibraryRow`).
  */
 export async function getResumeItems(
   userId: string,

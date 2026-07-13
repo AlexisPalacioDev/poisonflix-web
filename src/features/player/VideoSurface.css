@@ -1,7 +1,9 @@
-/* DirectPlay `<video>` wrapper - full-bleed player surface + custom controls
-   overlay, auto-hiding after inactivity (design.md §10). Visual redesign
-   polishes the chrome only; the stream/hls logic in VideoSurface.tsx is
-   untouched. */
+/* Custom `<video>` chrome (design.md §10, ← `PlaybackController.kt`). Full-bleed
+   surface with an auto-hiding controls overlay laid out like a mainstream
+   player: back + title top-left, a large center play/pause, and a bottom block
+   with a full-width scrubber above a single control row. Icons are inline SVG
+   (VideoSurface.tsx), coloured via `currentColor`. Stream/hls logic lives in
+   VideoSurface.tsx and is untouched by this styling. */
 
 .pf-player-surface {
   position: relative;
@@ -18,151 +20,296 @@
   background: #000;
 }
 
+/* --- Controls overlay --------------------------------------------------- */
+
 .pf-player-surface__controls {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 20px clamp(16px, 3vw, 32px);
+  padding: clamp(14px, 3vh, 24px) clamp(16px, 3vw, 40px);
   background: linear-gradient(
     180deg,
-    rgba(0, 0, 0, 0.6) 0%,
-    transparent 20%,
-    transparent 62%,
-    rgba(0, 0, 0, 0.78) 100%
+    rgba(0, 0, 0, 0.55) 0%,
+    transparent 22%,
+    transparent 58%,
+    rgba(0, 0, 0, 0.82) 100%
   );
-  transition: opacity var(--pf-dur) var(--pf-ease);
   opacity: 1;
+  transition: opacity var(--pf-dur) var(--pf-ease);
 }
 
 .pf-player-surface__controls--hidden {
   opacity: 0;
   pointer-events: none;
+  cursor: none;
 }
 
-.pf-player-surface__back {
-  align-self: flex-start;
+/* Shared icon-button primitive (44px touch target, transparent until hover). */
+.pf-player-surface__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 44px;
   height: 44px;
+  flex: none;
+  padding: 0;
+  border: none;
   border-radius: var(--pf-radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(18, 21, 27, 0.72);
+  background: transparent;
   color: var(--pf-text);
-  font-size: 1.25rem;
   cursor: pointer;
-  backdrop-filter: blur(6px);
   transition:
     background var(--pf-dur-fast) var(--pf-ease),
-    border-color var(--pf-dur-fast) var(--pf-ease);
+    color var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-player-surface__icon-btn:hover,
+.pf-player-surface__icon-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.pf-player-surface__icon-btn:active {
+  transform: scale(0.92);
+}
+
+.pf-player-surface__icon-btn:focus-visible {
+  outline: 2px solid var(--pf-gold);
+  outline-offset: 2px;
+}
+
+.pf-icon {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+/* --- Top bar (back + title) --------------------------------------------- */
+
+.pf-player-surface__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pf-player-surface__back {
+  background: rgba(10, 12, 16, 0.5);
+  backdrop-filter: blur(6px);
 }
 
 .pf-player-surface__back:hover,
 .pf-player-surface__back:focus-visible {
-  background: rgba(242, 193, 78, 0.16);
-  border-color: var(--pf-gold);
+  background: rgba(242, 193, 78, 0.18);
   color: var(--pf-gold);
 }
 
 .pf-player-surface__title {
-  position: absolute;
-  top: 30px;
-  left: 80px;
-  color: var(--pf-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #fff;
   font-weight: 700;
-  font-size: 1.05rem;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
 }
 
-.pf-player-surface__top-right {
+/* --- Center play/pause -------------------------------------------------- */
+
+.pf-player-surface__center {
   position: absolute;
-  top: 20px;
-  right: clamp(16px, 3vw, 32px);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
-  gap: 10px;
-}
-
-.pf-player-surface__track-button {
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--pf-radius-pill);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(18, 21, 27, 0.72);
-  color: var(--pf-text);
-  font-size: 1.05rem;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 12, 16, 0.5);
+  color: #fff;
   cursor: pointer;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
   transition:
     background var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease),
     border-color var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-player-surface__track-button:hover,
-.pf-player-surface__track-button:focus-visible {
-  background: rgba(242, 193, 78, 0.16);
+.pf-player-surface__center:hover {
+  background: rgba(242, 193, 78, 0.22);
   border-color: var(--pf-gold);
-  color: var(--pf-gold);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.pf-player-surface__center:active {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.pf-player-surface__center .pf-icon {
+  width: 34px;
+  height: 34px;
+}
+
+/* --- Bottom block (scrubber + control row) ------------------------------ */
+
+.pf-player-surface__bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-player-surface__scrubber {
+  padding: 0 2px;
 }
 
 .pf-player-surface__bar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 6px;
   color: var(--pf-text);
 }
 
-.pf-player-surface__play,
-.pf-player-surface__mute,
-.pf-player-surface__fullscreen {
-  display: inline-flex;
+.pf-player-surface__volume-group {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: var(--pf-radius-pill);
-  background: transparent;
-  color: var(--pf-text);
-  font-size: 1.15rem;
-  cursor: pointer;
-  padding: 4px 8px;
-  transition:
-    background var(--pf-dur-fast) var(--pf-ease),
-    color var(--pf-dur-fast) var(--pf-ease);
-}
-
-.pf-player-surface__play:hover,
-.pf-player-surface__mute:hover,
-.pf-player-surface__fullscreen:hover,
-.pf-player-surface__play:focus-visible,
-.pf-player-surface__mute:focus-visible,
-.pf-player-surface__fullscreen:focus-visible {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--pf-gold);
+  gap: 2px;
 }
 
 .pf-player-surface__time {
+  margin-left: 8px;
+  font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.pf-player-surface__time-sep {
   color: var(--pf-text-dim);
-  font-size: 0.9rem;
-  min-width: 3.5ch;
+}
+
+.pf-player-surface__spacer {
+  flex: 1 1 auto;
+}
+
+/* --- Custom range inputs (seek + volume) -------------------------------- */
+/* The gold "filled" portion is a gradient keyed on `--pf-range-fill`, set
+   inline from the current time / volume (VideoSurface.tsx). */
+
+.pf-player-surface__seek,
+.pf-player-surface__volume {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(
+    to right,
+    var(--pf-gold) var(--pf-range-fill, 0%),
+    rgba(255, 255, 255, 0.26) var(--pf-range-fill, 0%)
+  );
+  cursor: pointer;
+  outline: none;
 }
 
 .pf-player-surface__seek {
-  flex: 1;
-  height: 6px;
-  accent-color: var(--pf-gold);
-  cursor: pointer;
+  display: block;
+  width: 100%;
+  transition: height var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-player-surface__seek:hover {
+  height: 7px;
 }
 
 .pf-player-surface__volume {
-  width: 90px;
-  accent-color: var(--pf-gold);
+  width: 84px;
+}
+
+/* WebKit thumb */
+.pf-player-surface__seek::-webkit-slider-runnable-track,
+.pf-player-surface__volume::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.pf-player-surface__seek::-webkit-slider-thumb,
+.pf-player-surface__volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   cursor: pointer;
+  transition: transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-player-surface__seek:hover::-webkit-slider-thumb {
+  margin-top: -5.5px;
+  transform: scale(1.15);
+}
+
+/* Firefox thumb */
+.pf-player-surface__seek::-moz-range-track,
+.pf-player-surface__volume::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+
+.pf-player-surface__seek::-moz-range-thumb,
+.pf-player-surface__volume::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+.pf-player-surface__seek:focus-visible,
+.pf-player-surface__volume:focus-visible {
+  outline: 2px solid var(--pf-gold);
+  outline-offset: 4px;
+}
+
+/* --- Mobile ------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .pf-player-surface__controls {
+    padding: 16px;
+  }
+
+  /* Device volume rocker covers this on touch; drop the slider so the bar
+     never overflows, keep the mute toggle. */
+  .pf-player-surface__volume {
+    display: none;
+  }
+
+  .pf-player-surface__center {
+    width: 62px;
+    height: 62px;
+  }
+
+  .pf-player-surface__center .pf-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .pf-player-surface__bar {
+    gap: 2px;
+  }
+
+  .pf-player-surface__time {
+    margin-left: 4px;
+    font-size: 0.78rem;
+  }
 }

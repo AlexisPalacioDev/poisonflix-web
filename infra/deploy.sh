@@ -35,7 +35,13 @@ cp -r dist infra/www
 
 echo "==> (re)building BFF + reloading proxy"
 cd infra
-docker compose up -d --build bff caddy
+# Caddy MUST be force-recreated: `mv infra/www infra/www.bak && cp -r dist
+# infra/www` above replaces the bind-mounted directory with a NEW inode, but a
+# still-running container keeps serving the OLD inode (now www.bak). Without
+# --force-recreate, `docker compose up` leaves Caddy untouched (config/image
+# unchanged) and it silently serves the previous bundle.
+docker compose up -d --build bff
+docker compose up -d --force-recreate caddy
 
 echo "==> smoke test (expect: / -> 200, /radarr -> 401)"
 ok=1
@@ -44,7 +50,13 @@ for i in $(seq 1 10); do
   [[ "$home" == "200" ]] && break
   sleep 1
 done
-arr=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/radarr/api/v3/queue || echo 000)
+# Retry the boundary check too: a freshly-recreated BFF may still be booting,
+# in which case the proxy returns a transient 502 instead of the BFF's 401.
+for i in $(seq 1 10); do
+  arr=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/radarr/api/v3/queue || echo 000)
+  [[ "$arr" == "401" ]] && break
+  sleep 1
+done
 echo "  /                    -> $home"
 echo "  /radarr/api/v3/queue -> $arr"
 [[ "$home" == "200" && "$arr" == "401" ]] || { echo "SMOKE TEST FAILED — consider ./infra/deploy.sh --rollback" >&2; ok=0; }

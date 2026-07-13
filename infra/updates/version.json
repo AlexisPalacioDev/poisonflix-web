@@ -1,6 +1,6 @@
 {
-  "versionCode": 5,
-  "versionName": "1.5",
-  "apk": "poisonflix-v5.apk",
-  "notes": "Prueba del auto-updater — v5."
+  "versionCode": 7,
+  "versionName": "1.7",
+  "apk": "poisonflix-v7.apk",
+  "notes": "Arreglado 'Continuar viendo': ahora guarda bien dónde quedaste al salir del reproductor"
 }

@@ -131,6 +131,108 @@ function formatTime(totalSeconds: number): string {
   return `${minutes}:${ss}`;
 }
 
+/* Inline SVG control icons (Lucide-style 24px stroke geometry) - replace the
+   old emoji glyphs so the chrome reads as a real player, renders identically
+   across platforms, and inherits button color via `currentColor`. All are
+   decorative (`aria-hidden`); the accessible name lives on the parent button. */
+type IconProps = { className?: string };
+
+function Svg({ children, filled = false }: { children: React.ReactNode; filled?: boolean }) {
+  return (
+    <svg
+      className="pf-icon"
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      fill={filled ? 'currentColor' : 'none'}
+      stroke={filled ? 'none' : 'currentColor'}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+const IconBack = () => (
+  <Svg>
+    <path d="M19 12H5" />
+    <path d="m12 19-7-7 7-7" />
+  </Svg>
+);
+const IconPlay = () => (
+  <Svg filled>
+    <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86Z" />
+  </Svg>
+);
+const IconPause = () => (
+  <Svg filled>
+    <rect x="6" y="5" width="4" height="14" rx="1" />
+    <rect x="14" y="5" width="4" height="14" rx="1" />
+  </Svg>
+);
+const IconVolumeHigh = () => (
+  <Svg>
+    <path d="M11 5 6 9H2v6h4l5 4z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M19 5a9 9 0 0 1 0 14" />
+  </Svg>
+);
+const IconVolumeMuted = () => (
+  <Svg>
+    <path d="M11 5 6 9H2v6h4l5 4z" />
+    <path d="m23 9-6 6" />
+    <path d="m17 9 6 6" />
+  </Svg>
+);
+const IconSubtitles = ({ className }: IconProps) => (
+  <svg
+    className={`pf-icon${className ? ` ${className}` : ''}`}
+    viewBox="0 0 24 24"
+    width="24"
+    height="24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <rect x="2" y="5" width="20" height="14" rx="2" />
+    <path d="M6 12h4" />
+    <path d="M14 12h4" />
+    <path d="M6 15.5h2" />
+    <path d="M12 15.5h6" />
+  </svg>
+);
+const IconAudio = () => (
+  <Svg>
+    <path d="M3 16v-4a9 9 0 0 1 18 0v4" />
+    <path d="M21 17a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2z" />
+    <path d="M3 17a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z" />
+  </Svg>
+);
+const IconFullscreen = () => (
+  <Svg>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+    <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+  </Svg>
+);
+const IconFullscreenExit = () => (
+  <Svg>
+    <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+    <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+    <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+    <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+  </Svg>
+);
+
 export function VideoSurface({
   videoRef,
   source,
@@ -158,6 +260,7 @@ export function VideoSurface({
   const [isMuted, setIsMuted] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Resume-seek-once guard (player spec: "only when position > 0"; carried
   // forward gotcha: never seek before metadata is actually ready, and never
@@ -303,6 +406,14 @@ export function VideoSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep the fullscreen icon in sync with the actual state - the user can
+  // leave fullscreen via Esc/OS chrome, not just our own button.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -413,6 +524,15 @@ export function VideoSurface({
   const subtitles = subtitleTracksOf(subtitleTracks);
   const audios = audioTracksOf(audioTracks);
 
+  // Percentages drive the gold "played"/"level" fill of the custom-styled
+  // range inputs (a CSS gradient keyed on these vars), so the seek and volume
+  // bars read like a real player instead of a bare native slider.
+  const seekMax = duration || 0;
+  const seekFillPct = seekMax > 0 ? (currentTime / seekMax) * 100 : 0;
+  const volumeValue = isMuted ? 0 : volume;
+  const seekStyle = { '--pf-range-fill': `${seekFillPct}%` } as React.CSSProperties;
+  const volumeStyle = { '--pf-range-fill': `${volumeValue * 100}%` } as React.CSSProperties;
+
   return (
     <div
       ref={containerRef}
@@ -472,89 +592,117 @@ export function VideoSurface({
           : null}
       </video>
 
-      <div className={`pf-player-surface__controls${controlsVisible ? '' : ' pf-player-surface__controls--hidden'}`}>
-        <button type="button" className="pf-player-surface__back" onClick={onBack} aria-label="Volver">
-          ←
-        </button>
-
-        <span className="pf-player-surface__title">{title}</span>
-
-        <div className="pf-player-surface__top-right">
-          {audios.length > 0 ? (
-            <button
-              type="button"
-              className="pf-player-surface__track-button"
-              onClick={() => setActiveMenu('audio')}
-              aria-label="Audio"
-              aria-haspopup="dialog"
-            >
-              🎧
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="pf-player-surface__track-button"
-            onClick={() => setActiveMenu('subtitle')}
-            aria-label="Subtítulos"
-            aria-haspopup="dialog"
-          >
-            💬
+      <div
+        className={`pf-player-surface__controls${controlsVisible ? '' : ' pf-player-surface__controls--hidden'}`}
+        // Clicking the empty video area (never a button/slider) toggles
+        // play/pause, the way every mainstream player behaves.
+        onClick={(event) => {
+          if (event.target === event.currentTarget) togglePlay();
+        }}
+      >
+        <div className="pf-player-surface__top">
+          <button type="button" className="pf-player-surface__icon-btn pf-player-surface__back" onClick={onBack} aria-label="Volver">
+            <IconBack />
           </button>
+          <span className="pf-player-surface__title">{title}</span>
         </div>
 
-        <div className="pf-player-surface__bar">
-          <button
-            type="button"
-            className="pf-player-surface__play"
-            onClick={togglePlay}
-            aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
-          >
-            {isPlaying ? '❚❚' : '►'}
-          </button>
+        <button
+          type="button"
+          className="pf-player-surface__center"
+          onClick={togglePlay}
+          aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+          tabIndex={-1}
+        >
+          {isPlaying ? <IconPause /> : <IconPlay />}
+        </button>
 
-          <span className="pf-player-surface__time">{formatTime(currentTime)}</span>
+        <div className="pf-player-surface__bottom">
+          <div className="pf-player-surface__scrubber">
+            <input
+              type="range"
+              className="pf-player-surface__seek"
+              min={0}
+              max={seekMax}
+              step={0.1}
+              value={currentTime}
+              style={seekStyle}
+              onChange={(event) => handleSeekInput(Number(event.target.value))}
+              aria-label="Progreso de la reproducción"
+            />
+          </div>
 
-          <input
-            type="range"
-            className="pf-player-surface__seek"
-            min={0}
-            max={duration || 0}
-            step={0.1}
-            value={currentTime}
-            onChange={(event) => handleSeekInput(Number(event.target.value))}
-            aria-label="Progreso de la reproducción"
-          />
+          <div className="pf-player-surface__bar">
+            <button
+              type="button"
+              className="pf-player-surface__icon-btn"
+              onClick={togglePlay}
+              aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+            >
+              {isPlaying ? <IconPause /> : <IconPlay />}
+            </button>
 
-          <span className="pf-player-surface__time">{formatTime(duration)}</span>
+            <div className="pf-player-surface__volume-group">
+              <button
+                type="button"
+                className="pf-player-surface__icon-btn"
+                onClick={toggleMute}
+                aria-label={isMuted || volume === 0 ? 'Activar sonido' : 'Silenciar'}
+              >
+                {isMuted || volume === 0 ? <IconVolumeMuted /> : <IconVolumeHigh />}
+              </button>
+              <input
+                type="range"
+                className="pf-player-surface__volume"
+                min={0}
+                max={1}
+                step={0.05}
+                value={volumeValue}
+                style={volumeStyle}
+                onChange={(event) => handleVolumeChange(Number(event.target.value))}
+                aria-label="Volumen"
+              />
+            </div>
 
-          <button
-            type="button"
-            className="pf-player-surface__mute"
-            onClick={toggleMute}
-            aria-label={isMuted || volume === 0 ? 'Activar sonido' : 'Silenciar'}
-          >
-            {isMuted || volume === 0 ? '🔇' : '🔊'}
-          </button>
+            <span className="pf-player-surface__time">
+              {formatTime(currentTime)}
+              <span className="pf-player-surface__time-sep"> / </span>
+              {formatTime(duration)}
+            </span>
 
-          <input
-            type="range"
-            className="pf-player-surface__volume"
-            min={0}
-            max={1}
-            step={0.05}
-            value={isMuted ? 0 : volume}
-            onChange={(event) => handleVolumeChange(Number(event.target.value))}
-            aria-label="Volumen"
-          />
+            <div className="pf-player-surface__spacer" />
 
-          <button
-            type="button"
-            className="pf-player-surface__fullscreen"
-            onClick={toggleFullscreen}
-            aria-label="Pantalla completa"
-          >
-            ⛶
-          </button>
+            <button
+              type="button"
+              className="pf-player-surface__icon-btn"
+              onClick={() => setActiveMenu('subtitle')}
+              aria-label="Subtítulos"
+              aria-haspopup="dialog"
+            >
+              <IconSubtitles />
+            </button>
+
+            {audios.length > 0 ? (
+              <button
+                type="button"
+                className="pf-player-surface__icon-btn"
+                onClick={() => setActiveMenu('audio')}
+                aria-label="Audio"
+                aria-haspopup="dialog"
+              >
+                <IconAudio />
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className="pf-player-surface__icon-btn"
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+            >
+              {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
+            </button>
+          </div>
         </div>
       </div>
 

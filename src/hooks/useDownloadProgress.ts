@@ -49,6 +49,10 @@ export function useDownloadProgress() {
     // Gated on a hydrated session like useLibraryRow - never fires before login.
     enabled: Boolean(session),
     staleTime: 8_000,
+    // Live-refresh the download percentages without a manual reload, matching the
+    // Downloads list cadence in useDownloads (15s). Without this the queue was
+    // fetched once on mount and the percent stayed frozen until the user refreshed.
+    refetchInterval: 15_000,
   });
 
   return {

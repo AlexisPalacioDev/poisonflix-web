@@ -9,6 +9,10 @@ import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 
 vi.mock('../../api/jellyfin', () => ({ getResumeItems: vi.fn() }));
+// useResumeRow now excludes adult titles via this helper; stub it to an empty
+// set so these tests stay focused on the row's rendering, not the +18 gate
+// (which is covered directly in useResumeRow.test.tsx).
+vi.mock('../../hooks/useLibraryRow', () => ({ adultLibraryItemIds: vi.fn().mockResolvedValue(new Set()) }));
 
 const mockedGetResumeItems = vi.mocked(getResumeItems);
 

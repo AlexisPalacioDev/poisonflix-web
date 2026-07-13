@@ -29,7 +29,7 @@ export function isAdultLibrary(view: JellyfinItem): boolean {
  * surfaces ecchi/hentai titles from "Adultos" in "Tu biblioteca" (they belong
  * behind the +18 PIN gate). Empty when there is no adult library.
  */
-async function adultLibraryItemIds(userId: string): Promise<Set<string>> {
+export async function adultLibraryItemIds(userId: string): Promise<Set<string>> {
   const views = await getUserViews(userId);
   const adult = (views.Items ?? []).find(isAdultLibrary);
   if (!adult) return new Set();
