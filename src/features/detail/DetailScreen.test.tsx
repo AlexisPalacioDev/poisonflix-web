@@ -17,7 +17,11 @@ import {
   getSonarrSeries,
 } from '../../api/arr';
 
-vi.mock('../../api/jellyfin', () => ({ getItems: vi.fn(), getItem: vi.fn() }));
+vi.mock('../../api/jellyfin', () => ({
+  getItems: vi.fn(),
+  getItem: vi.fn(),
+  getUserViews: vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }),
+}));
 vi.mock('../../api/jellyseerr', () => ({
   getMovieDetails: vi.fn(),
   getTvDetails: vi.fn(),

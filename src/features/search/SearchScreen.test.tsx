@@ -9,7 +9,11 @@ import { getItem, getItems } from '../../api/jellyfin';
 import { getMovieDetails, getTvDetails, search } from '../../api/jellyseerr';
 import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
 
-vi.mock('../../api/jellyfin', () => ({ getItems: vi.fn(), getItem: vi.fn() }));
+vi.mock('../../api/jellyfin', () => ({
+  getItems: vi.fn(),
+  getItem: vi.fn(),
+  getUserViews: vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }),
+}));
 vi.mock('../../api/jellyseerr', () => ({
   search: vi.fn(),
   getMovieDetails: vi.fn(),

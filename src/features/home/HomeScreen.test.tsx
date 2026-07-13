@@ -10,7 +10,13 @@ import { getItems, getResumeItems } from '../../api/jellyfin';
 import { discoverMovies, discoverTrending, getMovieDetails, getRequests, getTvDetails } from '../../api/jellyseerr';
 import { getRadarrMovies, getRadarrQueue, getSonarrQueue, getSonarrSeries } from '../../api/arr';
 
-vi.mock('../../api/jellyfin', () => ({ getItems: vi.fn(), getResumeItems: vi.fn() }));
+vi.mock('../../api/jellyfin', () => ({
+  getItems: vi.fn(),
+  getResumeItems: vi.fn(),
+  // No adult library by default, so the library row's adult-exclusion filter
+  // is a no-op and every existing assertion holds.
+  getUserViews: vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }),
+}));
 vi.mock('../../api/jellyseerr', () => ({
   discoverTrending: vi.fn(),
   discoverMovies: vi.fn(),

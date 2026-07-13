@@ -79,6 +79,26 @@ export async function getItems(userId: string, params: GetItemsParams = {}): Pro
   });
 }
 
+/**
+ * The user's top-level libraries (`Users/{id}/Views`). Used to locate the
+ * PIN-gated "Adultos" library so its Movie/Series never leak into the
+ * mainstream library row (mirrors MediaRepositoryImpl.kt's `resolveViews`).
+ */
+export async function getUserViews(userId: string): Promise<JellyfinQueryResult> {
+  return apiFetch('jellyfin', `/Users/${userId}/Views`, {
+    schema: JellyfinQueryResultSchema,
+  });
+}
+
+/**
+ * Delete a library item and its files (`DELETE /Items/{id}`). Used for +18
+ * titles, which have no TMDB id / Radarr/Sonarr record and so can only be
+ * removed straight through Jellyfin (projector-feature-map.md §9). 204, no body.
+ */
+export async function deleteItem(itemId: string): Promise<void> {
+  await apiFetch('jellyfin', `/Items/${itemId}`, { method: 'DELETE' });
+}
+
 export interface GetResumeItemsParams {
   limit?: number;
   mediaTypes?: string;

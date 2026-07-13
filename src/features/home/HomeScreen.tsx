@@ -37,6 +37,9 @@ function toLibraryPosterItem(item: JellyfinItem, token: string | null): PosterIt
     id: item.ProviderIds?.Tmdb ?? item.Id,
     title: displayTitle(item.Name),
     imageUrl: jellyfinPosterUrl(item, token),
+    // Series must be tagged so PosterCard routes to /detail/:id?type=tv
+    // (TMDB reuses ids across the movie/tv namespaces); omitted -> movie.
+    mediaType: item.Type === 'Series' ? 'tv' : 'movie',
   };
 }
 
@@ -99,7 +102,12 @@ function pickFeatured(
   trendingItems: JellyseerrSearchResult[],
   token: string | null,
 ): Featured | null {
-  const libWithArt = libraryItems.find(
+  // The hero's primary action plays directly (playTo = /player/{itemId}), but a
+  // whole-series id 500s on Jellyfin PlaybackInfo, so only MOVIES are eligible
+  // to be featured - series still appear in the "Listas para ver" row below.
+  const movies = libraryItems.filter((item) => item.Type !== 'Series');
+
+  const libWithArt = movies.find(
     (item) => Boolean(item.ImageTags?.Primary) || (item.BackdropImageTags?.length ?? 0) > 0,
   );
   if (libWithArt) return libraryFeature(libWithArt, token);
@@ -107,7 +115,7 @@ function pickFeatured(
   const trendWithArt = trendingItems.find((result) => Boolean(result.backdropPath));
   if (trendWithArt) return trendingFeature(trendWithArt);
 
-  if (libraryItems[0]) return libraryFeature(libraryItems[0], token);
+  if (movies[0]) return libraryFeature(movies[0], token);
   if (trendingItems[0]) return trendingFeature(trendingItems[0]);
   return null;
 }
@@ -157,7 +165,7 @@ export function HomeScreen() {
           isError={library.isError}
           onRetry={() => library.refetch()}
           renderItem={(item) => <PosterCard key={item.id} item={item} />}
-          emptyMessage="Todavía no hay películas en tu biblioteca."
+          emptyMessage="Todavía no hay nada en tu biblioteca."
         />
 
         <Row
