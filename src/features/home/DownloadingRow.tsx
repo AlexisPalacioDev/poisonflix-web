@@ -22,6 +22,7 @@ function toDownloadingPosterItem(item: DownloadItem): PosterItem {
     id: item.tmdbId != null ? String(item.tmdbId) : String(item.id),
     title: item.title,
     imageUrl: tmdbPosterUrl(item.posterPath),
+    mediaType: item.mediaType,
     progressPercent: item.percent,
     badge: <StatusBadge variant="requesting" label={item.statusLabel.toUpperCase()} />,
   };

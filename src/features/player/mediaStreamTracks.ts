@@ -68,8 +68,11 @@ function parseMediaStream(raw: unknown): MediaStreamTrack | null {
  * entries (Video/EmbeddedImage/etc. streams are irrelevant to track menus)
  * and silently dropping anything malformed rather than throwing - a menu
  * missing one weird track beats a player screen that won't load at all. */
-export function parseMediaStreamTracks(raw: unknown[] | null | undefined): MediaStreamTrack[] {
-  if (!raw) return [];
+export function parseMediaStreamTracks(raw: unknown): MediaStreamTrack[] {
+  // Defensive: some Jellyfin responses (e.g. a whole-series item) can return
+  // MediaStreams absent or as a non-array shape - never let that white-screen
+  // the player, just show no track menus.
+  if (!Array.isArray(raw)) return [];
   const parsed: MediaStreamTrack[] = [];
   for (const entry of raw) {
     const track = parseMediaStream(entry);

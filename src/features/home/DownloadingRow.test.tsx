@@ -48,7 +48,7 @@ describe('DownloadingRow (projector-feature-map.md §3 row 2, walkthrough §2 "E
   it('filters out items whose statusLabel is "Disponible" (already finished)', () => {
     mockedUseDownloads.mockReturnValue(
       downloadsResult([
-        { id: 1, tmdbId: 603, title: 'The Matrix', posterPath: null, statusLabel: 'Disponible', percent: 100 },
+        { id: 1, tmdbId: 603, title: 'The Matrix', posterPath: null, statusLabel: 'Disponible', mediaType: 'movie', percent: 100 },
       ]),
     );
 
@@ -61,7 +61,7 @@ describe('DownloadingRow (projector-feature-map.md §3 row 2, walkthrough §2 "E
   it('shows an uppercased status badge and the download progress bar for an in-flight item', () => {
     mockedUseDownloads.mockReturnValue(
       downloadsResult([
-        { id: 2, tmdbId: 1399, title: 'Game of Thrones', posterPath: null, statusLabel: 'Descargando', percent: 42 },
+        { id: 2, tmdbId: 1399, title: 'Game of Thrones', posterPath: null, statusLabel: 'Descargando', mediaType: 'tv', percent: 42 },
       ]),
     );
 
@@ -77,7 +77,7 @@ describe('DownloadingRow (projector-feature-map.md §3 row 2, walkthrough §2 "E
   it('clicking a card navigates to /detail/:tmdbId', async () => {
     mockedUseDownloads.mockReturnValue(
       downloadsResult([
-        { id: 3, tmdbId: 603, title: 'The Matrix', posterPath: null, statusLabel: 'Pendiente', percent: undefined },
+        { id: 3, tmdbId: 603, title: 'The Matrix', posterPath: null, statusLabel: 'Pendiente', mediaType: 'movie', percent: undefined },
       ]),
     );
 

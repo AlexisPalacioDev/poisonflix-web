@@ -38,6 +38,7 @@ function toPosterItem(item: DownloadItem): PosterItem {
     id: String(item.tmdbId ?? item.id),
     title: item.title,
     imageUrl: tmdbPosterUrl(item.posterPath),
+    mediaType: item.mediaType,
     progressPercent: item.percent,
     badge: <StatusBadge variant={statusVariant(item.statusLabel)} label={item.statusLabel.toUpperCase()} />,
   };

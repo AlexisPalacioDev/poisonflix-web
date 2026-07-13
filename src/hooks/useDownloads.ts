@@ -21,6 +21,10 @@ export interface DownloadItem {
   title: string;
   posterPath: string | null;
   statusLabel: string;
+  /** TMDB reuses ids across the movie/tv namespaces, so a TV item must be
+   * tagged or /detail/:id opens the unrelated movie with the same id (or a
+   * 404 when no such movie exists). */
+  mediaType: 'movie' | 'tv';
   /** 0..100 live download %, or undefined when Radarr/Sonarr have no matching queue record. */
   percent?: number;
 }
@@ -62,6 +66,7 @@ function toDownloadItem(
     title,
     posterPath: enriched?.posterPath ?? null,
     statusLabel: notStarted ? 'Próximamente' : jellyseerrStatusLabel(status),
+    mediaType: mediaTypeOf(request),
     percent,
   };
 }
