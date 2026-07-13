@@ -13,6 +13,7 @@ import { useSeriesLibraryId } from '../../hooks/useSeriesLibraryId';
 import { useSeriesEpisodes } from '../../hooks/useSeriesEpisodes';
 import { useDownloadProgress } from '../../hooks/useDownloadProgress';
 import { useCancelDownload } from '../../hooks/useCancelDownload';
+import { useAuth } from '../../hooks/useAuth';
 import { queryKeys } from '../../hooks/queryKeys';
 import { deleteRadarrMovie, deleteSonarrSeries, getRadarrMovies, getSonarrSeries } from '../../api/arr';
 import { getRequests } from '../../api/jellyseerr';
@@ -122,6 +123,14 @@ export function DetailScreen() {
 
   const { detail, status, isLoading, isError, refetch } = useTitleDetail(tmdbId, mediaType);
   const requestMutation = useRequestMedia(mediaType);
+
+  // Library delete (Radarr/Sonarr/Jellyfin "Eliminar") is admin-only (security
+  // hardening: the BFF now returns 403 for a non-admin DELETE/PUT on
+  // radarr/sonarr) - gated here purely for UX, since the BFF re-enforces this
+  // server-side regardless. "Cancelar" stays visible for everyone: the BFF's
+  // /bff/cancel authorizes owner-or-admin, not admin-only.
+  const { session } = useAuth();
+  const isAdmin = session?.isAdmin === true;
 
   // Local override, set ONLY on a successful request response - the
   // detail-request spec's "no optimistic update" requirement means this
@@ -300,7 +309,7 @@ export function DetailScreen() {
   // even while more episodes are still downloading. A series that is ONLY
   // requested (no Jellyfin episodes yet) never reaches the two-pane and keeps
   // the movie/single-hero branch's `Requesting -> Cancelar` path below.
-  const seriesSecondaryLabel = deleteMutation.isPending ? 'Eliminando…' : 'Eliminar';
+  const seriesSecondaryLabel = isAdmin ? (deleteMutation.isPending ? 'Eliminando…' : 'Eliminar') : null;
   const seriesSecondaryDisabled = deleteMutation.isPending;
   const seriesSecondaryError = deleteErrorMessage;
   const onSeriesSecondaryAction = () => setShowDeleteConfirm(true);
@@ -395,7 +404,7 @@ export function DetailScreen() {
               </p>
             )}
 
-            {displayStatus?.kind === 'InLibrary' && (
+            {displayStatus?.kind === 'InLibrary' && isAdmin && (
               <button
                 type="button"
                 className="pf-detail__secondary"

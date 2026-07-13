@@ -25,7 +25,7 @@ describe('authenticateBothBackends', () => {
       AccessToken: 'token-abc',
       ServerId: 'server-1',
     });
-    mockedAuthJellyfin.mockResolvedValue({ id: 1, email: null, username: 'perroenvenenado' } as never);
+    mockedAuthJellyfin.mockResolvedValue({ id: 1, email: null, username: 'perroenvenenado', permissions: 2 } as never);
 
     const session = await authenticateBothBackends(CREDENTIALS, DEVICE_ID);
 
@@ -34,9 +34,37 @@ describe('authenticateBothBackends', () => {
       jellyfinUserId: 'user-1',
       jellyfinServerId: 'server-1',
       jellyseerrCookiePresent: true,
+      isAdmin: true,
     });
     expect(mockedAuthenticateByName).toHaveBeenCalledWith({ ...CREDENTIALS, deviceId: DEVICE_ID });
     expect(mockedAuthJellyfin).toHaveBeenCalledWith(CREDENTIALS);
+  });
+
+  it('non-admin permissions bitmask: isAdmin is false', async () => {
+    mockedAuthenticateByName.mockResolvedValue({
+      User: { Id: 'user-1', Name: 'perroenvenenado' },
+      AccessToken: 'token-abc',
+      ServerId: 'server-1',
+    });
+    // 32 = REQUEST, no ADMIN (2) bit set.
+    mockedAuthJellyfin.mockResolvedValue({ id: 1, email: null, username: 'perroenvenenado', permissions: 32 } as never);
+
+    const session = await authenticateBothBackends(CREDENTIALS, DEVICE_ID);
+
+    expect(session.isAdmin).toBe(false);
+  });
+
+  it('missing permissions field: isAdmin defaults to false', async () => {
+    mockedAuthenticateByName.mockResolvedValue({
+      User: { Id: 'user-1', Name: 'perroenvenenado' },
+      AccessToken: 'token-abc',
+      ServerId: 'server-1',
+    });
+    mockedAuthJellyfin.mockResolvedValue({ id: 1, email: null, username: 'perroenvenenado' } as never);
+
+    const session = await authenticateBothBackends(CREDENTIALS, DEVICE_ID);
+
+    expect(session.isAdmin).toBe(false);
   });
 
   it('Jellyfin fails: stops before calling Jellyseerr, throws OnboardingAuthError(jellyfin)', async () => {

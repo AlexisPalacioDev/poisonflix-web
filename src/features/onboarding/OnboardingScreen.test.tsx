@@ -55,7 +55,7 @@ describe('OnboardingScreen', () => {
       AccessToken: 'token-abc',
       ServerId: 'server-1',
     });
-    mockedAuthJellyfin.mockResolvedValue({ id: 1, email: null, username: 'perroenvenenado' } as never);
+    mockedAuthJellyfin.mockResolvedValue({ id: 1, email: null, username: 'perroenvenenado', permissions: 2 } as never);
 
     const user = userEvent.setup();
     renderOnboarding();
@@ -71,6 +71,7 @@ describe('OnboardingScreen', () => {
       jellyfinUserId: 'user-1',
       jellyfinServerId: 'server-1',
       jellyseerrCookiePresent: true,
+      isAdmin: true,
     });
   });
 

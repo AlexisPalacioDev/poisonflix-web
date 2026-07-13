@@ -1,8 +1,6 @@
-# NOTE: reconstructed 2026-07-12 from the live running container's config
-# (docker inspect poisonflix-proxy) after this file was accidentally deleted
-# by `create-vite --overwrite`. Functionally equivalent to the original;
-# original comments/formatting could not be recovered. Please diff against
-# your own memory of the file and adjust if anything looks off.
+# poisonflix-web infra. The Caddy proxy is the single public entry point; the BFF
+# is the only component that holds the *arr API keys and the only upstream the
+# /prowlarr /radarr /sonarr /bff routes reach (see Caddyfile + bff/server.mjs).
 services:
   caddy:
     image: caddy:2-alpine
@@ -10,10 +8,6 @@ services:
     restart: unless-stopped
     ports:
       - "8600:8600"
-    environment:
-      # Injected into the /prowlarr/* reverse-proxy as X-Api-Key so the key
-      # never reaches the browser. Set it in a sibling .env or your shell.
-      - PROWLARR_API_KEY=${PROWLARR_API_KEY:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # ./www is the built web app (git-ignored build output). Regenerate it with:
@@ -25,6 +19,45 @@ services:
     networks:
       - jellyfin-server_default
       - media-automation
+    depends_on:
+      - bff
+
+  # Auth-aware backend-for-frontend. Validates the caller's Jellyseerr session and
+  # injects each *arr's X-Api-Key server-side, so no credential reaches the browser.
+  bff:
+    build: ./bff
+    container_name: poisonflix-bff
+    restart: unless-stopped
+    # Real API keys + upstream URLs. Copy infra/env.example -> infra/.env first.
+    env_file:
+      - .env
+    # Only on media-automation: reaches jellyseerr/radarr/sonarr/prowlarr by name.
+    # No published ports — only Caddy (also on this network) talks to it.
+    networks:
+      - media-automation
+
+  # Public entry point over Tailscale Funnel. Userspace mode (no NET_ADMIN, no
+  # kernel iptables) reverse-proxies the tailnet HTTPS domain to the Caddy proxy.
+  # First-run setup + enabling Funnel is interactive — see infra/tailscale/README.md.
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: poisonflix-ts
+    hostname: poisonflix # -> https://poisonflix.<your-tailnet>.ts.net
+    restart: unless-stopped
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_USERSPACE=true
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - ./tailscale/serve.json:/config/serve.json:ro
+      - poisonflix-ts-state:/var/lib/tailscale
+    networks:
+      - jellyfin-server_default
+      - media-automation
+
+volumes:
+  poisonflix-ts-state:
 
 networks:
   jellyfin-server_default:

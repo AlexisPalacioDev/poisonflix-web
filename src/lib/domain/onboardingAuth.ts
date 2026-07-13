@@ -32,6 +32,12 @@ export class OnboardingAuthError extends Error {
   }
 }
 
+// Jellyseerr's own `Permission.ADMIN` bit (server/constants/permissions.ts in
+// the Jellyseerr codebase) - kept as a local literal since this app has no
+// dependency on Jellyseerr's package, mirroring how the rest of this module
+// avoids reaching into another service's types.
+const JELLYSEERR_PERMISSION_ADMIN = 2;
+
 /**
  * Runs Jellyfin `authenticateByName` first, then Jellyseerr `authJellyfin`.
  * Returns the session to persist ONLY when both succeed. On any failure this
@@ -51,14 +57,21 @@ export async function authenticateBothBackends(
     throw new OnboardingAuthError('jellyfin', cause);
   }
 
+  let jellyseerrUser;
   try {
-    await authJellyfin(credentials);
+    jellyseerrUser = await authJellyfin(credentials);
   } catch (cause) {
     // Jellyfin succeeded but Jellyseerr failed - the Jellyfin token obtained
     // above is discarded simply by never being persisted (it lives only in
     // this function's local `jellyfinAuth` variable, which is dropped here).
     throw new OnboardingAuthError('jellyseerr', cause);
   }
+
+  // isAdmin drives client-side gating of admin-only actions (e.g. the
+  // library "Eliminar" flow) - the BFF re-checks this server-side on every
+  // write regardless, so a missing/zero permissions field just means the
+  // action stays hidden, never a security gap.
+  const isAdmin = ((jellyseerrUser.permissions ?? 0) & JELLYSEERR_PERMISSION_ADMIN) === JELLYSEERR_PERMISSION_ADMIN;
 
   return {
     jellyfinToken: jellyfinAuth.AccessToken,
@@ -67,5 +80,6 @@ export async function authenticateBothBackends(
     // The connect.sid cookie itself lives in the browser's cookie jar
     // (design.md §5) - this is only the marker that Jellyseerr auth succeeded.
     jellyseerrCookiePresent: true,
+    isAdmin,
   };
 }

@@ -1,13 +1,13 @@
 # poisonflix-web same-origin reverse proxy.
-# Solves the browser CORS problem by serving the web app AND both backend
-# APIs under a single origin, using path prefixes. Also fixes the Jellyseerr
-# `connect.sid` cookie (now first-party, no SameSite=None/Secure needed).
+# Serves the web app AND the backend APIs under a single origin via path
+# prefixes (solves browser CORS; keeps the Jellyseerr `connect.sid` cookie
+# first-party). Upstreams are reached by container name over the two docker
+# networks this proxy joins (see docker-compose.yml).
 #
-# Upstreams are reached by container name over the two docker networks this
-# proxy joins (see docker-compose.yml) — no dependency on the host's DHCP IP.
-#   - jellyfin shares its network namespace with the `jellyfin-ts` sidecar,
-#     so it is reachable at jellyfin-ts:8096 on jellyfin-server_default.
-#   - jellyseerr:5055 on media-automation.
+# SECURITY: /prowlarr /radarr /sonarr are no longer proxied directly to the
+# *arr admin APIs. They (and /bff/*) go to the poisonflix-bff service, which
+# authenticates the caller's Jellyseerr session and injects each *arr's
+# X-Api-Key server-side. No API key is handled by Caddy anymore.
 
 :8600 {
 	# Jellyfin API + media streaming -> strip /jellyfin prefix
@@ -20,19 +20,27 @@
 		reverse_proxy jellyseerr:5055
 	}
 
-	# Prowlarr manual search (availability preview) -> strip /prowlarr prefix.
-	# The API key is injected here so it never reaches the browser; set
-	# PROWLARR_API_KEY in the proxy service env (see docker-compose.yml).
-	handle_path /prowlarr/* {
-		reverse_proxy prowlarr:9696 {
-			header_up X-Api-Key {$PROWLARR_API_KEY}
-		}
+	# *arr traffic + the BFF's own endpoints -> poisonflix-bff. `handle` (not
+	# handle_path) keeps the /radarr|/sonarr|/prowlarr prefix in the path: the
+	# BFF dispatches on it and strips it itself before calling the upstream.
+	# The Cookie header is forwarded by default so the BFF can validate the
+	# Jellyseerr session.
+	handle /prowlarr/* {
+		reverse_proxy poisonflix-bff:8787
+	}
+	handle /radarr/* {
+		reverse_proxy poisonflix-bff:8787
+	}
+	handle /sonarr/* {
+		reverse_proxy poisonflix-bff:8787
+	}
+	handle /bff/* {
+		reverse_proxy poisonflix-bff:8787
 	}
 
-	# Native Android APK self-update channel: serves the version manifest + the
-	# APK binary for the projector's in-app updater (poisonflix Kotlin app polls
-	# /updates/version.json on launch). Static files from ./updates (mounted in
-	# docker-compose.yml). handle_path strips the /updates prefix.
+	# Native Android APK self-update channel (poisonflix Kotlin app polls
+	# /updates/version.json). Static files from ./updates. Intentionally public
+	# (no secrets); the native app hits it over the LAN, not this public origin.
 	handle_path /updates/* {
 		root * /updates
 		file_server

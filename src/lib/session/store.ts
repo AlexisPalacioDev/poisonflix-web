@@ -32,6 +32,14 @@ export interface StoredSession {
    * request, kept so a future multi-server scenario doesn't need a re-login. */
   jellyfinServerId?: string;
   jellyseerrCookiePresent: boolean;
+  /** Derived from the Jellyseerr user's `permissions` bitmask (ADMIN = 2) at
+   * login time - drives client-side gating of admin-only actions (e.g. the
+   * library "Eliminar" flow). Optional (not `boolean`) so a session persisted
+   * before this field existed still parses; treat a missing value as
+   * non-admin (fail closed). The BFF re-enforces this server-side on every
+   * write regardless, so this flag is a UX convenience, never the actual
+   * authorization boundary. */
+  isAdmin?: boolean;
 }
 
 export function getSession(): StoredSession | null {

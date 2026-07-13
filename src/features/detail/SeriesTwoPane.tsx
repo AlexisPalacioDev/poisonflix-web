@@ -29,7 +29,11 @@ interface SeriesTwoPaneProps {
   // fully `InLibrary` - the label/handler/disabled/error are pre-resolved by
   // `DetailScreen` (same status branch the movie/single-hero layout uses),
   // so this component stays a dumb renderer of whichever action applies.
-  secondaryLabel: string;
+  // `secondaryLabel: null` (non-admin, security hardening: library delete is
+  // admin-only) means "render no secondary action at all" - the two-pane's
+  // secondary is always "Eliminar", never "Cancelar", so there is no
+  // non-admin-visible fallback action here the way the movie hero has one.
+  secondaryLabel: string | null;
   secondaryDisabled: boolean;
   secondaryError: string | null;
   onSecondaryAction: () => void;
@@ -152,14 +156,16 @@ export function SeriesTwoPane({
 
         <AvailabilityPanel title={availabilityTitle} tmdbId={availabilityTmdbId} />
 
-        <button
-          type="button"
-          className="pf-detail__action pf-series-detail__delete"
-          onClick={onSecondaryAction}
-          disabled={secondaryDisabled}
-        >
-          {secondaryLabel}
-        </button>
+        {secondaryLabel != null && (
+          <button
+            type="button"
+            className="pf-detail__action pf-series-detail__delete"
+            onClick={onSecondaryAction}
+            disabled={secondaryDisabled}
+          >
+            {secondaryLabel}
+          </button>
+        )}
 
         {secondaryError && (
           <p className="pf-detail__error" role="alert">

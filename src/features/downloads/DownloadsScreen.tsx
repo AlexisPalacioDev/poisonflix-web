@@ -61,6 +61,11 @@ export function DownloadsScreen() {
   // PIN is unlocked - the one place to delete them straight through Jellyfin.
   const { session } = useAuth();
   const token = session?.jellyfinToken ?? null;
+  // Same admin-only gating as the library "Eliminar" flow on Detail
+  // (security hardening): deleting straight through Jellyfin is a
+  // destructive write, so it's hidden for non-admins here too - the PIN
+  // unlock alone is not an authorization boundary.
+  const isAdmin = session?.isAdmin === true;
   const adultUnlocked = useAdultUnlocked();
   const adultLibrary = useAdultLibraryItems();
   const deleteAdult = useDeleteAdultItem();
@@ -166,14 +171,14 @@ export function DownloadsScreen() {
       {adultUnlocked && (adultLibrary.data?.length ?? 0) > 0 && (
         <section className="pf-downloads__adult" aria-label="+18">
           <h2 className="pf-downloads__adult-title">+18</h2>
-          <p className="pf-downloads__adult-hint">Mantené presionado un título para eliminarlo.</p>
+          {isAdmin && <p className="pf-downloads__adult-hint">Mantené presionado un título para eliminarlo.</p>}
           <div className="pf-downloads__grid">
             {adultLibrary.data?.map((item) => (
               <PosterCard
                 key={item.Id}
                 item={toAdultPosterItem(item, token)}
                 to="/downloads"
-                onLongClick={() => setPendingAdultDelete(item)}
+                onLongClick={isAdmin ? () => setPendingAdultDelete(item) : undefined}
               />
             ))}
           </div>

@@ -55,6 +55,19 @@ describe('apiFetch', () => {
     expect(init.credentials).toBe('include');
   });
 
+  it.each(['radarr', 'sonarr', 'prowlarr', 'bff'] as const)(
+    'sends credentials: include on %s calls so the BFF can authenticate the caller via connect.sid',
+    async (backend) => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await apiFetch(backend, '/api/v3/queue');
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.credentials).toBe('include');
+    },
+  );
+
   it('clears the session and throws ApiError(401) on an unauthorized response, without retrying', async () => {
     setSession({ jellyfinToken: 'tok-expired', jellyfinUserId: 'user-1', jellyseerrCookiePresent: false });
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));

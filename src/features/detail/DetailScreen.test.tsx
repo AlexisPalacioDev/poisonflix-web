@@ -16,6 +16,7 @@ import {
   getSonarrQueue,
   getSonarrSeries,
 } from '../../api/arr';
+import { cancelDownload } from '../../api/bff';
 
 vi.mock('../../api/jellyfin', () => ({
   getItems: vi.fn(),
@@ -43,6 +44,9 @@ vi.mock('../../api/arr', () => ({
   deleteSonarrQueueItem: vi.fn(),
   putSonarrEpisodesMonitor: vi.fn(),
 }));
+vi.mock('../../api/bff', () => ({
+  cancelDownload: vi.fn(),
+}));
 
 const mockedGetItems = vi.mocked(getItems);
 const mockedGetItem = vi.mocked(getItem);
@@ -58,6 +62,7 @@ const mockedGetSonarrSeries = vi.mocked(getSonarrSeries);
 const mockedGetSonarrEpisodes = vi.mocked(getSonarrEpisodes);
 const mockedGetSonarrQueue = vi.mocked(getSonarrQueue);
 const mockedDeleteSonarrSeries = vi.mocked(deleteSonarrSeries);
+const mockedCancelDownload = vi.mocked(cancelDownload);
 
 const EMPTY_LIBRARY = { Items: [], TotalRecordCount: 0, StartIndex: 0 };
 
@@ -104,8 +109,11 @@ function TestRouteTree() {
   ]);
 }
 
-function renderDetail(tmdbId = '603', search = '') {
-  setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+function renderDetail(tmdbId = '603', search = '', isAdmin = true) {
+  // Admin by default - most of these tests exercise the "Eliminar" flow,
+  // which is admin-only (security hardening). The dedicated gating test
+  // below overrides this with its own non-admin session.
+  setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true, isAdmin });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   render(
@@ -456,6 +464,7 @@ describe('DetailScreen (delete/cancel actions)', () => {
     mockedRequestMedia.mockReset();
     mockedGetRequests.mockReset();
     mockedDeleteRequest.mockReset();
+    mockedCancelDownload.mockReset();
     mockedGetRadarrMovies.mockReset();
     mockedDeleteRadarrMovie.mockReset();
     mockedGetSonarrSeries.mockReset();
@@ -474,8 +483,8 @@ describe('DetailScreen (delete/cancel actions)', () => {
     ]);
   }
 
-  function renderDetailWithHistory(tmdbId: string, search = '') {
-    setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+  function renderDetailWithHistory(tmdbId: string, search = '', isAdmin = true) {
+    setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true, isAdmin });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 
     render(
@@ -536,7 +545,21 @@ describe('DetailScreen (delete/cancel actions)', () => {
     expect(mockedDeleteRadarrMovie).not.toHaveBeenCalled();
   });
 
-  it('Cancelar: opens a confirm overlay with "No, seguir", and on confirm calls the shared useCancelDownload, then navigates back', async () => {
+  it('Eliminar: hidden for a non-admin session (library delete is admin-only)', async () => {
+    mockedGetItems.mockResolvedValue({
+      Items: [{ Id: 'jf-603', Name: 'The Matrix', ProviderIds: { Tmdb: '603' } }],
+      TotalRecordCount: 1,
+      StartIndex: 0,
+    } as never);
+    mockedGetMovieDetails.mockResolvedValue(detailFixture() as never);
+
+    renderDetail('603', '', false);
+
+    await screen.findByRole('heading', { name: /the matrix/i });
+    expect(screen.queryByRole('button', { name: /^eliminar$/i })).not.toBeInTheDocument();
+  });
+
+  it('Cancelar: opens a confirm overlay with "No, seguir", and on confirm calls the shared useCancelDownload (BFF), then navigates back', async () => {
     mockedGetItems.mockResolvedValue(EMPTY_LIBRARY as never);
     mockedGetMovieDetails.mockResolvedValue(
       detailFixture({ mediaInfo: { id: 1, status: 3, mediaType: 'movie' } }) as never,
@@ -545,7 +568,7 @@ describe('DetailScreen (delete/cancel actions)', () => {
       pageInfo: null,
       results: [{ id: 77, type: 'movie', status: 3, media: { id: 1, tmdbId: 603, mediaType: 'movie', status: 3 } }],
     } as never);
-    mockedDeleteRequest.mockResolvedValue(undefined);
+    mockedCancelDownload.mockResolvedValue(undefined);
 
     renderDetailWithHistory('603');
 
@@ -557,7 +580,7 @@ describe('DetailScreen (delete/cancel actions)', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: /sí, cancelar/i }));
 
-    await waitFor(() => expect(mockedDeleteRequest).toHaveBeenCalledWith(77));
+    await waitFor(() => expect(mockedCancelDownload).toHaveBeenCalledWith(77, 603));
     expect(await screen.findByText('home-screen')).toBeInTheDocument();
   });
 
@@ -574,7 +597,18 @@ describe('DetailScreen (delete/cancel actions)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /no, seguir/i }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(mockedDeleteRequest).not.toHaveBeenCalled();
+    expect(mockedCancelDownload).not.toHaveBeenCalled();
+  });
+
+  it('Cancelar: stays visible for a non-admin session (owner-or-admin BFF check, not admin-only)', async () => {
+    mockedGetItems.mockResolvedValue(EMPTY_LIBRARY as never);
+    mockedGetMovieDetails.mockResolvedValue(
+      detailFixture({ mediaInfo: { id: 1, status: 3, mediaType: 'movie' } }) as never,
+    );
+
+    renderDetail('603', '', false);
+
+    expect(await screen.findByRole('button', { name: /^cancelar$/i })).toBeInTheDocument();
   });
 
   it('Series two-pane, Requesting (status 4, "Parcialmente disponible"): still shows "Eliminar" not "Cancelar" (ground truth: an in-library series is InLibrary even while downloading)', async () => {
