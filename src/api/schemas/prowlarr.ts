@@ -20,7 +20,11 @@ export const ProwlarrReleaseSchema = z
     leechers: z.number().nullable().optional().default(0),
     protocol: z.string().nullable().optional(),
     tmdbId: z.number().nullable().optional().default(0),
-    imdbId: z.string().nullable().optional(),
+    // Prowlarr returns imdbId as a bare NUMBER from some indexers (e.g.
+    // sukebei/e-hentai) and as a `"tt…"` string from others - accept both, or a
+    // single numeric imdbId in the batch fails the whole search (confirmed live
+    // against the +18 indexers). We don't consume it, so no normalization.
+    imdbId: z.union([z.string(), z.number()]).nullable().optional(),
     tvdbId: z.number().nullable().optional().default(0),
     publishDate: z.string().nullable().optional(),
   })

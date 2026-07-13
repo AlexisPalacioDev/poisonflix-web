@@ -11,6 +11,14 @@ import { AniListResponseSchema, type AniListMedia } from './schemas/anilist';
 
 const ANILIST_URL = 'https://graphql.anilist.co/';
 
+// Per-request timeout. `fetch` has NO default timeout, so a slow/held AniList
+// connection (rate-limited, or just queued behind the browser's ~6-per-host
+// connection cap when the +18 row enriches dozens of covers at once) would
+// otherwise hang forever - and since the row awaits ALL its cover lookups, one
+// stuck request blocks the entire row from ever resolving. OkHttp's default
+// timeouts covered this in the Kotlin reference; replicate them here.
+const ANILIST_TIMEOUT_MS = 7_000;
+
 /** Single-title search returning just the cover; keeps payloads tiny (`AniListApi.kt`'s `COVER_QUERY`). */
 const COVER_QUERY = 'query($s:String){Media(search:$s,type:ANIME){coverImage{large}}}';
 
@@ -57,17 +65,23 @@ async function queryAniList(query: string, title: string): Promise<AniListMedia 
   const cleaned = cleanReleaseTitle(title);
   if (!cleaned) return null;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ANILIST_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(ANILIST_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ query, variables: { s: cleaned } }),
+      signal: controller.signal,
     });
   } catch {
-    // Network failure (offline, DNS) - degrade to "no metadata" instead of
-    // throwing; a missing AniList cover/info must never crash the +18 row.
+    // Network failure (offline, DNS) OR the timeout aborting a stuck request -
+    // degrade to "no metadata" instead of throwing; a missing/slow AniList
+    // cover must never crash OR hang the +18 row.
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) return null;
