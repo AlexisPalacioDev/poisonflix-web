@@ -57,28 +57,19 @@ h3 {
   border-radius: var(--pf-radius-sm);
 }
 
-/* Thin, subtle scrollbars (rows restyle this further). */
+/* Scrollbars are hidden everywhere for a clean, premium look — the horizontal
+   poster rails scroll by wheel/trackpad/drag and the page scrolls vertically,
+   so no visible track is needed (and the grey horizontal bars under every row
+   were the ugliest chrome on screen). Content stays fully scrollable. */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(154, 163, 173, 0.35) transparent;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: rgba(154, 163, 173, 0.28);
-  border-radius: var(--pf-radius-pill);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background: rgba(154, 163, 173, 0.5);
+  width: 0;
+  height: 0;
+  display: none; /* Chromium/WebKit */
 }
 
 /* Loading skeletons: a calm shimmer, not a bare spinner. */
