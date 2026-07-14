@@ -184,6 +184,8 @@ export function DetailScreen() {
     queryFn: () => getRequests('all', 50, 0),
     enabled: displayStatus?.kind === 'Requesting',
     staleTime: 5_000,
+    // Keep the request/progress status live while a title is still downloading.
+    refetchInterval: 15_000,
   });
   const cancelDownload = useCancelDownload();
 

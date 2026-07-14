@@ -267,6 +267,11 @@ export function useSeriesEpisodes(
       return mergeEpisodes(jellyfin, sonarr.episodes, sonarr.percentByEpisodeId);
     },
     enabled: Boolean(userId && seriesJellyfinItemId),
+    // Live-refresh per-episode status (queued/downloading/available) on the detail
+    // page. Without this the episode list was fetched once on mount and froze, so a
+    // completed download kept showing "En cola" until a manual reload.
+    staleTime: 8_000,
+    refetchInterval: 15_000,
   });
 
   const episodes = useMemo(() => query.data ?? [], [query.data]);
