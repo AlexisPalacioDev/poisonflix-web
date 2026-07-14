@@ -96,6 +96,37 @@ describe('apiFetch', () => {
     },
   );
 
+  it('clears the session on a 403 from a jellyseerr GET (stale session -> re-login)', async () => {
+    // A recreated/expired Jellyseerr rejects the old connect.sid with 403 (not
+    // 401) on reads. Since every jellyseerr GET the SPA makes is a read any
+    // authed user may perform, that 403 means the session died -> log out.
+    setSession({ jellyfinToken: 'tok-stale', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ status: 403, error: 'You do not have permission to access this endpoint' }, { status: 403 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await apiFetch('jellyseerr', '/api/v1/search?query=x').catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(403);
+    expect(getSession()).toBeNull();
+  });
+
+  it('does NOT clear the session on a 403 from a jellyseerr write (legit permission error)', async () => {
+    // POST /request can legitimately 403 when the user lacks the REQUEST
+    // permission - that must surface as an error, not log them out.
+    setSession({ jellyfinToken: 'tok-live', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ error: 'forbidden' }, { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await apiFetch('jellyseerr', '/api/v1/request', { method: 'POST' }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(403);
+    expect(getSession()).not.toBeNull();
+  });
+
   it('throws NetworkError when fetch itself rejects (connectivity/proxy failure)', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);

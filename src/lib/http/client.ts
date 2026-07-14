@@ -92,6 +92,20 @@ export async function apiFetch<T = void>(
     throw new ApiError(401, `Unauthorized - ${backend} is not authenticated to the BFF`);
   }
 
+  // A stale/expired Jellyseerr session is rejected with 403 (NOT 401) by its
+  // auth middleware ("You do not have permission to access this endpoint").
+  // Every Jellyseerr GET the SPA makes is a read any authenticated user may
+  // perform (search / discover / media detail) - admin-only actions go through
+  // the BFF, never here - so a 403 on a GET can only mean the session died.
+  // Treat it like the 401 above (clear + bounce to onboarding) instead of
+  // surfacing a dead-end "couldn't load" the user can't recover from without
+  // manually clearing the cookie. Writes keep the plain error: a 403 on POST
+  // /request (user lacks the REQUEST permission) is a legitimate authz result.
+  if (response.status === 403 && backend === 'jellyseerr' && (init.method ?? 'GET').toUpperCase() === 'GET') {
+    clearSession();
+    throw new ApiError(403, 'Forbidden - stale Jellyseerr session cleared');
+  }
+
   if (!response.ok) {
     let body: unknown;
     try {
