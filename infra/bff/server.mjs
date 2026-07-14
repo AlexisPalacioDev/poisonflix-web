@@ -448,6 +448,31 @@ async function handleResetPassword(req, res, userId) {
   }
 }
 
+// GET /bff/admin/storage — server media-disk usage for the Admin panel. Radarr
+// already knows the disk (it manages the same /data volume) and exposes it at
+// /api/v3/diskspace, so we reuse the BFF's existing admin *arr key instead of
+// mounting the media volume into the BFF just to stat it. Every mount there sits
+// on the same physical disk, so we prefer the /data (media) entry and fall back
+// to whichever has the largest total.
+async function handleAdminStorage(req, res) {
+  try {
+    const disks = await arrFetch('radarr', '/api/v3/diskspace');
+    if (!Array.isArray(disks) || disks.length === 0) {
+      return send(res, 502, { error: 'diskspace_unavailable' });
+    }
+    const pick =
+      disks.find((d) => d.path === '/data') ??
+      disks.reduce((a, b) => (b.totalSpace > a.totalSpace ? b : a));
+    return send(res, 200, {
+      path: pick.path,
+      freeSpace: pick.freeSpace,
+      totalSpace: pick.totalSpace,
+    });
+  } catch {
+    return send(res, 502, { error: 'diskspace_unavailable' });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -478,6 +503,9 @@ const server = createServer(async (req, res) => {
       if (revoke && req.method === 'DELETE') return await handleRevokeInvite(req, res, revoke[1]);
       if (path === '/bff/admin/users' && req.method === 'GET') {
         return await handleAdminUsers(req, res);
+      }
+      if (path === '/bff/admin/storage' && req.method === 'GET') {
+        return await handleAdminStorage(req, res);
       }
       const reset = path.match(/^\/bff\/admin\/users\/([^/]+)\/reset-password$/);
       if (reset && req.method === 'POST') return await handleResetPassword(req, res, reset[1]);

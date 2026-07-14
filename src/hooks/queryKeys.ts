@@ -37,4 +37,5 @@ export const queryKeys = {
   // Admin screen: invite codes + Jellyfin users list.
   invites: () => ['bff', 'invites'] as const,
   adminUsers: () => ['bff', 'adminUsers'] as const,
+  adminStorage: () => ['bff', 'adminStorage'] as const,
 };

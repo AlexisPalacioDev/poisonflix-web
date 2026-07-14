@@ -67,3 +67,15 @@ export const ListAdminUsersResponseSchema = z.object({
   users: z.array(AdminUserSchema),
 });
 export type ListAdminUsersResponse = z.infer<typeof ListAdminUsersResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin: server storage (Admin screen's "Almacenamiento" card). Bytes for the
+// media disk, sourced from Radarr's /api/v3/diskspace via the BFF.
+// ---------------------------------------------------------------------------
+
+export const StorageSchema = z.object({
+  path: z.string(),
+  freeSpace: z.number(),
+  totalSpace: z.number(),
+});
+export type Storage = z.infer<typeof StorageSchema>;

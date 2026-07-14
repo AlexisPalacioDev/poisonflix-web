@@ -269,3 +269,62 @@
     align-items: flex-start;
   }
 }
+
+/* Storage card - server media-disk usage with a severity-colored usage bar. */
+.pf-admin__storage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  max-width: 520px;
+}
+
+.pf-admin__storage-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pf-admin__storage-free {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--pf-text);
+}
+
+.pf-admin__storage-total {
+  color: var(--pf-text-dim);
+  font-size: 0.95rem;
+}
+
+.pf-admin__storage-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--pf-surface-2);
+  overflow: hidden;
+}
+
+.pf-admin__storage-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--pf-dur) var(--pf-ease);
+}
+
+.pf-admin__storage--ok .pf-admin__storage-fill {
+  background: var(--pf-available);
+}
+
+.pf-admin__storage--warn .pf-admin__storage-fill {
+  background: var(--pf-gold);
+}
+
+.pf-admin__storage--danger .pf-admin__storage-fill {
+  background: var(--pf-danger);
+}
+
+.pf-admin__storage--danger .pf-admin__storage-free {
+  color: var(--pf-danger);
+}
+
+.pf-admin__storage-caption {
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+}

@@ -4,6 +4,7 @@ import { ConfirmOverlay } from '../../components/ConfirmOverlay';
 import { Header } from '../../components/Header';
 import { StatusBadge } from '../../components/StatusBadge';
 import { useAdminUsers, useResetUserPassword } from '../../hooks/useAdminUsers';
+import { useAdminStorage } from '../../hooks/useAdminStorage';
 import { useAuth } from '../../hooks/useAuth';
 import { useCreateInvite, useInvites, useRevokeInvite } from '../../hooks/useInvites';
 import type { Invite } from '../../api/schemas/bff';
@@ -31,6 +32,23 @@ function formatDate(iso: string | null): string {
   return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+const GIB = 1024 ** 3;
+
+function formatBytes(bytes: number): string {
+  const gib = bytes / GIB;
+  if (gib >= 1024) return `${(gib / 1024).toFixed(1)} TB`;
+  return `${gib.toFixed(1)} GB`;
+}
+
+// Free-space severity for the storage bar's color: comfortable until 75% used,
+// warning at 75-90%, danger past 90% (the disk-full incident that motivated
+// this card sat at ~100%).
+function storageSeverity(usedPercent: number): 'ok' | 'warn' | 'danger' {
+  if (usedPercent >= 90) return 'danger';
+  if (usedPercent >= 75) return 'warn';
+  return 'ok';
+}
+
 export function AdminScreen() {
   const { session } = useAuth();
   const isAdmin = session?.isAdmin === true;
@@ -41,6 +59,8 @@ export function AdminScreen() {
 
   const usersQuery = useAdminUsers();
   const resetPassword = useResetUserPassword();
+
+  const storageQuery = useAdminStorage();
 
   const [expiresInDays, setExpiresInDays] = useState('');
   const [lastCreatedCode, setLastCreatedCode] = useState<string | null>(null);
@@ -138,6 +158,42 @@ export function AdminScreen() {
 
       <div className="pf-admin__content">
         <h1 className="pf-admin__title">Administración</h1>
+
+        <section className="pf-admin__section">
+          <h2 className="pf-admin__section-title">Almacenamiento</h2>
+
+          {storageQuery.isLoading && <p className="pf-admin__status">Cargando almacenamiento…</p>}
+          {storageQuery.isError && (
+            <p className="pf-admin__status pf-admin__status--error">No se pudo cargar el almacenamiento.</p>
+          )}
+
+          {storageQuery.data &&
+            (() => {
+              const { freeSpace, totalSpace } = storageQuery.data;
+              const used = Math.max(0, totalSpace - freeSpace);
+              const usedPercent = totalSpace > 0 ? Math.min(100, (used / totalSpace) * 100) : 0;
+              const severity = storageSeverity(usedPercent);
+              return (
+                <div className={`pf-admin__storage pf-admin__storage--${severity}`}>
+                  <div className="pf-admin__storage-summary">
+                    <span className="pf-admin__storage-free">{formatBytes(freeSpace)} libres</span>
+                    <span className="pf-admin__storage-total">de {formatBytes(totalSpace)}</span>
+                  </div>
+                  <div
+                    className="pf-admin__storage-bar"
+                    role="progressbar"
+                    aria-valuenow={Math.round(usedPercent)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label="Espacio usado del servidor"
+                  >
+                    <div className="pf-admin__storage-fill" style={{ width: `${usedPercent}%` }} />
+                  </div>
+                  <span className="pf-admin__storage-caption">{Math.round(usedPercent)}% usado</span>
+                </div>
+              );
+            })()}
+        </section>
 
         <section className="pf-admin__section">
           <h2 className="pf-admin__section-title">Invitaciones</h2>

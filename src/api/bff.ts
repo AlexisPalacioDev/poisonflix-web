@@ -8,6 +8,8 @@ import {
   type CreatedInvite,
   ListAdminUsersResponseSchema,
   type AdminUser,
+  StorageSchema,
+  type Storage,
 } from './schemas/bff';
 
 // BFF orchestration client (security hardening: the browser no longer drives
@@ -96,4 +98,12 @@ export async function resetUserPassword(userId: string, newPassword: string): Pr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ newPassword }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Admin: server storage (Admin screen's "Almacenamiento" card)
+// ---------------------------------------------------------------------------
+
+export async function getAdminStorage(): Promise<Storage> {
+  return apiFetch('bff', '/admin/storage', { schema: StorageSchema });
 }
