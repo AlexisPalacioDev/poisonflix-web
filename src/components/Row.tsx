@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './Row.css';
 
 // Reusable horizontal row primitive (design.md §2 `components/Row.tsx`) -
@@ -18,6 +19,49 @@ interface RowProps<T> {
 }
 
 export function Row<T>({ title, items, isLoading, isError, onRetry, renderItem, emptyMessage }: RowProps<T>) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  // Which edge arrows to show. A vertical-wheel mouse on desktop can't move an
+  // `overflow-x` rail at all, so without these controls the rail is unreachable
+  // (only trackpad/shift+wheel/scrollbar-drag work). We hide the arrow that
+  // points at an already-reached edge so there's never a dead control.
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+
+  const hasContent = !isLoading && !isError && items != null && items.length > 0;
+
+  const updateOverflow = useCallback(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    // 1px slack absorbs sub-pixel rounding at the extremes so the arrow
+    // reliably disappears exactly at each end.
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    setOverflow({
+      left: el.scrollLeft > 1,
+      right: el.scrollLeft < maxScroll - 1,
+    });
+  }, []);
+
+  // Recompute reachability whenever the content changes (items arriving after
+  // load) and whenever the rail is resized (viewport/orientation change).
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el || !hasContent) return;
+
+    updateOverflow();
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasContent, items, updateOverflow]);
+
+  function scrollByPage(direction: -1 | 1) {
+    const el = trackRef.current;
+    if (!el) return;
+    // Page by ~80% of the visible width so a card or two stays on screen as an
+    // anchor between presses (the Netflix/Disney+ rail convention).
+    const amount = el.clientWidth * 0.8 * direction;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollBy({ left: amount, behavior: reduce ? 'auto' : 'smooth' });
+  }
+
   return (
     <section className="pf-row" aria-label={title}>
       <h2 className="pf-row__title">{title}</h2>
@@ -43,9 +87,49 @@ export function Row<T>({ title, items, isLoading, isError, onRetry, renderItem, 
         <p className="pf-row__status">{emptyMessage}</p>
       )}
 
-      {!isLoading && !isError && items && items.length > 0 && (
-        <div className="pf-row__track">{items.map((item) => renderItem(item))}</div>
+      {hasContent && (
+        <div className="pf-row__viewport">
+          {overflow.left && (
+            <button
+              type="button"
+              className="pf-row__nav pf-row__nav--prev"
+              aria-label={`Desplazar “${title}” hacia atrás`}
+              onClick={() => scrollByPage(-1)}
+            >
+              <ChevronIcon direction="left" />
+            </button>
+          )}
+
+          <div className="pf-row__track" ref={trackRef} onScroll={updateOverflow}>
+            {items.map((item) => renderItem(item))}
+          </div>
+
+          {overflow.right && (
+            <button
+              type="button"
+              className="pf-row__nav pf-row__nav--next"
+              aria-label={`Desplazar “${title}” hacia adelante`}
+              onClick={() => scrollByPage(1)}
+            >
+              <ChevronIcon direction="right" />
+            </button>
+          )}
+        </div>
       )}
     </section>
+  );
+}
+
+function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden="true" focusable="false">
+      <path
+        d={direction === 'left' ? 'M15 5l-7 7 7 7' : 'M9 5l7 7-7 7'}
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

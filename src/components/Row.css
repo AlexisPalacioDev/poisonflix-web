@@ -45,6 +45,12 @@
   background: rgba(229, 72, 77, 0.14);
 }
 
+/* Positioning context for the overlaid nav arrows. `:hover` on it reveals
+   them; they stay visible while focused for keyboard users. */
+.pf-row__viewport {
+  position: relative;
+}
+
 .pf-row__track {
   display: flex;
   gap: 18px;
@@ -55,6 +61,12 @@
      otherwise crop the top of the raised poster. */
   padding: 22px var(--pf-gutter) 26px;
   scroll-snap-type: x proximity;
+  /* Make snapping account for the gutter padding: without this, `scroll-snap-
+     align: start` lands the first card flush to the scrollport edge, skipping
+     the left gutter, so the rail loads at scrollLeft ~= gutter (~41px) and the
+     "scroll back" arrow shows immediately over empty space. scroll-padding
+     insets the snapport by the gutter so the start snap lands at scrollLeft 0. */
+  scroll-padding-inline: var(--pf-gutter);
   scroll-behavior: smooth;
   /* Soft fade at the left/right edges so cards dissolve into the page rather
      than getting hard-cut at the gutter. */
@@ -76,6 +88,69 @@
 
 .pf-row__track > * {
   scroll-snap-align: start;
+}
+
+/* Overlaid prev/next scroll arrows. Only rendered when the rail can scroll in
+   that direction (Row.tsx), so an arrow is always actionable when shown. */
+.pf-row__nav {
+  position: absolute;
+  top: 22px;
+  bottom: 26px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--pf-gutter) + 44px);
+  border: none;
+  cursor: pointer;
+  color: var(--pf-text);
+  /* Hidden until the row is hovered/focused so the arrows don't clutter the
+     poster art at rest; a keyboard user tabbing in still gets them via
+     :focus-visible below. */
+  opacity: 0;
+  transition: opacity var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-row__nav--prev {
+  left: 0;
+  justify-content: flex-start;
+  padding-left: 8px;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.7), transparent);
+}
+
+.pf-row__nav--next {
+  right: 0;
+  justify-content: flex-end;
+  padding-right: 8px;
+  background: linear-gradient(to left, rgba(0, 0, 0, 0.7), transparent);
+}
+
+.pf-row__viewport:hover .pf-row__nav,
+.pf-row__nav:focus-visible {
+  opacity: 1;
+}
+
+.pf-row__nav > svg {
+  transition: transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-row__nav:hover > svg,
+.pf-row__nav:focus-visible > svg {
+  transform: scale(1.2);
+}
+
+.pf-row__nav:focus-visible {
+  outline: 2px solid var(--pf-gold);
+  outline-offset: -4px;
+  border-radius: var(--pf-radius-sm);
+}
+
+/* Touch/coarse pointers scroll by gesture and have no persistent hover, so the
+   arrows would either never show or stick on tap. Hide them there. */
+@media (hover: none) {
+  .pf-row__nav {
+    display: none;
+  }
 }
 
 .pf-row__skeleton-card {
