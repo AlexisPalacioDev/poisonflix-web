@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Poisonflix</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0b0f;
+        color: #e5e5e5;
+        font-family: system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Loading Poisonflix…</p>
+    <script>
+      // Thin webOS launcher. The app itself is served same-origin behind the
+      // Caddy reverse proxy, so we hand off to that origin instead of bundling
+      // dist/ locally (relative /jellyfin & /jellyseerr paths only work there).
+      var ORIGIN = "https://poisonflix.tail3af19b.ts.net/";
+      window.location.replace(ORIGIN);
+    </script>
+  </body>
+</html>
