@@ -43,6 +43,15 @@ cd infra
 docker compose up -d --build bff
 docker compose up -d --force-recreate caddy
 
+# Force-recreating Caddy gives it a NEW container. The Tailscale Funnel sidecar
+# keeps routing to the old one, so the PUBLIC ingress silently goes dead while
+# `tailscale funnel status` still reports "on" and localhost:8600 still serves
+# fine. This is the recurring "site is down for the family but works locally"
+# failure. Restarting the sidecar forces it to re-resolve poisonflix-proxy and
+# the public path comes back (~15s later). It's cheap, so always do it.
+echo "==> healing Tailscale Funnel (restart sidecar after caddy recreate)"
+docker compose restart tailscale
+
 echo "==> smoke test (expect: / -> 200, /radarr -> 401)"
 ok=1
 for i in $(seq 1 10); do
@@ -61,4 +70,28 @@ echo "  /                    -> $home"
 echo "  /radarr/api/v3/queue -> $arr"
 [[ "$home" == "200" && "$arr" == "401" ]] || { echo "SMOKE TEST FAILED — consider ./infra/deploy.sh --rollback" >&2; ok=0; }
 
-[[ "$ok" == "1" ]] && echo "==> deploy OK" || exit 1
+# PUBLIC Funnel smoke test. The checks above only prove the LOCAL proxy serves;
+# they pass even when the public ingress is dead. Verify the real external path
+# so a broken Funnel FAILS the deploy loudly instead of reporting "deploy OK".
+# This box's own resolver can't resolve *.ts.net, so resolve the funnel host via
+# public DNS-over-HTTPS and hit Tailscale's ingress with curl --resolve.
+echo "==> public Funnel smoke test"
+fqdn=$(docker exec poisonflix-ts tailscale status --json 2>/dev/null \
+  | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).Self?.DNSName||"").replace(/\.$/,""))}catch{}})')
+pub=000
+if [[ -n "$fqdn" ]]; then
+  for i in $(seq 1 12); do
+    ip=$(curl -s --max-time 8 "https://dns.google/resolve?name=${fqdn}&type=A" \
+      | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const a=(JSON.parse(d).Answer||[]).find(x=>x.type===1);process.stdout.write(a?a.data:"")}catch{}})')
+    [[ -n "$ip" ]] && pub=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+      --resolve "${fqdn}:443:${ip}" "https://${fqdn}/" || echo 000)
+    [[ "$pub" == "200" ]] && break
+    sleep 3
+  done
+  echo "  https://$fqdn/ -> $pub"
+  [[ "$pub" == "200" ]] || { echo "PUBLIC FUNNEL DOWN after deploy — up locally but NOT reachable by the family. Try: docker compose restart tailscale" >&2; ok=0; }
+else
+  echo "  (skipped: could not read funnel hostname from tailscale status)"
+fi
+
+[[ "$ok" == "1" ]] && echo "==> deploy OK (local + public)" || exit 1
