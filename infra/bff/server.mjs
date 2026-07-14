@@ -8,6 +8,24 @@
 
 import { createServer } from 'node:http';
 
+import {
+  createInvite,
+  listInvites,
+  revokeInvite,
+  consumeInvite,
+  checkInvite,
+} from './invites.mjs';
+import {
+  validateUsername,
+  validatePassword,
+  userExists,
+  listUsers,
+  createUser,
+  setPassword,
+  deleteUser,
+  importToJellyseerr,
+} from './identity.mjs';
+
 const {
   PORT = '8787',
   JELLYSEERR_URL = 'http://jellyseerr:5055',
@@ -278,6 +296,159 @@ async function handleCancel(req, res, user) {
 }
 
 // ---------------------------------------------------------------------------
+// Self-service registration (invite-gated, PUBLIC) + admin user management.
+// ---------------------------------------------------------------------------
+
+/** Best-effort client IP: Caddy sets X-Forwarded-For; fall back to the socket. */
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length > 0) return fwd.split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+// Sliding-window rate limit for /bff/register: an attacker must not be able to
+// brute-force invite codes. Keyed by IP, in-memory (a restart resets it, which
+// is acceptable for this low-stakes, invite-gated endpoint).
+const REGISTER_WINDOW_MS = 10 * 60_000;
+const REGISTER_MAX = 5;
+/** @type {Map<string, number[]>} */
+const registerHits = new Map();
+
+function rateLimited(ip, now) {
+  const hits = (registerHits.get(ip) || []).filter((t) => now - t < REGISTER_WINDOW_MS);
+  if (hits.length >= REGISTER_MAX) {
+    registerHits.set(ip, hits);
+    return true;
+  }
+  hits.push(now);
+  registerHits.set(ip, hits);
+  if (registerHits.size > 1024) {
+    for (const [k, v] of registerHits) {
+      if (v.every((t) => now - t >= REGISTER_WINDOW_MS)) registerHits.delete(k);
+    }
+  }
+  return false;
+}
+
+async function parseJson(req) {
+  try {
+    return JSON.parse((await readBody(req)).toString() || '{}');
+  } catch {
+    return null;
+  }
+}
+
+async function handleRegister(req, res) {
+  const now = Date.now();
+  if (rateLimited(clientIp(req), now)) {
+    return send(res, 429, { error: 'too_many_requests' });
+  }
+
+  const body = await parseJson(req);
+  if (!body) return send(res, 400, { error: 'invalid_json' });
+
+  const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : '';
+  const username = typeof body.username === 'string' ? body.username.trim() : '';
+  const { password } = body;
+  if (!code) return send(res, 400, { error: 'invalid_code' });
+
+  const usernameErr = validateUsername(username);
+  if (usernameErr) return send(res, 400, { error: 'invalid_username', message: usernameErr });
+  const passwordErr = validatePassword(password);
+  if (passwordErr) return send(res, 400, { error: 'invalid_password', message: passwordErr });
+
+  // Fail fast on a bad code before touching Jellyfin (final consume is atomic).
+  const pre = await checkInvite(code);
+  if (!pre.ok) return send(res, 403, { error: `invite_${pre.reason}` });
+
+  try {
+    if (await userExists(username)) {
+      return send(res, 409, { error: 'username_taken' });
+    }
+  } catch {
+    return send(res, 502, { error: 'jellyfin_unreachable' });
+  }
+
+  // Create in Jellyfin, then import into Jellyseerr. If the import fails we roll
+  // the Jellyfin account back so a half-provisioned user can't linger (and the
+  // invite stays unused).
+  let userId;
+  try {
+    userId = await createUser(username, password);
+  } catch (err) {
+    if (err.code === 'USERNAME_TAKEN') return send(res, 409, { error: 'username_taken' });
+    return send(res, 502, { error: 'jellyfin_create_failed' });
+  }
+
+  try {
+    await importToJellyseerr(userId);
+  } catch {
+    await deleteUser(userId).catch(() => {});
+    return send(res, 502, { error: 'jellyseerr_import_failed' });
+  }
+
+  // Consume the invite last: only a fully provisioned account burns a code.
+  const consumed = await consumeInvite({ code, usedBy: username, nowIso: new Date(now).toISOString() });
+  if (!consumed.ok) {
+    // Lost a race for the same code — the account exists but the code was just
+    // used by someone else. Roll back to keep single-use honest.
+    await deleteUser(userId).catch(() => {});
+    return send(res, 409, { error: `invite_${consumed.reason}` });
+  }
+
+  return send(res, 201, { ok: true, username });
+}
+
+async function handleAdminInvites(req, res, user) {
+  if (req.method === 'GET') {
+    return send(res, 200, { invites: await listInvites() });
+  }
+  if (req.method === 'POST') {
+    const body = (await parseJson(req)) || {};
+    let expiresInDays = null;
+    if (body.expiresInDays != null) {
+      expiresInDays = Number(body.expiresInDays);
+      if (!Number.isFinite(expiresInDays) || expiresInDays <= 0) {
+        return send(res, 400, { error: 'invalid_expiry' });
+      }
+    }
+    const invite = await createInvite({
+      createdBy: user.id,
+      expiresInDays,
+      nowIso: new Date().toISOString(),
+    });
+    return send(res, 201, invite);
+  }
+  return send(res, 405, { error: 'method_not_allowed' });
+}
+
+async function handleRevokeInvite(req, res, code) {
+  const ok = await revokeInvite(decodeURIComponent(code));
+  return ok ? send(res, 204, '') : send(res, 404, { error: 'not_found' });
+}
+
+async function handleAdminUsers(req, res) {
+  try {
+    return send(res, 200, { users: await listUsers() });
+  } catch {
+    return send(res, 502, { error: 'jellyfin_unreachable' });
+  }
+}
+
+async function handleResetPassword(req, res, userId) {
+  const body = await parseJson(req);
+  if (!body) return send(res, 400, { error: 'invalid_json' });
+  const passwordErr = validatePassword(body.newPassword);
+  if (passwordErr) return send(res, 400, { error: 'invalid_password', message: passwordErr });
+  try {
+    await setPassword(userId, body.newPassword, { fresh: false });
+    return send(res, 204, '');
+  } catch {
+    return send(res, 502, { error: 'jellyfin_reset_failed' });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -288,8 +459,30 @@ const server = createServer(async (req, res) => {
 
     if (path === '/healthz') return send(res, 200, { ok: true });
 
+    // PUBLIC: invite-gated self-service registration. Must be reachable without a
+    // session (the caller has no account yet). Everything below this line requires
+    // an authenticated Jellyseerr session.
+    if (path === '/bff/register' && req.method === 'POST') {
+      return await handleRegister(req, res);
+    }
+
     const user = await resolveUser(req.headers.cookie || '');
     if (!user) return send(res, 401, { error: 'unauthenticated' });
+
+    // ADMIN: user & invite management. Gated by the Jellyseerr admin permission
+    // bit, re-checked server-side on every call (never trust the SPA's flag).
+    if (path.startsWith('/bff/admin/')) {
+      if (!user.isAdmin) return send(res, 403, { error: 'forbidden' });
+      if (path === '/bff/admin/invites') return await handleAdminInvites(req, res, user);
+      const revoke = path.match(/^\/bff\/admin\/invites\/([^/]+)$/);
+      if (revoke && req.method === 'DELETE') return await handleRevokeInvite(req, res, revoke[1]);
+      if (path === '/bff/admin/users' && req.method === 'GET') {
+        return await handleAdminUsers(req, res);
+      }
+      const reset = path.match(/^\/bff\/admin\/users\/([^/]+)\/reset-password$/);
+      if (reset && req.method === 'POST') return await handleResetPassword(req, res, reset[1]);
+      return send(res, 404, { error: 'not found' });
+    }
 
     if (path === '/bff/cancel' && req.method === 'POST') {
       return await handleCancel(req, res, user);

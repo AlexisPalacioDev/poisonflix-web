@@ -31,10 +31,16 @@ services:
     # Real API keys + upstream URLs. Copy infra/env.example -> infra/.env first.
     env_file:
       - .env
-    # Only on media-automation: reaches jellyseerr/radarr/sonarr/prowlarr by name.
-    # No published ports — only Caddy (also on this network) talks to it.
+    # Persists invite codes for self-service registration (see bff/invites.mjs).
+    volumes:
+      - ./bff/data:/data
+    # media-automation: reaches jellyseerr/radarr/sonarr/prowlarr by name.
+    # jellyfin-server_default: reaches jellyfin-ts:8096 (jellyfin's net namespace)
+    # by name for user creation/reset — robust against host LAN IP changes.
+    # No published ports — only Caddy (also on these networks) talks to it.
     networks:
       - media-automation
+      - jellyfin-server_default
 
   # Public entry point over Tailscale Funnel. Userspace mode (no NET_ADMIN, no
   # kernel iptables) reverse-proxies the tailnet HTTPS domain to the Caddy proxy.

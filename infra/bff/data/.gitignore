@@ -1,0 +1,4 @@
+# Runtime data (invite codes) — never commit. Keep the dir via .gitkeep.
+*
+!.gitkeep
+!.gitignore
