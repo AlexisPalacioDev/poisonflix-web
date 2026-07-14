@@ -1,4 +1,3 @@
-import { AdultSection } from './AdultSection';
 import { ContinueWatchingRow } from './ContinueWatchingRow';
 import { DownloadingRow } from './DownloadingRow';
 import { GenreRow } from './GenreRow';
@@ -20,8 +19,9 @@ import './home.css';
 // 10 mixed genre rows): a featured hero banner on top of the Continue
 // Watching, Downloading, Library and Trending rows, then one row per
 // `NORMAL_CATEGORIES` entry, each fed by an independent useQuery hook
-// (ADR-3), and finally the +18 section (`AdultSection.tsx`, projector-feature-map.md
-// §3) - locked by default, never persisted across a reload.
+// (ADR-3). Adult (+18) content is deliberately NOT on Home: it is reachable
+// only through the Header's PIN-gated +18 button (-> `/search_adult`), so no
+// adult title ever surfaces on Home or in Continue Watching.
 
 function parseYear(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
@@ -185,8 +185,6 @@ export function HomeScreen() {
         {NORMAL_CATEGORIES.map((category) => (
           <GenreRow key={category.id} category={category} />
         ))}
-
-        <AdultSection />
       </div>
     </main>
   );

@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Header } from './Header';
 import { getLanguage } from '../lib/domain/languageSettings';
+import { DEFAULT_ADULT_PIN, lockAdult } from '../lib/domain/adultSettings';
 
 function renderHeader() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -62,5 +63,70 @@ describe('Header language chip (ES⇄EN TMDB metadata toggle)', () => {
     const invalidatedKeys = invalidateQueriesSpy.mock.calls.map((call) => call[0]?.queryKey);
     expect(invalidatedKeys).not.toContainEqual(expect.arrayContaining(['genreRow']));
     expect(invalidatedKeys).not.toContainEqual(expect.arrayContaining(['jellyfin', 'library']));
+  });
+});
+
+// Surfaces the current pathname so navigation assertions don't need a real
+// destination screen mounted.
+function LocationProbe() {
+  const location = useLocation();
+  return <span data-testid="pathname">{location.pathname}</span>;
+}
+
+function renderHeaderWithLocation() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/']}>
+        <Header />
+        <LocationProbe />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('Header +18 button (PIN-gated adult access)', () => {
+  afterEach(() => {
+    lockAdult();
+  });
+
+  it('opens the PIN overlay when the locked +18 button is clicked (no navigation yet)', async () => {
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: /\+18 contenido bloqueado/i }));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('CONTENIDO +18')).toBeInTheDocument();
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/');
+  });
+
+  it('navigates to /search_adult once the correct PIN is entered', async () => {
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: /\+18 contenido bloqueado/i }));
+    for (const digit of DEFAULT_ADULT_PIN.split('')) {
+      await user.click(screen.getByRole('button', { name: digit }));
+    }
+
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/search_adult');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('navigates straight to /search_adult when already unlocked (no PIN prompt)', async () => {
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: /\+18 contenido bloqueado/i }));
+    for (const digit of DEFAULT_ADULT_PIN.split('')) {
+      await user.click(screen.getByRole('button', { name: digit }));
+    }
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/search_adult');
+
+    await user.click(screen.getByRole('button', { name: /^contenido \+18$/i }));
+
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/search_adult');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
