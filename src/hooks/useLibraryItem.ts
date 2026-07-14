@@ -12,11 +12,14 @@ import { useAuth } from './useAuth';
 // session gate; `null` id (not InLibrary, or a series - the audio line is
 // movie-only, see DetailScreen) simply never fires the query.
 //
-// Shares `queryKeys.item` with the player feature's `useItemMediaStreams`
-// (`features/player/mediaStreamTracks.ts`) - same key shape, same narrow
-// `Fields` request. Both screens are never mounted at once, so there is no
-// concurrent-fetch collision in practice (same accepted duplication that
-// file's own header already documents).
+// Caches the RAW `JellyfinItem` object under `queryKeys.item`. The player's
+// `useItemMediaStreams` deliberately does NOT reuse this key: it caches a
+// parsed `MediaStreamTrack[]` instead, and React Query keeps one cache entry
+// per key regardless of which components are mounted. A shared key let a movie
+// opened in Detail (raw object cached for 60s) hand the player a non-array
+// `data` on play, crashing `audioTracksOf` with `.filter is not a function`.
+// The player now uses `queryKeys.itemMediaStreams` so the two shapes can never
+// collide.
 export function useLibraryItem(jellyfinItemId: string | null) {
   const { session } = useAuth();
   const userId = session?.jellyfinUserId;

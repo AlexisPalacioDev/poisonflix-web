@@ -12,6 +12,13 @@ export const queryKeys = {
   genreRow: (categoryId: string, userId: string) => ['genreRow', categoryId, userId] as const,
   search: (debouncedQuery: string) => ['jellyseerr', 'search', debouncedQuery] as const,
   item: (itemId: string) => ['jellyfin', 'item', itemId] as const,
+  // Player track menus parse the item's `MediaStreams` into a
+  // `MediaStreamTrack[]`. This MUST NOT share `item`'s key: that key caches the
+  // raw `JellyfinItem` object (Detail's `useLibraryItem`), and React Query
+  // serves whichever shape populated the entry last. A movie opened in Detail
+  // (raw object cached, 60s staleTime) then played would hand the player a
+  // non-array `data`, crashing `audioTracksOf` with `.filter is not a function`.
+  itemMediaStreams: (itemId: string) => ['jellyfin', 'item-mediastreams', itemId] as const,
   detail: (mediaType: string, tmdbId: string) => ['jellyseerr', 'detail', mediaType, tmdbId] as const,
   playbackInfo: (itemId: string) => ['jellyfin', 'playbackInfo', itemId] as const,
   availability: (query: string, tmdbId: number | null) =>

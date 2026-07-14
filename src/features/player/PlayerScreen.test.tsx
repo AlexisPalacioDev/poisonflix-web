@@ -8,6 +8,7 @@ import { clearSession, setSession } from '../../lib/session/store';
 import { getItem, getPlaybackInfo } from '../../api/jellyfin';
 import { ApiError } from '../../lib/http/errors';
 import { clearSubtitlePreference } from '../../lib/domain/playerPrefs';
+import { queryKeys } from '../../hooks/queryKeys';
 
 vi.mock('../../api/jellyfin', async () => {
   const actual = await vi.importActual<typeof import('../../api/jellyfin')>('../../api/jellyfin');
@@ -294,5 +295,38 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));
     const dialog = await screen.findByRole('dialog', { name: 'Audio' });
     expect(within(dialog).getByRole('button', { name: 'Inglés' })).toBeInTheDocument();
+  });
+
+  // Regression: `useItemMediaStreams` must NOT share `queryKeys.item` with
+  // Detail's `useLibraryItem`. That key caches the raw `JellyfinItem` object;
+  // opening a movie's Detail then playing it used to hand the player a
+  // non-array `data`, crashing `audioTracksOf` with "n.filter is not a
+  // function" (the "Unexpected Application Error" screen). Seeding the shared
+  // key with the raw object up-front reproduces that exact ordering.
+  it('does not crash when queryKeys.item is already cached as a raw item object (Detail visited first)', async () => {
+    setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    const itemId = 'jf-item-tracks';
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // What Detail's useLibraryItem leaves in the cache: the RAW item object.
+    queryClient.setQueryData(queryKeys.item(itemId), {
+      Id: itemId,
+      Name: 'Track menu movie',
+      MediaStreams: mediaStreams,
+    });
+
+    render(
+      <MemoryRouter initialEntries={[`/player/${itemId}`]}>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <TestRouteTree />
+          </AuthProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    // The player's own (separately-keyed) query resolves to a real track list…
+    expect(await screen.findByRole('button', { name: 'Audio' })).toBeInTheDocument();
+    // …and the raw-object shape never reached audioTracksOf.
+    expect(screen.queryByText(/filter is not a function/i)).not.toBeInTheDocument();
   });
 });

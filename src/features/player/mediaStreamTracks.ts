@@ -16,8 +16,13 @@ import { languageDisplayName } from '../../lib/domain/languageNames';
 // streams once it derives `PlaybackData`) - a deliberate, small duplication:
 // `src/hooks/usePlaybackInfo.ts` is out of this change's touchable-files
 // list, so extending its return shape isn't an option here. The extra
-// request is scoped to `Fields=MediaStreams` only (cheap) and shares
-// `queryKeys.item` in case another feature ever fetches the same key.
+// request is scoped to `Fields=MediaStreams` only (cheap) and uses its OWN
+// cache key (`queryKeys.itemMediaStreams`): it stores a parsed
+// `MediaStreamTrack[]`, so it must never share `queryKeys.item`, which caches
+// the raw `JellyfinItem` object (Detail's `useLibraryItem`). React Query keys
+// one cache entry per key regardless of mounting, so a shared key lets the
+// raw-object shape reach `audioTracksOf` and crash it with `.filter is not a
+// function` (the "Unexpected Application Error" on play).
 
 export type MediaStreamKind = 'Audio' | 'Subtitle';
 
@@ -180,7 +185,7 @@ export function buildSubtitleDeliveryUrl(
  * than reusing `usePlaybackInfo`'s). */
 export function useItemMediaStreams(itemId: string, userId: string) {
   return useQuery({
-    queryKey: queryKeys.item(itemId),
+    queryKey: queryKeys.itemMediaStreams(itemId),
     queryFn: async (): Promise<MediaStreamTrack[]> => {
       const item = await getItem(userId, itemId, 'MediaStreams');
       return parseMediaStreamTracks((item.MediaStreams ?? []) as unknown[]);
