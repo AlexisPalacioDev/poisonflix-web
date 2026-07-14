@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../../auth/AuthContext';
 import { mapOnboardingError } from './errorMessage';
 import { PoisonMark } from './PoisonMark';
@@ -99,6 +99,15 @@ export function OnboardingScreen() {
           <button type="submit" className="pf-onboarding__submit" disabled={isLoading}>
             {isLoading ? 'Conectando…' : 'Conectar'}
           </button>
+
+          <div className="pf-onboarding__links">
+            <Link to="/register" className="pf-onboarding__link">
+              Crear cuenta
+            </Link>
+            <Link to="/forgot-password" className="pf-onboarding__link">
+              ¿Olvidaste tu contraseña?
+            </Link>
+          </div>
 
           <details className="pf-onboarding__advanced">
             <summary>Configuración avanzada</summary>

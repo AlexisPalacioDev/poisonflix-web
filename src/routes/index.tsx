@@ -7,6 +7,9 @@ import { AdultSearchScreen } from '../features/search/AdultSearchScreen';
 import { DetailScreen } from '../features/detail/DetailScreen';
 import { PlayerScreen } from '../features/player/PlayerScreen';
 import { DownloadsScreen } from '../features/downloads/DownloadsScreen';
+import { RegisterScreen } from '../features/register/RegisterScreen';
+import { ForgotPasswordScreen } from '../features/register/ForgotPasswordScreen';
+import { AdminScreen } from '../features/admin/AdminScreen';
 
 // Route tree per design.md §7. `:id` is the TMDB id for /detail and the
 // Jellyfin item id for /player.
@@ -20,6 +23,34 @@ export const routes: RouteObject[] = [
       <PublicOnlyRoute>
         <OnboardingScreen />
       </PublicOnlyRoute>
+    ),
+  },
+  {
+    // Invite-based self-registration (register spec) - public, same guard as
+    // /onboarding so an already-logged-in user skips straight to Home.
+    path: '/register',
+    element: (
+      <PublicOnlyRoute>
+        <RegisterScreen />
+      </PublicOnlyRoute>
+    ),
+  },
+  {
+    path: '/forgot-password',
+    element: (
+      <PublicOnlyRoute>
+        <ForgotPasswordScreen />
+      </PublicOnlyRoute>
+    ),
+  },
+  {
+    // RouteGuard only guarantees a session exists; the isAdmin gate itself
+    // lives inside AdminScreen (mirrors Downloads' admin-only +18 delete).
+    path: '/admin',
+    element: (
+      <RouteGuard>
+        <AdminScreen />
+      </RouteGuard>
     ),
   },
   {

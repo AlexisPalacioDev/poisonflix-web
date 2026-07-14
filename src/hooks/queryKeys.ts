@@ -34,4 +34,7 @@ export const queryKeys = {
   // +18 adult row (Prowlarr discover) and AniList cover/info enrichment.
   adultRow: () => ['prowlarr', 'adult'] as const,
   adultInfo: (title: string) => ['anilist', 'info', title] as const,
+  // Admin screen: invite codes + Jellyfin users list.
+  invites: () => ['bff', 'invites'] as const,
+  adminUsers: () => ['bff', 'adminUsers'] as const,
 };

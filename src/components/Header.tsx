@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AdultPinOverlay } from './AdultPinOverlay';
 import { PoisonMark } from '../features/onboarding/PoisonMark';
 import { useAdultUnlocked } from '../hooks/useAdultUnlocked';
+import { useAuth } from '../hooks/useAuth';
 import { useLanguage } from '../hooks/useLanguage';
 import { isAdultUnlocked } from '../lib/domain/adultSettings';
 import { toggleLanguage } from '../lib/domain/languageSettings';
@@ -30,6 +31,8 @@ export function Header() {
   const language = useLanguage();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { session } = useAuth();
+  const isAdmin = session?.isAdmin === true;
 
   // +18 access lives in the top bar now (this app's addition - the projector
   // gated it from a Home tile). `useAdultUnlocked` reflects the in-memory
@@ -132,6 +135,30 @@ export function Header() {
           </svg>
           <span className="pf-header__search-label">Descargas</span>
         </Link>
+
+        {isAdmin && (
+          <Link to="/admin" className="pf-header__search" aria-label="Admin">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+              <path
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+              />
+              <path
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
+              />
+            </svg>
+            <span className="pf-header__search-label">Admin</span>
+          </Link>
+        )}
       </div>
 
       <AdultPinOverlay open={pinOpen} onClose={handleAdultPinClose} />

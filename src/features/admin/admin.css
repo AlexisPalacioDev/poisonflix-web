@@ -1,0 +1,271 @@
+/* Admin screen - invites + users management. Content-heavy, list/table
+   layout (unlike the poster grids elsewhere in the app), so it gets its own
+   simple card/section shell rather than reusing Row/PosterCard. */
+
+.pf-admin {
+  flex: 1;
+  min-height: 100%;
+  padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
+  padding-bottom: var(--pf-space-2xl);
+  padding-left: var(--pf-gutter);
+  padding-right: var(--pf-gutter);
+}
+
+.pf-admin__content {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xl);
+}
+
+.pf-admin__title {
+  margin: 0;
+  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-weight: 800;
+  color: var(--pf-text);
+}
+
+.pf-admin__section {
+  background: var(--pf-surface);
+  border-radius: var(--pf-radius-lg);
+  padding: var(--pf-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+}
+
+.pf-admin__section-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--pf-gold);
+}
+
+.pf-admin__label {
+  font-size: 0.8125rem;
+  color: var(--pf-text-dim);
+}
+
+.pf-admin__input {
+  background: var(--pf-bg);
+  border: 1px solid #2a303c;
+  border-radius: var(--pf-radius-md);
+  padding: 10px 12px;
+  color: var(--pf-text);
+  font-size: 0.9rem;
+}
+
+.pf-admin__input:focus {
+  outline: none;
+  border-color: var(--pf-gold);
+}
+
+.pf-admin__button {
+  padding: 10px 16px;
+  border-radius: var(--pf-radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--pf-text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-admin__button:hover,
+.pf-admin__button:focus-visible {
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
+.pf-admin__button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pf-admin__button--primary {
+  background: var(--pf-gold);
+  border-color: var(--pf-gold);
+  color: #0a0c10;
+}
+
+.pf-admin__button--primary:hover,
+.pf-admin__button--primary:focus-visible {
+  background: var(--pf-gold-dim);
+  color: #0a0c10;
+}
+
+.pf-admin__button--danger {
+  border-color: var(--pf-danger);
+  color: var(--pf-danger);
+  background: transparent;
+}
+
+.pf-admin__button--danger:hover,
+.pf-admin__button--danger:focus-visible {
+  background: rgba(229, 72, 77, 0.14);
+}
+
+.pf-admin__generate {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pf-space-md);
+  flex-wrap: wrap;
+}
+
+.pf-admin__generate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pf-admin__generate-field .pf-admin__input {
+  width: 140px;
+}
+
+.pf-admin__new-code {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  background: rgba(242, 193, 78, 0.1);
+  border: 1px solid var(--pf-gold);
+  border-radius: var(--pf-radius-md);
+  flex-wrap: wrap;
+}
+
+.pf-admin__new-code-label {
+  color: var(--pf-text-dim);
+  font-size: 0.8125rem;
+}
+
+.pf-admin__new-code-value {
+  color: var(--pf-gold);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pf-admin__error {
+  margin: 0;
+  color: var(--pf-danger);
+  font-size: 0.875rem;
+}
+
+.pf-admin__status {
+  margin: 0;
+  color: var(--pf-text-dim);
+  font-size: 0.9rem;
+}
+
+.pf-admin__status--error {
+  color: var(--pf-danger);
+}
+
+.pf-admin__table-wrap {
+  overflow-x: auto;
+}
+
+.pf-admin__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.pf-admin__table th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--pf-text-dim);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-admin__table td {
+  padding: 10px;
+  color: var(--pf-text);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+
+.pf-admin__table code {
+  color: var(--pf-text);
+  font-size: 0.8125rem;
+}
+
+.pf-admin__users {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+
+.pf-admin__user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  background: var(--pf-surface-2);
+  border-radius: var(--pf-radius-md);
+  flex-wrap: wrap;
+}
+
+.pf-admin__user-info {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
+
+.pf-admin__user-name {
+  color: var(--pf-text);
+  font-weight: 600;
+}
+
+.pf-admin__admin-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(242, 193, 78, 0.16);
+  color: var(--pf-gold);
+  border: 1px solid var(--pf-gold);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.pf-admin__user-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+
+.pf-admin__reset-success {
+  color: var(--pf-available);
+  font-size: 0.8125rem;
+}
+
+.pf-admin__reset-form {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex-wrap: wrap;
+}
+
+.pf-admin__reset-form .pf-admin__error {
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .pf-admin__user {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

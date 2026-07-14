@@ -133,6 +133,29 @@
   color: var(--pf-text);
 }
 
+/* Register/forgot-password links under the submit button - subtle, not
+   competing with the primary gold CTA. Shared by OnboardingScreen,
+   RegisterScreen and ForgotPasswordScreen. */
+.pf-onboarding__links {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-md);
+  flex-wrap: wrap;
+}
+
+.pf-onboarding__link {
+  color: var(--pf-text-dim);
+  font-size: 0.8125rem;
+  text-decoration: none;
+}
+
+.pf-onboarding__link:hover,
+.pf-onboarding__link:focus-visible {
+  color: var(--pf-gold);
+  text-decoration: underline;
+}
+
 @media (max-width: 860px) {
   .pf-onboarding__layout {
     flex-direction: column;

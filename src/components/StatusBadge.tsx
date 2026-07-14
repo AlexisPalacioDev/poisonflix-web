@@ -6,7 +6,9 @@ import './StatusBadge.css';
 // correlating a search result against the library + Jellyseerr request
 // state, which is Search's job (design.md §4.4, tasks.md Slice 5). Built now
 // as a standalone reusable component so Search can consume it directly.
-export type StatusBadgeVariant = 'in-library' | 'requesting' | 'requestable';
+// active/used/expired added for the Admin screen's invite table (register
+// spec) - same visual language (green/neutral/red), different domain.
+export type StatusBadgeVariant = 'in-library' | 'requesting' | 'requestable' | 'active' | 'used' | 'expired';
 
 interface StatusBadgeProps {
   variant: StatusBadgeVariant;

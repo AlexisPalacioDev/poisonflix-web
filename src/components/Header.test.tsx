@@ -4,16 +4,21 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Header } from './Header';
+import { AuthProvider } from '../auth/AuthContext';
 import { getLanguage } from '../lib/domain/languageSettings';
 import { DEFAULT_ADULT_PIN, lockAdult } from '../lib/domain/adultSettings';
 
+// Header now reads useAuth() (Admin link gating) - every render needs an
+// AuthProvider ancestor, same as RouteGuard.test.tsx.
 function renderHeader() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidateQueriesSpy = vi.spyOn(queryClient, 'invalidateQueries');
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <Header />
+        <AuthProvider>
+          <Header />
+        </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -78,8 +83,10 @@ function renderHeaderWithLocation() {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={['/']}>
-        <Header />
-        <LocationProbe />
+        <AuthProvider>
+          <Header />
+          <LocationProbe />
+        </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );

@@ -29,3 +29,22 @@
   color: var(--pf-text-dim);
   border: 1px solid var(--pf-text-dim);
 }
+
+/* Admin invite table variants (register spec). */
+.pf-status-badge--active {
+  background: rgba(140, 255, 90, 0.16);
+  color: var(--pf-available);
+  border: 1px solid var(--pf-available);
+}
+
+.pf-status-badge--used {
+  background: rgba(237, 239, 242, 0.08);
+  color: var(--pf-text-dim);
+  border: 1px solid var(--pf-text-dim);
+}
+
+.pf-status-badge--expired {
+  background: rgba(229, 72, 77, 0.14);
+  color: var(--pf-danger);
+  border: 1px solid var(--pf-danger);
+}
