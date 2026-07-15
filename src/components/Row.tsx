@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import './Row.css';
 
 // Reusable horizontal row primitive (design.md §2 `components/Row.tsx`) -
@@ -16,9 +17,15 @@ interface RowProps<T> {
   onRetry: () => void;
   renderItem: (item: T) => ReactNode;
   emptyMessage: string;
+  /** When set, the row title becomes a link to this route (its "ver todo"
+   * grid, e.g. `/category/action`) with a trailing chevron affordance. Omitted
+   * -> a plain, non-interactive heading (back-compat with rows that have no
+   * dedicated full grid). Row stays presentational: it only receives the route
+   * string, never any routing/category logic. */
+  titleTo?: string;
 }
 
-export function Row<T>({ title, items, isLoading, isError, onRetry, renderItem, emptyMessage }: RowProps<T>) {
+export function Row<T>({ title, items, isLoading, isError, onRetry, renderItem, emptyMessage, titleTo }: RowProps<T>) {
   const trackRef = useRef<HTMLDivElement>(null);
   // Which edge arrows to show. A vertical-wheel mouse on desktop can't move an
   // `overflow-x` rail at all, so without these controls the rail is unreachable
@@ -64,7 +71,19 @@ export function Row<T>({ title, items, isLoading, isError, onRetry, renderItem, 
 
   return (
     <section className="pf-row" aria-label={title}>
-      <h2 className="pf-row__title">{title}</h2>
+      {titleTo ? (
+        <h2 className="pf-row__title">
+          <Link className="pf-row__title-link" to={titleTo}>
+            <span>{title}</span>
+            <span className="pf-row__title-cta" aria-hidden="true">
+              Ver todo
+              <ChevronIcon direction="right" />
+            </span>
+          </Link>
+        </h2>
+      ) : (
+        <h2 className="pf-row__title">{title}</h2>
+      )}
 
       {isLoading && (
         <div className="pf-row__track pf-row__track--skeleton" aria-hidden="true">

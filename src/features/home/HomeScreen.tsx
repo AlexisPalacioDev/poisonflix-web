@@ -3,14 +3,15 @@ import { DownloadingRow } from './DownloadingRow';
 import { GenreRow } from './GenreRow';
 import { Header } from '../../components/Header';
 import { Hero, HeroSkeleton, type HeroFeature } from '../../components/Hero';
-import { PosterCard, type PosterItem } from '../../components/PosterCard';
+import { PosterCard } from '../../components/PosterCard';
 import { Row } from '../../components/Row';
 import { useLibraryRow } from '../../hooks/useLibraryRow';
 import { useTrendingRow } from '../../hooks/useTrendingRow';
 import { useAuth } from '../../hooks/useAuth';
 import { NORMAL_CATEGORIES } from '../../lib/domain/categories';
 import { displayTitle } from '../../lib/domain/displayTitle';
-import { jellyfinBackdropUrl, jellyfinPosterUrl, tmdbPosterUrl } from '../../lib/domain/posterUrl';
+import { toLibraryPosterItem, toTrendingPosterItem } from '../../lib/domain/posterItems';
+import { jellyfinBackdropUrl, tmdbPosterUrl } from '../../lib/domain/posterUrl';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
 import './home.css';
@@ -27,32 +28,6 @@ function parseYear(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
   const year = Number.parseInt(dateStr.slice(0, 4), 10);
   return Number.isNaN(year) ? null : year;
-}
-
-function toLibraryPosterItem(item: JellyfinItem, token: string | null): PosterItem {
-  return {
-    // Detail's route param is a TMDB id (design.md §7). A library item
-    // normally carries one via ProviderIds.Tmdb; when it doesn't, fall back
-    // to the Jellyfin item id so the card is still clickable.
-    id: item.ProviderIds?.Tmdb ?? item.Id,
-    title: displayTitle(item.Name),
-    imageUrl: jellyfinPosterUrl(item, token),
-    // Series must be tagged so PosterCard routes to /detail/:id?type=tv
-    // (TMDB reuses ids across the movie/tv namespaces); omitted -> movie.
-    mediaType: item.Type === 'Series' ? 'tv' : 'movie',
-  };
-}
-
-function toTrendingPosterItem(result: JellyseerrSearchResult): PosterItem {
-  return {
-    id: String(result.id),
-    title: result.title ?? result.name ?? 'Sin título',
-    imageUrl: tmdbPosterUrl(result.posterPath),
-    // TMDB reuses numeric ids across the movie and tv namespaces, so a TV
-    // result MUST be tagged - otherwise /detail/:id resolves it as the movie
-    // with the same id and opens a completely unrelated title.
-    mediaType: result.mediaType === 'tv' ? 'tv' : 'movie',
-  };
 }
 
 // --- Featured-title selection for the hero ---------------------------------
@@ -164,6 +139,7 @@ export function HomeScreen() {
 
         <Row
           title="Tu biblioteca"
+          titleTo="/library"
           items={library.isSuccess ? libraryItems : undefined}
           isLoading={library.isLoading}
           isError={library.isError}
@@ -174,6 +150,7 @@ export function HomeScreen() {
 
         <Row
           title="Tendencias"
+          titleTo="/trending"
           items={trending.isSuccess ? trendingItems : undefined}
           isLoading={trending.isLoading}
           isError={trending.isError}

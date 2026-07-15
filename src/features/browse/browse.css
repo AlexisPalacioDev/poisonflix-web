@@ -1,0 +1,107 @@
+/* Browse / "ver todo" screen - a full-screen wrapping grid, the vertical
+   counterpart to the horizontal Row rail. Mirrors the Downloads grid
+   conventions (same card min-width, gaps and status treatment) so every
+   full-screen grid in the app reads as one surface. */
+
+.pf-browse {
+  flex: 1;
+  min-height: 100%;
+  padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
+  padding-bottom: var(--pf-space-2xl);
+  padding-left: var(--pf-gutter);
+  padding-right: var(--pf-gutter);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+}
+
+.pf-browse__header {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+
+.pf-browse__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--pf-text);
+  cursor: pointer;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-browse__back:hover,
+.pf-browse__back:focus-visible {
+  background: rgba(242, 193, 78, 0.14);
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
+.pf-browse__back:active {
+  transform: scale(0.92);
+}
+
+.pf-browse__title {
+  margin: 0;
+  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-weight: 800;
+  color: var(--pf-text);
+}
+
+.pf-browse__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 20px 18px;
+}
+
+.pf-browse__skeleton-card {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--pf-radius-md);
+}
+
+.pf-browse__status {
+  margin: 0;
+  color: var(--pf-text-dim);
+  font-size: 0.95rem;
+}
+
+.pf-browse__status--error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--pf-danger);
+}
+
+.pf-browse__retry {
+  background: transparent;
+  border: 1px solid var(--pf-danger);
+  color: var(--pf-danger);
+  border-radius: var(--pf-radius-sm);
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-browse__retry:hover,
+.pf-browse__retry:focus-visible {
+  background: rgba(229, 72, 77, 0.14);
+}
+
+@media (max-width: 640px) {
+  .pf-browse__grid {
+    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+    gap: 16px 12px;
+  }
+}

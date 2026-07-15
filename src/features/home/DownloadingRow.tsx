@@ -40,6 +40,7 @@ export function DownloadingRow() {
   return (
     <Row
       title="En camino"
+      titleTo="/downloads"
       items={items}
       isLoading={false}
       isError={false}

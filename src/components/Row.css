@@ -14,6 +14,58 @@
   color: var(--pf-text);
 }
 
+/* Title-as-link: whole heading is the hit target; the "Ver todo ›" cue sits
+   dimmed at rest and lights up (with a nudged chevron) when the title is
+   hovered or keyboard-focused, so it reads as one affordance. */
+.pf-row__title-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.pf-row__title-link:hover,
+.pf-row__title-link:focus-visible {
+  color: var(--pf-gold);
+  outline: none;
+}
+
+.pf-row__title-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--pf-text-dim);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity var(--pf-dur-fast) var(--pf-ease),
+    transform var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-row__title-cta > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.pf-row__title-link:hover .pf-row__title-cta,
+.pf-row__title-link:focus-visible .pf-row__title-cta {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--pf-gold);
+}
+
+/* Coarse pointers have no hover to reveal the cue, so keep it always visible. */
+@media (hover: none) {
+  .pf-row__title-cta {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .pf-row__status {
   margin: 0;
   padding: 0 var(--pf-gutter);

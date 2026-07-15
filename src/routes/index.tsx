@@ -7,6 +7,10 @@ import { AdultSearchScreen } from '../features/search/AdultSearchScreen';
 import { DetailScreen } from '../features/detail/DetailScreen';
 import { PlayerScreen } from '../features/player/PlayerScreen';
 import { DownloadsScreen } from '../features/downloads/DownloadsScreen';
+import { CategoryScreen } from '../features/browse/CategoryScreen';
+import { LibraryScreen } from '../features/browse/LibraryScreen';
+import { TrendingScreen } from '../features/browse/TrendingScreen';
+import { ContinueWatchingScreen } from '../features/browse/ContinueWatchingScreen';
 import { RegisterScreen } from '../features/register/RegisterScreen';
 import { ForgotPasswordScreen } from '../features/register/ForgotPasswordScreen';
 import { AdminScreen } from '../features/admin/AdminScreen';
@@ -66,6 +70,42 @@ export const routes: RouteObject[] = [
     element: (
       <RouteGuard>
         <SearchScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // "Ver todo" grids reached from each Home row's title (Row `titleTo`).
+    // `/category/:id` is one of NORMAL_CATEGORIES ids (action, comedy, …);
+    // library/trending/resume mirror the three non-genre Home rows. "En camino"
+    // has no route here - its title reuses the existing `/downloads` screen.
+    path: '/category/:id',
+    element: (
+      <RouteGuard>
+        <CategoryScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    path: '/library',
+    element: (
+      <RouteGuard>
+        <LibraryScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    path: '/trending',
+    element: (
+      <RouteGuard>
+        <TrendingScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    path: '/resume',
+    element: (
+      <RouteGuard>
+        <ContinueWatchingScreen />
       </RouteGuard>
     ),
   },
