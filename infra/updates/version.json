@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.7",
-  "apk": "poisonflix-v7.apk",
-  "notes": "Arreglado 'Continuar viendo': ahora guarda bien dónde quedaste al salir del reproductor"
+  "versionCode": 8,
+  "versionName": "1.8",
+  "apk": "poisonflix-v8.apk",
+  "notes": "Nuevo: Favoritos ⭐ — marcá pelis y series desde su ficha y encontralas en la fila 'Mis favoritos' del inicio."
 }
