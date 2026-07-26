@@ -480,6 +480,20 @@ def _resolve_item_id(video_id):
     return None
 
 
+def _video_for_item(item_id):
+    """Reverse of _library_video_index: the videoId a downloaded item came from,
+    read off the "[videoId]" tail in its path. Lets a radio be seeded from a
+    Jellyfin track (album / playlist / library), which knows no videoId itself.
+    None for files that predate the naming scheme — the caller then falls back
+    to the generic feed rather than failing."""
+    if not item_id:
+        return None
+    for video_id, mapped in _library_video_index().items():
+        if mapped == item_id:
+            return video_id
+    return None
+
+
 def _annotate_downloaded(results):
     """Tag each song result with `downloaded` + `jellyfinItemId` (matched EXACTLY
     by videoId against the library) and float already-downloaded songs to the
@@ -1251,6 +1265,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/recommendations":
             qs = urllib.parse.parse_qs(parsed.query)
             seed = (qs.get("seed", [""])[0]).strip() or None
+            # `itemId` seeds a radio from a library track: resolve it to the
+            # videoId it was downloaded from, then take the normal seeded path.
+            if not seed:
+                seed = _video_for_item((qs.get("itemId", [""])[0]).strip() or None)
             try:
                 limit = int(qs.get("limit", ["10"])[0])
             except ValueError:
