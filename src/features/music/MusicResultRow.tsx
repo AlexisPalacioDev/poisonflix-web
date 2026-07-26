@@ -81,6 +81,7 @@ export function MusicResultRow({
       />
       <MusicRowMenu
         title={title}
+        videoId={result.videoId}
         itemId={playItemId}
         downloadParams={{
           videoId: result.videoId,

@@ -484,7 +484,7 @@ async function handleAdminStorage(req, res) {
 // verbatim; an unreachable worker surfaces as a 502 the SPA can degrade on.
 // ---------------------------------------------------------------------------
 
-async function handleMusic(req, res, subPath, search) {
+async function handleMusic(req, res, subPath, search, user) {
   const method = req.method;
   // Allowlist: exactly the routes the SPA needs, nothing else reaches the
   // worker. `subPath` is the part after `/bff/music`.
@@ -499,6 +499,8 @@ async function handleMusic(req, res, subPath, search) {
   // The tracks inside an album/playlist, so a collection can be played or
   // queued without downloading it first.
   const isCollection = subPath === '/collection';
+  // Thumbs up/down. GET reads this user's votes, POST casts one.
+  const isRatings = subPath === '/ratings';
 
   let ok = false;
   if (
@@ -509,11 +511,12 @@ async function handleMusic(req, res, subPath, search) {
       isDownloadJob ||
       isPlaylistBatch ||
       isStream ||
-      isCollection)
+      isCollection ||
+      isRatings)
   ) {
     ok = true;
   }
-  if (method === 'POST' && (isDownloadsCollection || isPlaylistsCollection)) ok = true;
+  if (method === 'POST' && (isDownloadsCollection || isPlaylistsCollection || isRatings)) ok = true;
   if (!ok) return send(res, 404, { error: 'not found' });
 
   const body = method === 'POST' ? await readBody(req) : undefined;
@@ -522,6 +525,10 @@ async function handleMusic(req, res, subPath, search) {
   if (contentType) headers['content-type'] = contentType;
   // Forward Range so audio seeking works end to end (browser -> BFF -> worker).
   if (req.headers['range']) headers['range'] = req.headers['range'];
+  // The worker cannot authenticate anyone: it sits on the internal network and
+  // only the BFF holds the session. Ratings are per user, so the resolved id is
+  // injected here — never taken from anything the browser sent.
+  headers['x-pf-user'] = String(user.id);
 
   let upstream;
   try {
@@ -605,7 +612,7 @@ const server = createServer(async (req, res) => {
 
     // Música: any authenticated user may search + enqueue downloads.
     if (path.startsWith('/bff/music/')) {
-      return await handleMusic(req, res, path.slice('/bff/music'.length), url.search);
+      return await handleMusic(req, res, path.slice('/bff/music'.length), url.search, user);
     }
 
     const seg = path.split('/'); // ['', 'radarr', 'api', ...]

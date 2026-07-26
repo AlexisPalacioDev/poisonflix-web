@@ -39,6 +39,7 @@ JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
 JOBS_PATH = os.path.join(DATA_DIR, "jobs.json")
 MANIFEST_PATH = os.path.join(DATA_DIR, "downloaded.json")
 BATCHES_PATH = os.path.join(DATA_DIR, "batches.json")
+RATINGS_PATH = os.path.join(DATA_DIR, "ratings.json")
 
 DOWNLOAD_TIMEOUT_S = 300  # ~5 min hard cap per yt-dlp run, then the job fails.
 MAX_JOBS_KEPT = 100  # recent-jobs cap returned by GET /downloads
@@ -83,6 +84,7 @@ _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 
 def _load_state():
     os.makedirs(DATA_DIR, exist_ok=True)
+    _load_ratings()
     try:
         with open(MANIFEST_PATH, "r", encoding="utf-8") as fh:
             _downloaded.update(json.load(fh))
@@ -104,6 +106,98 @@ def _load_state():
             _batch_order.append(batch_id)
     except (FileNotFoundError, ValueError, AttributeError):
         pass
+
+
+# ---------------------------------------------------------------------------
+# Ratings: thumbs up / down, per user, keyed by videoId.
+#
+# Jellyfin can already store a rating -- but only for items in the library, and
+# the tracks a user most wants to reject are exactly the ones that are NOT
+# there: radio suggestions they never downloaded. Those have no Jellyfin item to
+# hang a rating on, so the videoId is the only stable key that covers both, and
+# this file is the single source of truth for both.
+#
+# Shape: {userId: {videoId: 1 | -1}}. A cleared vote drops the key rather than
+# storing 0, so the file stays a record of opinions actually held.
+# ---------------------------------------------------------------------------
+
+_ratings = {}
+_ratings_lock = threading.Lock()
+
+
+def _load_ratings():
+    global _ratings
+    try:
+        with open(RATINGS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            _ratings = {
+                str(uid): {str(v): int(r) for v, r in (votes or {}).items() if int(r) in (1, -1)}
+                for uid, votes in data.items()
+                if isinstance(votes, dict)
+            }
+    except (FileNotFoundError, ValueError, AttributeError, TypeError):
+        _ratings = {}
+
+
+def _persist_ratings():
+    # Called under _ratings_lock. Best-effort, mirrors _persist_jobs.
+    try:
+        tmp = RATINGS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_ratings, fh)
+        os.replace(tmp, RATINGS_PATH)
+    except OSError:
+        pass
+
+
+def user_ratings(user_id):
+    """This user's votes. Anonymous callers get an empty, read-only view rather
+    than sharing one global bucket -- ratings are personal by definition."""
+    if not user_id:
+        return {}
+    with _ratings_lock:
+        return dict(_ratings.get(user_id, {}))
+
+
+def set_rating(user_id, video_id, rating):
+    """rating: 1 (up), -1 (down), or 0 to clear. Returns the stored value."""
+    if not user_id or not video_id:
+        return 0
+    with _ratings_lock:
+        votes = _ratings.setdefault(user_id, {})
+        if rating in (1, -1):
+            votes[video_id] = rating
+        else:
+            votes.pop(video_id, None)
+            if not votes:
+                _ratings.pop(user_id, None)
+        _persist_ratings()
+    return rating if rating in (1, -1) else 0
+
+
+def _annotate_ratings(results, user_id):
+    """Tags each song with this user's vote so the row can render its state."""
+    votes = user_ratings(user_id)
+    if not votes:
+        return results
+    for r in results:
+        if r.get("type") == "song":
+            r["rating"] = votes.get(r.get("videoId"), 0)
+    return results
+
+
+def _drop_disliked(results, user_id):
+    """Removes thumbed-down songs. This is what makes the vote mean something:
+    a dislike that still shows up in the next radio is a button that lied."""
+    votes = user_ratings(user_id)
+    if not votes:
+        return results
+    return [
+        r
+        for r in results
+        if not (r.get("type") == "song" and votes.get(r.get("videoId")) == -1)
+    ]
 
 
 def _persist_jobs():
@@ -1214,6 +1308,12 @@ def _public_job(job):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    def _user_id(self):
+        """Who is asking, per the BFF's X-PF-User header. The worker sits on the
+        internal network behind the BFF, which is the only thing that can
+        authenticate a session; an absent header means an anonymous read."""
+        return (self.headers.get("X-PF-User") or "").strip() or None
+
     def _send(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -1305,7 +1405,16 @@ class Handler(BaseHTTPRequestHandler):
                 results = search_music(query, limit, source)
             except Exception as exc:  # noqa: BLE001
                 return self._send(502, {"error": "search_failed", "message": str(exc)[:200]})
-            return self._send(200, {"results": _annotate_downloaded(results)})
+            # Search is NOT filtered: the user asked for this by name, and hiding
+            # a result they typed would read as a broken search. Only annotated,
+            # so the row can render the vote it already carries.
+            return self._send(
+                200,
+                {"results": _annotate_ratings(_annotate_downloaded(results), self._user_id())},
+            )
+
+        if path == "/ratings":
+            return self._send(200, {"ratings": user_ratings(self._user_id())})
 
         if path == "/recommendations":
             qs = urllib.parse.parse_qs(parsed.query)
@@ -1323,7 +1432,13 @@ class Handler(BaseHTTPRequestHandler):
                 results = recommendations(seed, limit)
             except Exception:  # noqa: BLE001 — recommendations are best-effort.
                 results = []
-            return self._send(200, {"results": _annotate_downloaded(results)})
+            # A radio that keeps serving what you rejected is the whole reason
+            # the thumb-down exists, so this filter runs before anything else.
+            user_id = self._user_id()
+            results = _drop_disliked(results, user_id)
+            return self._send(
+                200, {"results": _annotate_ratings(_annotate_downloaded(results), user_id)}
+            )
 
         if path == "/collection":
             qs = urllib.parse.parse_qs(parsed.query)
@@ -1340,7 +1455,11 @@ class Handler(BaseHTTPRequestHandler):
                 results = collection_tracks(browse_id, playlist_id, limit)
             except Exception:  # noqa: BLE001 — best-effort, same as search.
                 results = []
-            return self._send(200, {"results": _annotate_downloaded(results)})
+            user_id = self._user_id()
+            results = _drop_disliked(results, user_id)
+            return self._send(
+                200, {"results": _annotate_ratings(_annotate_downloaded(results), user_id)}
+            )
 
         if path == "/downloads":
             with _lock:
@@ -1376,7 +1495,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path not in ("/downloads", "/playlists"):
+        if parsed.path not in ("/downloads", "/playlists", "/ratings"):
             return self._send(404, {"error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -1385,6 +1504,19 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw or b"{}")
         except ValueError:
             return self._send(400, {"error": "invalid_json"})
+
+        if parsed.path == "/ratings":
+            video_id = (payload.get("videoId") or "").strip()
+            if not video_id:
+                return self._send(400, {"error": "missing_video_id"})
+            try:
+                rating = int(payload.get("rating", 0))
+            except (TypeError, ValueError):
+                rating = 0
+            if rating not in (1, -1, 0):
+                return self._send(400, {"error": "invalid_rating"})
+            stored = set_rating(self._user_id(), video_id, rating)
+            return self._send(200, {"videoId": video_id, "rating": stored})
 
         if parsed.path == "/playlists":
             playlist_id = payload.get("playlistId")

@@ -35,6 +35,11 @@ export const MusicSearchResultSchema = z.object({
   // offering "Descargar", and the worker floats these results to the top.
   downloaded: z.boolean().optional().default(false),
   jellyfinItemId: z.string().nullable().optional(),
+  // This user's thumb on the track: 1 up, -1 down, 0 none. Keyed by videoId in
+  // the worker rather than in Jellyfin, because the tracks most worth rejecting
+  // are radio suggestions that were never downloaded and so have no Jellyfin
+  // item to hang a rating on.
+  rating: z.number().optional().default(0),
 });
 export type MusicSearchResult = z.infer<typeof MusicSearchResultSchema>;
 
@@ -152,3 +157,18 @@ export const MusicPlaylistBatchStatusSchema = z.object({
   jobs: z.array(MusicBatchJobSchema).default([]),
 });
 export type MusicPlaylistBatchStatus = z.infer<typeof MusicPlaylistBatchStatusSchema>;
+
+// ---------------------------------------------------------------------------
+// Ratings: GET /bff/music/ratings, POST /bff/music/ratings
+// ---------------------------------------------------------------------------
+
+export const MusicRatingsResponseSchema = z.object({
+  ratings: z.record(z.string(), z.number()).default({}),
+});
+export type MusicRatingsResponse = z.infer<typeof MusicRatingsResponseSchema>;
+
+export const MusicRatingSchema = z.object({
+  videoId: z.string(),
+  rating: z.number(),
+});
+export type MusicRating = z.infer<typeof MusicRatingSchema>;

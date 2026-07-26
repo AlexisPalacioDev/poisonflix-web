@@ -6,12 +6,15 @@ import {
   MusicJobSchema,
   MusicPlaylistBatchSchema,
   MusicPlaylistBatchStatusSchema,
+  MusicRatingsResponseSchema,
+  MusicRatingSchema,
   type MusicResultItem,
   type MusicSource,
   type MusicDownloadResponse,
   type MusicJob,
   type MusicPlaylistBatch,
   type MusicPlaylistBatchStatus,
+  type MusicRating,
 } from './schemas/music';
 
 // Música client. Every call goes through `apiFetch('bff', '/music/...')`, which
@@ -64,6 +67,34 @@ export async function getRadio(seed: RadioSeed, limit = 15): Promise<MusicResult
     schema: MusicRecommendationsResponseSchema,
   });
   return results;
+}
+
+/** Thumb value: 1 up, -1 down, 0 clears the vote. */
+export type RatingValue = 1 | -1 | 0;
+
+/** Every vote this user has cast, as videoId -> 1 | -1. */
+export async function getRatings(): Promise<Record<string, number>> {
+  const { ratings } = await apiFetch('bff', '/music/ratings', {
+    schema: MusicRatingsResponseSchema,
+  });
+  return ratings;
+}
+
+/**
+ * Casts (or clears) a thumb. A thumb-down is not cosmetic: the worker drops
+ * that videoId from every radio and recommendation it builds for this user
+ * afterwards, which is the only thing that makes the button mean something.
+ */
+export async function setTrackRating(
+  videoId: string,
+  rating: RatingValue,
+): Promise<MusicRating> {
+  return apiFetch('bff', '/music/ratings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoId, rating }),
+    schema: MusicRatingSchema,
+  });
 }
 
 // What identifies a collection to the worker.

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ThumbButtons } from './ThumbButtons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUserPlaylists } from '../../hooks/useUserPlaylists';
 import { addToPlaylist, createPlaylist } from '../../api/playlists';
@@ -33,6 +34,9 @@ function KebabGlyph() {
 }
 
 export interface MusicRowMenuProps {
+  /** The track's YouTube id, when known — enables the 👍/👎 pair. Library
+   *  rows never matched to a videoId simply omit it. */
+  videoId?: string | null;
   title: string;
   /** Jellyfin itemId when the track is in the library, else null (search result). */
   itemId: string | null;
@@ -52,6 +56,7 @@ export interface MusicRowMenuProps {
 
 export function MusicRowMenu({
   title,
+  videoId,
   itemId,
   downloadParams,
   onDownload,
@@ -228,6 +233,11 @@ export function MusicRowMenu({
           <div className="pf-music__addpl-menu" role="menu" aria-label={`Opciones para ${title}`}>
             {view === 'menu' ? (
               <ul className="pf-music__addpl-list">
+                {videoId && (
+                  <li>
+                    <ThumbButtons videoId={videoId} title={title} />
+                  </li>
+                )}
                 {onEnqueue && (
                   <li>
                     <button

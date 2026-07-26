@@ -17,6 +17,11 @@ import {
 import { getItems, getPlayedAudio, getRandomLibraryAudio } from '../../api/jellyfin';
 
 vi.mock('../../api/music', () => ({
+  // The row menu now carries thumbs, which read this user's votes; collections
+  // resolve their track list before they can be played.
+  getRatings: vi.fn().mockResolvedValue({}),
+  setTrackRating: vi.fn(),
+  getCollectionTracks: vi.fn().mockResolvedValue([]),
   searchMusic: vi.fn(),
   requestDownload: vi.fn(),
   getMusicJob: vi.fn(),

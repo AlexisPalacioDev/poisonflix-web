@@ -1,0 +1,58 @@
+/* 👍 / 👎 — shared by the row menu and the NowPlayingBar. */
+
+.pf-thumbs {
+  display: flex;
+  align-items: center;
+}
+
+.pf-thumbs__btn {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.pf-thumbs__btn--on {
+  color: var(--pf-green, #1db954);
+}
+
+/* A rejection reads as a rejection, not as a second kind of approval. */
+.pf-thumbs__btn--off {
+  color: #ff6b6b;
+}
+
+/* In the ⋮ menu the pair stacks as two full-width rows, matching the other
+   menu items so it does not read as a foreign control. */
+.pf-thumbs--menu {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.pf-thumbs--menu .pf-thumbs__btn {
+  width: 100%;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.pf-thumbs--menu .pf-thumbs__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* In the bar they sit inline beside the transport, icon-only. */
+.pf-thumbs--bar {
+  gap: 0.25rem;
+}
+
+.pf-thumbs--bar .pf-thumbs__btn {
+  padding: 0.35rem;
+  border-radius: 50%;
+}
+
+.pf-thumbs--bar .pf-thumbs__btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}

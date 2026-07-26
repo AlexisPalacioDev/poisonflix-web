@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ThumbButtons } from './ThumbButtons';
 import { Link, useLocation } from 'react-router-dom';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { CoverImage } from './CoverImage';
@@ -300,6 +301,12 @@ function DesktopBar({
           onChange={(e) => setVolume(Number(e.currentTarget.value))}
           aria-label="Volumen"
         />
+        {/* Thumbs sit beside the transport, where YT Music puts them. Only for
+            tracks with a videoId: a library track that was never matched to one
+            has nothing the worker can key a vote on. */}
+        {current.videoId && (
+          <ThumbButtons videoId={current.videoId} title={current.title} variant="bar" />
+        )}
         <button
           type="button"
           className={`pf-nowplaying__btn${queueOpen ? ' pf-nowplaying__btn--on' : ''}`}
