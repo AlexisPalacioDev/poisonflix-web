@@ -220,6 +220,33 @@ export async function getPlayedAudio(
 }
 
 /**
+ * A random spread of this user's own `Audio` library, used to seed the feed
+ * before they have listened to anything. Owning a track is a real signal —
+ * weaker than playing it, but far better than the worker's global fallback,
+ * which seeds off whatever was downloaded to the server last and therefore
+ * shows every user the same thing.
+ *
+ * Random rather than newest: the most recent downloads are one session's worth
+ * of one mood, which is exactly the bias that made the generic feed useless.
+ */
+export async function getRandomLibraryAudio(
+  userId: string,
+  limit = 30,
+): Promise<JellyfinQueryResult> {
+  const query = new URLSearchParams({
+    IncludeItemTypes: 'Audio',
+    Recursive: 'true',
+    SortBy: 'Random',
+    Limit: String(limit),
+    Fields: 'UserData',
+    EnableImageTypes: 'Primary',
+  });
+  return apiFetch('jellyfin', `/Users/${userId}/Items?${query.toString()}`, {
+    schema: JellyfinQueryResultSchema,
+  });
+}
+
+/**
  * The same played-history query, with the item runtime included so listening
  * time can be estimated. Kept separate from `getPlayedAudio` so the feed (which
  * needs neither runtime nor genres) doesn't pay for the extra fields.

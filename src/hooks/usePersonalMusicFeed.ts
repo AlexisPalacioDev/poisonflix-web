@@ -1,27 +1,35 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { getPlayedAudio } from '../api/jellyfin';
+import { getPlayedAudio, getRandomLibraryAudio } from '../api/jellyfin';
 import { getRadio, getRecommendations } from '../api/music';
 import type { JellyfinItem } from '../api/schemas/jellyfin';
 import type { MusicResultItem, MusicSongResult } from '../api/schemas/music';
 import {
+  buildFeedRows,
   excludePlayed,
-  interleave,
   pickSeedTracks,
   songsOnly,
   trackArtist,
+  type FeedSource,
 } from '../lib/domain/musicTaste';
 import { queryKeys } from './queryKeys';
 import { useAuth } from './useAuth';
 
-// Música's personalised home feed. Modelled on YouTube Music: your history is
-// the input, and it comes back as a mix plus a row per thing you've been into.
+// Música's personalised home feed, modelled on YouTube Music: your listening is
+// the input, and it comes back as a mix plus a row per thing you're into.
 //
-// The history is Jellyfin's own per-user UserData (see `getPlayedAudio`), fed by
-// `useMusicScrobble`. Nothing here is global: two accounts on the same server
-// get different rows from the same server, and a user with no history yet falls
-// back to the generic feed instead of an empty screen.
+// Three tiers, best signal first, because the fallback matters as much as the
+// happy path:
+//
+//  1. what this user has PLAYED  (Jellyfin UserData, fed by useMusicScrobble)
+//  2. what this user OWNS        (a random spread of their own library)
+//  3. the worker's generic feed  (seeded from the last download on the SERVER)
+//
+// Tier 3 is the one to be suspicious of: it is the same for every user and
+// reflects whoever downloaded last, so it is a last resort and it is never
+// labelled as personal.
 
 const HISTORY_LIMIT = 40;
+const LIBRARY_SAMPLE = 30;
 const RADIO_PER_SEED = 12;
 const MIX_LIMIT = 20;
 
@@ -34,8 +42,8 @@ export interface MusicFeedRow {
 export interface PersonalMusicFeed {
   rows: MusicFeedRow[];
   isLoading: boolean;
-  /** True while the user has no listening history and is seeing the generic
-   * feed — the cold start every new account begins in. */
+  /** True while the rows come from the server-wide feed rather than anything
+   * about this user — the state the UI must not dress up as personal. */
   isGeneric: boolean;
 }
 
@@ -53,33 +61,51 @@ export function usePersonalMusicFeed(): PersonalMusicFeed {
   });
 
   const historyItems: JellyfinItem[] = history.data?.Items ?? [];
-  const seeds = pickSeedTracks(historyItems);
   const playedItemIds = new Set(historyItems.map((item) => item.Id));
+  const historySeeds = pickSeedTracks(historyItems);
+
+  // Two ways to reach the cold start: a user who has not played anything yet,
+  // or a Jellyfin hiccup on the history call. Both fall through to the library.
+  const historySettled = history.isSuccess || history.isError;
+  const needsLibrary = historySettled && historySeeds.length === 0;
+
+  const library = useQuery({
+    queryKey: queryKeys.musicLibrarySample(userId),
+    queryFn: () => getRandomLibraryAudio(userId, LIBRARY_SAMPLE),
+    enabled: Boolean(userId) && needsLibrary,
+    // The sample is random server-side; refetching would reshuffle the rows
+    // under the user mid-session, so it is held for the session's lifetime.
+    staleTime: Infinity,
+  });
+
+  const librarySeeds = needsLibrary ? pickSeedTracks(library.data?.Items ?? []) : [];
+  const source: FeedSource = historySeeds.length > 0 ? 'history' : 'library';
+  const seedItems = historySeeds.length > 0 ? historySeeds : librarySeeds;
 
   const radios = useQueries({
-    queries: seeds.map((seed) => ({
+    queries: seedItems.map((seed) => ({
       queryKey: queryKeys.musicSeedRadio(userId, seed.Id),
       queryFn: () => getRadio({ itemId: seed.Id }, RADIO_PER_SEED),
       staleTime: 30 * 60_000,
     })),
   });
 
-  // Two ways to end up with nothing to personalise from: a new account with no
-  // history yet, or a Jellyfin hiccup on the history call. Both fall back to the
-  // generic worker feed — a home screen that stays blank because a side query
-  // failed is worse than one that's briefly impersonal.
-  const historySettled = history.isSuccess || history.isError;
+  // Last resort: nothing played, nothing in the library. Only here is the
+  // server-wide feed shown, and it says so.
+  const librarySettled = library.isSuccess || library.isError;
+  const needsGeneric = needsLibrary && librarySettled && librarySeeds.length === 0;
+
   const generic = useQuery({
     queryKey: queryKeys.musicRecommendations(''),
     queryFn: () => getRecommendations(),
-    enabled: Boolean(userId) && historySettled && seeds.length === 0,
+    enabled: Boolean(userId) && needsGeneric,
     staleTime: 5 * 60_000,
   });
 
-  if (historySettled && seeds.length === 0) {
+  if (needsGeneric) {
     return {
       rows: generic.data?.length
-        ? [{ key: 'generic', title: 'Recomendados para ti', items: generic.data }]
+        ? [{ key: 'generic', title: 'Populares en YouTube Music', items: generic.data }]
         : [],
       isLoading: generic.isLoading,
       isGeneric: true,
@@ -90,24 +116,18 @@ export function usePersonalMusicFeed(): PersonalMusicFeed {
     excludePlayed(songsOnly(radio.data ?? []), playedItemIds),
   );
 
-  const rows: MusicFeedRow[] = [];
-  const mix = interleave(perSeed, MIX_LIMIT);
-  if (mix.length > 0) {
-    rows.push({ key: 'mix', title: 'Mix para vos', items: mix });
-  }
-  seeds.forEach((seed, index) => {
-    const items = perSeed[index] ?? [];
-    if (items.length === 0) return;
-    // Name the row after the artist when we know it — "Porque escuchaste
-    // Brutalismus 3000" tells the user *why* this row exists, which is what
-    // makes a recommendation feel earned instead of arbitrary.
-    const label = trackArtist(seed) ?? seed.Name;
-    rows.push({ key: `seed-${seed.Id}`, title: `Porque escuchaste ${label}`, items });
-  });
+  const seeds = seedItems.map((item) => ({
+    id: item.Id,
+    // Naming the row after the artist is what tells the user WHY it exists.
+    label: trackArtist(item) ?? item.Name,
+  }));
 
   return {
-    rows,
-    isLoading: history.isLoading || radios.some((radio) => radio.isLoading),
+    rows: buildFeedRows(seeds, perSeed, source, MIX_LIMIT),
+    isLoading:
+      history.isLoading ||
+      (needsLibrary && library.isLoading) ||
+      radios.some((radio) => radio.isLoading),
     isGeneric: false,
   };
 }

@@ -68,6 +68,7 @@ export const queryKeys = {
   // serve someone else's taste from cache.
   musicHistory: (userId: string, sortBy: string) =>
     ['music', 'history', userId, sortBy] as const,
+  musicLibrarySample: (userId: string) => ['music', 'librarySample', userId] as const,
   musicSeedRadio: (userId: string, seedItemId: string) =>
     ['music', 'seedRadio', userId, seedItemId] as const,
   // Usage monitor. `serverUsage` is admin-wide; `myMusicStats` is per user.

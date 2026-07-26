@@ -77,3 +77,52 @@ export function interleave(rows: MusicSongResult[][], limit: number): MusicSongR
 export function excludePlayed(songs: MusicSongResult[], playedItemIds: Set<string>): MusicSongResult[] {
   return songs.filter((song) => !song.jellyfinItemId || !playedItemIds.has(song.jellyfinItemId));
 }
+
+export interface FeedRow {
+  key: string;
+  title: string;
+  items: MusicSongResult[];
+}
+
+/** Where a feed's seeds came from, which decides what it may honestly claim. */
+export type FeedSource = 'history' | 'library';
+
+export interface FeedSeed {
+  id: string;
+  /** Artist when known, else the track title. */
+  label: string;
+}
+
+/**
+ * Lays out the feed rows for a set of seeds and their radios.
+ *
+ * The `source` is not cosmetic. A history seed earns "Porque escuchaste X" —
+ * the user did listen to X, and saying so is what makes the row feel earned.
+ * A library seed has not been listened to at all, so claiming otherwise would
+ * be a lie; those collapse into a single honestly-named mix instead.
+ */
+export function buildFeedRows(
+  seeds: FeedSeed[],
+  perSeed: MusicSongResult[][],
+  source: FeedSource,
+  mixLimit: number,
+): FeedRow[] {
+  const mix = interleave(perSeed, mixLimit);
+  if (mix.length === 0) return [];
+
+  if (source === 'library') {
+    return [{ key: 'library-mix', title: 'Basado en tu biblioteca', items: mix }];
+  }
+
+  const rows: FeedRow[] = [{ key: 'mix', title: 'Mix para vos', items: mix }];
+  seeds.forEach((seed, index) => {
+    const items = perSeed[index] ?? [];
+    if (items.length === 0) return;
+    rows.push({
+      key: `seed-${seed.id}`,
+      title: `Porque escuchaste ${seed.label}`,
+      items,
+    });
+  });
+  return rows;
+}

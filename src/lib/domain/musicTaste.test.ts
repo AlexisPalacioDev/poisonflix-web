@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { excludePlayed, interleave, pickSeedTracks, trackArtist } from './musicTaste';
+import {
+  buildFeedRows,
+  excludePlayed,
+  interleave,
+  pickSeedTracks,
+  trackArtist,
+} from './musicTaste';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { MusicSongResult } from '../../api/schemas/music';
 
@@ -105,5 +111,43 @@ describe('excludePlayed', () => {
   it('keeps tracks that are not in the library at all — nothing to have played', () => {
     const kept = excludePlayed([song('a'), song('b')], new Set(['item-1']));
     expect(kept).toHaveLength(2);
+  });
+});
+
+describe('buildFeedRows', () => {
+  const seeds = [
+    { id: 's1', label: 'Métricas Frías' },
+    { id: 's2', label: 'Alcolirykoz' },
+  ];
+  const perSeed = [
+    [song('a1'), song('a2')],
+    [song('b1')],
+  ];
+
+  it('names a history row after the artist, so the row explains itself', () => {
+    const rows = buildFeedRows(seeds, perSeed, 'history', 10);
+    expect(rows[0].title).toBe('Mix para vos');
+    expect(rows.map((r) => r.title)).toContain('Porque escuchaste Métricas Frías');
+  });
+
+  it('never claims "porque escuchaste" for library seeds — they were not played', () => {
+    const rows = buildFeedRows(seeds, perSeed, 'library', 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('Basado en tu biblioteca');
+    expect(rows.some((r) => r.title.includes('escuchaste'))).toBe(false);
+  });
+
+  it('drops a seed whose radio came back empty instead of rendering a blank row', () => {
+    const rows = buildFeedRows(seeds, [[song('a1')], []], 'history', 10);
+    expect(rows.map((r) => r.key)).toEqual(['mix', 'seed-s1']);
+  });
+
+  it('returns no rows at all when every radio is empty', () => {
+    expect(buildFeedRows(seeds, [[], []], 'history', 10)).toEqual([]);
+  });
+
+  it('caps the mix', () => {
+    const rows = buildFeedRows(seeds, perSeed, 'history', 2);
+    expect(rows[0].items).toHaveLength(2);
   });
 });

@@ -14,7 +14,7 @@ import {
   requestPlaylist,
   getPlaylistBatch,
 } from '../../api/music';
-import { getItems, getPlayedAudio } from '../../api/jellyfin';
+import { getItems, getPlayedAudio, getRandomLibraryAudio } from '../../api/jellyfin';
 
 vi.mock('../../api/music', () => ({
   searchMusic: vi.fn(),
@@ -26,9 +26,11 @@ vi.mock('../../api/music', () => ({
 }));
 vi.mock('../../api/jellyfin', () => ({
   getItems: vi.fn(),
-  // The personalised feed reads this user's play history; the rows below cover
-  // the cold-start path, where it comes back empty.
+  // The personalised feed reads this user's play history, then falls back to a
+  // sample of their library; the rows below cover the cold start where both
+  // come back empty.
   getPlayedAudio: vi.fn(),
+  getRandomLibraryAudio: vi.fn(),
 }));
 
 const mockedSearchMusic = vi.mocked(searchMusic);
@@ -39,6 +41,7 @@ const mockedRequestPlaylist = vi.mocked(requestPlaylist);
 const mockedGetPlaylistBatch = vi.mocked(getPlaylistBatch);
 const mockedGetItems = vi.mocked(getItems);
 const mockedGetPlayedAudio = vi.mocked(getPlayedAudio);
+const mockedGetRandomLibraryAudio = vi.mocked(getRandomLibraryAudio);
 
 function renderMusic() {
   setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
@@ -63,6 +66,7 @@ describe('MusicScreen (Música — Slice 1)', () => {
   beforeEach(() => {
     mockedGetRecommendations.mockResolvedValue([]);
     mockedGetPlayedAudio.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
+    mockedGetRandomLibraryAudio.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
     mockedRequestPlaylist.mockResolvedValue({ batchId: 'batch-1', count: 0, jobIds: [] } as never);
     mockedGetPlaylistBatch.mockResolvedValue({
       batchId: 'batch-1',
@@ -83,6 +87,7 @@ describe('MusicScreen (Música — Slice 1)', () => {
     mockedGetPlaylistBatch.mockReset();
     mockedGetItems.mockReset();
     mockedGetPlayedAudio.mockReset();
+    mockedGetRandomLibraryAudio.mockReset();
   });
 
   it('shows the idle empty state below the 2-char minimum and issues no search', async () => {
@@ -273,7 +278,7 @@ describe('MusicScreen (Música — Slice 1)', () => {
     });
   });
 
-  it('renders the "Recomendados para ti" row from the recommendations feed', async () => {
+  it('labels the server-wide fallback feed as popular, never as personal', async () => {
     mockedGetItems.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
     mockedSearchMusic.mockResolvedValue([] as never);
     mockedGetRecommendations.mockResolvedValue([
@@ -292,8 +297,11 @@ describe('MusicScreen (Música — Slice 1)', () => {
 
     renderMusic();
 
-    expect(await screen.findByText('Recomendados para ti')).toBeInTheDocument();
+    // No history and no library sample -> the worker's server-wide feed. It is
+    // the same for every user, so it must not be dressed up as "para ti".
     expect(await screen.findByText('Recommended Jam')).toBeInTheDocument();
+    expect(screen.getByText('Populares en YouTube Music')).toBeInTheDocument();
+    expect(screen.queryByText('Recomendados para ti')).not.toBeInTheDocument();
   });
 
   it('Géneros tab renders the genre chips from Jellyfin', async () => {
