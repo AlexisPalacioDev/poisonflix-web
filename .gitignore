@@ -50,3 +50,4 @@ infra/bff/data/
 # Python bytecode from the music worker (regenerated on every run)
 __pycache__/
 *.pyc
+infra/.env.bak-*
