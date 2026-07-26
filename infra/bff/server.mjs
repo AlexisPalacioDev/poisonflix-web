@@ -612,7 +612,7 @@ const server = createServer(async (req, res) => {
     }
 
     return send(res, 404, { error: 'not found' });
-  } catch (err) {
+  } catch {
     return send(res, 500, { error: 'internal' });
   }
 });
