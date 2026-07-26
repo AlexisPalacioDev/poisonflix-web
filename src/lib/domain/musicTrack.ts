@@ -44,6 +44,9 @@ export interface SearchTrack {
   // Kept even for downloaded hits: it's the seed autoplay uses to build the
   // radio that follows this track, and it saves the worker a reverse lookup.
   videoId: string;
+  // The length the search result already reported, so the player has a scale
+  // before the audio element finds one.
+  durationSeconds?: number | null;
 }
 
 /** The /bff/music/stream proxy URL that plays a videoId without downloading it. */
@@ -58,6 +61,7 @@ export function searchResultToTrack(result: MusicSearchResult): SearchTrack {
     title: result.title ?? 'Sin título',
     artist: result.artist ?? null,
     coverUrl: result.thumbnailUrl ?? null,
+    durationSeconds: result.durationSeconds ?? null,
   };
   if (result.downloaded && result.jellyfinItemId) {
     return { itemId: result.jellyfinItemId, videoId: result.videoId, ...base };

@@ -23,6 +23,11 @@ export interface MusicTrack {
   // Autoplay seeds the next radio from it; library tracks leave it undefined and
   // the worker reverses their itemId instead.
   videoId?: string | null;
+  // Known length in seconds, when the source already told us (a search hit
+  // carries it). Seeds the player's duration until the audio element reports
+  // its own — a streamed track can be slow to expose one, and a progress bar
+  // with no scale renders as permanently finished.
+  durationSeconds?: number | null;
   // Instant-play "preview" tracks (a search result not yet downloaded) carry a
   // ready-to-play URL — the /bff/music/stream proxy for their videoId — instead
   // of deriving one from a Jellyfin itemId. When present it wins over itemId.
@@ -219,8 +224,13 @@ export function reducer(state: PlayerState, action: Action): PlayerState {
       return { ...state, position: action.position };
     case 'SEEK':
       return { ...state, position: action.position, seekNonce: state.seekNonce + 1 };
-    case 'SET_DURATION':
+    case 'SET_DURATION': {
+      // The element reports 0 before metadata lands, and Infinity for a stream
+      // whose length it cannot work out. Neither may wipe a length we were
+      // handed up front, or the bar would drop back to "no scale" mid-play.
+      if (!Number.isFinite(action.duration) || action.duration <= 0) return state;
       return { ...state, duration: action.duration };
+    }
     case 'SET_VOLUME':
       return { ...state, volume: Math.min(Math.max(action.volume, 0), 1), muted: false };
     case 'SET_MUTED':

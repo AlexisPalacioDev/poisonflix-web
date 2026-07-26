@@ -173,3 +173,36 @@ describe('shuffleOrder / naturalOrder helpers', () => {
     expect([...order].sort((a, b) => a - b)).toEqual([0, 1, 2]);
   });
 });
+
+describe('SET_DURATION', () => {
+  const loaded = reducer(initial, {
+    type: 'PLAY_QUEUE',
+    tracks: [{ itemId: 'a', title: 'A', artist: null, coverUrl: null, durationSeconds: 216 }],
+    index: 0,
+    order: [0],
+  });
+
+  it('takes a real length from the audio element', () => {
+    const next = reducer(loaded, { type: 'SET_DURATION', duration: 210 });
+    expect(next.duration).toBe(210);
+  });
+
+  it('ignores the 0 the element reports before metadata lands', () => {
+    const seeded = reducer(loaded, { type: 'SET_DURATION', duration: 216 });
+    const next = reducer(seeded, { type: 'SET_DURATION', duration: 0 });
+    // Dropping back to 0 would leave the progress bar with no scale, which
+    // renders as permanently finished.
+    expect(next.duration).toBe(216);
+  });
+
+  it('ignores Infinity from a stream whose length is unknown', () => {
+    const seeded = reducer(loaded, { type: 'SET_DURATION', duration: 216 });
+    const next = reducer(seeded, { type: 'SET_DURATION', duration: Infinity });
+    expect(next.duration).toBe(216);
+  });
+
+  it('ignores NaN', () => {
+    const next = reducer(loaded, { type: 'SET_DURATION', duration: NaN });
+    expect(next.duration).toBe(0);
+  });
+});

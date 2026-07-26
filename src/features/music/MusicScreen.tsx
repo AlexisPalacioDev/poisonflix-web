@@ -117,6 +117,7 @@ export function MusicScreen() {
   const resultToTrack = (result: MusicSearchResult, itemId: string) => ({
     itemId,
     videoId: result.videoId,
+    durationSeconds: result.durationSeconds ?? null,
     title: result.title ?? 'Sin título',
     artist: result.artist ?? null,
     coverUrl: result.thumbnailUrl ?? null,

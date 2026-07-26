@@ -102,6 +102,13 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       if (url && srcUrlRef.current !== url) {
         srcUrlRef.current = url;
         audio.src = url;
+        // Seed the scale from what the source already told us. Without this a
+        // streamed preview shows 0:00 and a full-looking bar until (or unless)
+        // the element works the length out for itself.
+        const known = target?.durationSeconds;
+        if (typeof known === 'number' && Number.isFinite(known) && known > 0) {
+          dispatch({ type: 'SET_DURATION', duration: known });
+        }
       }
       const p = audio.play();
       if (p && typeof p.then === 'function') {
