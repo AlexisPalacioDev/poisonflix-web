@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MusicResultItem, MusicSearchResult } from '../../api/schemas/music';
 import { CoverImage } from './CoverImage';
 import { MusicCollectionCard } from './MusicCollectionCard';
+import { isRowActive } from '../../lib/domain/musicTrack';
+import type { MusicTrack } from './musicPlayerCore';
 
 // "Recomendados para ti" — a Spotify-style horizontal rail of cover cards. Each
 // card is playable (once downloaded) or downloadable in place: the circular
@@ -18,6 +20,16 @@ function PlayGlyph() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
       <path d="M8 5v14l11-7z" fill="currentColor" />
+    </svg>
+  );
+}
+
+// Mirrors the rows and the NowPlayingBar: a card that is sounding must not keep
+// showing a play glyph.
+function PauseGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+      <path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor" />
     </svg>
   );
 }
@@ -44,6 +56,10 @@ export interface RecommendationsRowProps {
   title?: string;
   onPlay: (result: MusicSearchResult, itemId: string) => void;
   onPreview: (result: MusicSearchResult) => void;
+  /** Same as the result rows: the sounding card shows ⏸ and pauses. */
+  current?: MusicTrack | null;
+  isPlaying?: boolean;
+  onToggle?: () => void;
 }
 
 export function RecommendationsRow({
@@ -52,6 +68,9 @@ export function RecommendationsRow({
   title = 'Recomendados para ti',
   onPlay,
   onPreview,
+  current = null,
+  isPlaying = false,
+  onToggle,
 }: RecommendationsRowProps) {
   const railRef = useRef<HTMLDivElement>(null);
   // Which edge arrows to show. Hide the arrow pointing at an already-reached
@@ -136,19 +155,31 @@ export function RecommendationsRow({
               const playItemId =
                 result.downloaded && result.jellyfinItemId ? result.jellyfinItemId : null;
               const title = result.title ?? 'Sin título';
+              const active = isRowActive(current, { videoId: result.videoId, playItemId });
               return (
                 <div key={result.videoId} className="pf-music__rec">
                   <div className="pf-music__rec-art">
                     <CoverImage src={result.thumbnailUrl} loading="lazy" />
                     <button
                       type="button"
-                      className="pf-music__rec-btn"
-                      onClick={() => (playItemId ? onPlay(result, playItemId) : onPreview(result))}
+                      className={`pf-music__rec-btn${active ? ' pf-music__rec-btn--active' : ''}`}
+                      onClick={() =>
+                        active && onToggle
+                          ? onToggle()
+                          : playItemId
+                            ? onPlay(result, playItemId)
+                            : onPreview(result)
+                      }
+                      aria-pressed={active ? isPlaying : undefined}
                       aria-label={
-                        playItemId ? `Reproducir ${title}` : `Reproducir ${title} sin descargar`
+                        active && isPlaying
+                          ? 'Pausar'
+                          : playItemId
+                            ? `Reproducir ${title}`
+                            : `Reproducir ${title} sin descargar`
                       }
                     >
-                      <PlayGlyph />
+                      {active && isPlaying ? <PauseGlyph /> : <PlayGlyph />}
                     </button>
                   </div>
                   <span className="pf-music__rec-title">{title}</span>

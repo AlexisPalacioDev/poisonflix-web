@@ -115,6 +115,7 @@ export function MusicScreen() {
   // the search result's metadata so it can be played/enqueued straight away.
   const resultToTrack = (result: MusicSearchResult, itemId: string) => ({
     itemId,
+    videoId: result.videoId,
     title: result.title ?? 'Sin título',
     artist: result.artist ?? null,
     coverUrl: result.thumbnailUrl ?? null,
@@ -231,6 +232,9 @@ export function MusicScreen() {
                     onPlay={handlePlayResult}
                     onEnqueue={handleEnqueueResult}
                     onPreview={handlePreview}
+                    current={current}
+                    isPlaying={isPlaying}
+                    onToggle={toggle}
                   />
                 ) : (
                   <MusicCollectionCard
@@ -267,6 +271,9 @@ export function MusicScreen() {
                 isLoading={false}
                 onPlay={handlePlayResult}
                 onPreview={handlePreview}
+                current={current}
+                isPlaying={isPlaying}
+                onToggle={toggle}
               />
             ))
           )}

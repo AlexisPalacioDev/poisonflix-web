@@ -69,3 +69,25 @@ export function searchResultToTrack(result: MusicSearchResult): SearchTrack {
     streamUrl: previewStreamUrl(result.videoId, result.source),
   };
 }
+
+/**
+ * Whether a search / recommendation row is the track the player currently has
+ * loaded — the flag that turns its ▶ into ⏸ instead of leaving a stale play
+ * glyph on the song you're listening to.
+ *
+ * Two ways to match, because the same song reaches the player by two routes.
+ * A row played as a preview carries the videoId; the very same song played from
+ * the library (or after downloading) is a Jellyfin item and knows only its
+ * itemId. Matching either means the row lights up however it started playing.
+ */
+export function isRowActive(
+  current: { itemId: string; videoId?: string | null } | null,
+  row: { videoId: string; playItemId?: string | null },
+): boolean {
+  if (!current) return false;
+  if (current.videoId && current.videoId === row.videoId) return true;
+  // A preview track stores its videoId in `itemId`; a library track stores the
+  // Jellyfin id, which the row only knows once it is downloaded.
+  if (current.itemId === row.videoId) return true;
+  return Boolean(row.playItemId && current.itemId === row.playItemId);
+}

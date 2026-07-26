@@ -435,7 +435,10 @@
 }
 
 .pf-music__rec:hover .pf-music__rec-btn,
-.pf-music__rec-btn:focus-visible {
+.pf-music__rec-btn:focus-visible,
+/* The sounding card keeps its control visible: a pause button you can only
+   reach by hovering is a pause button the user cannot find. */
+.pf-music__rec-btn--active {
   opacity: 1;
   transform: translateY(0);
 }

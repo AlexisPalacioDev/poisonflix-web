@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { audioItemToTrack, previewStreamUrl, searchResultToTrack } from './musicTrack';
+import {
+  audioItemToTrack,
+  isRowActive,
+  previewStreamUrl,
+  searchResultToTrack,
+} from './musicTrack';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { MusicSearchResult } from '../../api/schemas/music';
 
@@ -134,5 +139,35 @@ describe('searchResultToTrack', () => {
 
   it('titles an untitled hit rather than rendering an empty row', () => {
     expect(searchResultToTrack(searchResult({ title: null })).title).toBe('Sin título');
+  });
+});
+
+describe('isRowActive', () => {
+  it('is false when nothing is playing', () => {
+    expect(isRowActive(null, { videoId: 'vid-1' })).toBe(false);
+  });
+
+  it('matches a preview, whose videoId is also its itemId', () => {
+    expect(isRowActive({ itemId: 'vid-1', videoId: 'vid-1' }, { videoId: 'vid-1' })).toBe(true);
+  });
+
+  it('matches the same song playing from the library after a download', () => {
+    expect(
+      isRowActive({ itemId: 'aud-9' }, { videoId: 'vid-1', playItemId: 'aud-9' }),
+    ).toBe(true);
+  });
+
+  it('matches by videoId even when the row is not downloaded yet', () => {
+    expect(isRowActive({ itemId: 'aud-9', videoId: 'vid-1' }, { videoId: 'vid-1' })).toBe(true);
+  });
+
+  it('does not light up a different song', () => {
+    expect(
+      isRowActive({ itemId: 'aud-9', videoId: 'vid-2' }, { videoId: 'vid-1', playItemId: 'aud-1' }),
+    ).toBe(false);
+  });
+
+  it('does not match on a null playItemId colliding with nothing', () => {
+    expect(isRowActive({ itemId: 'aud-9' }, { videoId: 'vid-1', playItemId: null })).toBe(false);
   });
 });

@@ -1,4 +1,6 @@
 import type { MusicJobState, MusicSearchResult } from '../../api/schemas/music';
+import { isRowActive } from '../../lib/domain/musicTrack';
+import type { MusicTrack } from './musicPlayerCore';
 import { CoverImage } from './CoverImage';
 import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
@@ -18,6 +20,11 @@ export interface MusicResultRowProps {
   onEnqueue: (result: MusicSearchResult, itemId: string) => void;
   // Instant-play a not-yet-downloaded result by streaming it (no download).
   onPreview: (result: MusicSearchResult) => void;
+  /** The player's current track, so the row that is sounding shows ⏸ and its
+   *  button pauses instead of restarting what is already playing. */
+  current: MusicTrack | null;
+  isPlaying: boolean;
+  onToggle: () => void;
 }
 
 export function MusicResultRow({
@@ -28,6 +35,9 @@ export function MusicResultRow({
   onPlay,
   onEnqueue,
   onPreview,
+  current,
+  isPlaying,
+  onToggle,
 }: MusicResultRowProps) {
   // Playable straight from the library when the worker matched this videoId to a
   // downloaded track, OR when we just finished downloading it this session.
@@ -38,6 +48,7 @@ export function MusicResultRow({
         ? itemId
         : null;
   const title = result.title ?? 'Sin título';
+  const active = isRowActive(current, { videoId: result.videoId, playItemId });
   const fromYouTube = result.source === 'youtube';
 
   return (
@@ -58,7 +69,11 @@ export function MusicResultRow({
         <span className="pf-music__dur">{formatDuration(result.durationSeconds)}</span>
       )}
       <PlayButton
-        onClick={() => (playItemId ? onPlay(result, playItemId) : onPreview(result))}
+        active={active}
+        isPlaying={isPlaying}
+        onClick={() =>
+          active ? onToggle() : playItemId ? onPlay(result, playItemId) : onPreview(result)
+        }
         label={playItemId ? `Reproducir ${title}` : `Reproducir ${title} sin descargar`}
       />
       <MusicRowMenu
