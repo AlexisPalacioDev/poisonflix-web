@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { CoverImage } from './CoverImage';
-import { useOptionalMusicPlayer, type MusicTrack, type RepeatMode } from './MusicPlayerProvider';
+import { useOptionalMusicPlayer, type MusicTrack, type RepeatMode } from './musicPlayerCore';
 import { QueueDrawer } from './QueueDrawer';
 import './NowPlayingBar.css';
 

@@ -328,3 +328,122 @@
   color: var(--pf-text-dim);
   font-size: 0.85rem;
 }
+
+/* Usage monitor -------------------------------------------------------- */
+
+.pf-usage__caption {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-usage__empty {
+  margin: 0.35rem 0;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-usage__spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 48px;
+  margin-bottom: 1rem;
+}
+
+.pf-usage__spark-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 2px 2px 0 0;
+  background: rgba(29, 185, 84, 0.75);
+}
+
+.pf-usage__users {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pf-usage__user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pf-usage__user-main,
+.pf-usage__user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.pf-usage__user-meta {
+  align-items: flex-end;
+  flex: none;
+}
+
+.pf-usage__user-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.pf-usage__user-sub {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-usage__user-total {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1db954;
+}
+
+.pf-usage__subheading {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.pf-usage__live {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pf-usage__live-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.pf-usage__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1db954;
+}
+
+@media (max-width: 480px) {
+  .pf-usage__user {
+    align-items: flex-start;
+  }
+}

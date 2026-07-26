@@ -160,3 +160,67 @@
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
 }
+
+/* Autoplay switch: sits under the heading, above the list. */
+.pf-queue__autoplay {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-queue__autoplay-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.pf-queue__autoplay-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.pf-queue__autoplay-hint {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-queue__switch {
+  flex: none;
+  width: 40px;
+  height: 22px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.pf-queue__switch--on {
+  background: #1db954;
+}
+
+.pf-queue__knob {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.18s ease;
+}
+
+.pf-queue__switch--on .pf-queue__knob {
+  transform: translateX(18px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-queue__switch,
+  .pf-queue__knob {
+    transition: none;
+  }
+}

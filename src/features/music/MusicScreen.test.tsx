@@ -14,7 +14,7 @@ import {
   requestPlaylist,
   getPlaylistBatch,
 } from '../../api/music';
-import { getItems } from '../../api/jellyfin';
+import { getItems, getPlayedAudio } from '../../api/jellyfin';
 
 vi.mock('../../api/music', () => ({
   searchMusic: vi.fn(),
@@ -26,6 +26,9 @@ vi.mock('../../api/music', () => ({
 }));
 vi.mock('../../api/jellyfin', () => ({
   getItems: vi.fn(),
+  // The personalised feed reads this user's play history; the rows below cover
+  // the cold-start path, where it comes back empty.
+  getPlayedAudio: vi.fn(),
 }));
 
 const mockedSearchMusic = vi.mocked(searchMusic);
@@ -35,6 +38,7 @@ const mockedGetRecommendations = vi.mocked(getRecommendations);
 const mockedRequestPlaylist = vi.mocked(requestPlaylist);
 const mockedGetPlaylistBatch = vi.mocked(getPlaylistBatch);
 const mockedGetItems = vi.mocked(getItems);
+const mockedGetPlayedAudio = vi.mocked(getPlayedAudio);
 
 function renderMusic() {
   setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
@@ -58,6 +62,7 @@ describe('MusicScreen (Música — Slice 1)', () => {
   // or leak fixtures into tests that don't exercise them.
   beforeEach(() => {
     mockedGetRecommendations.mockResolvedValue([]);
+    mockedGetPlayedAudio.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
     mockedRequestPlaylist.mockResolvedValue({ batchId: 'batch-1', count: 0, jobIds: [] } as never);
     mockedGetPlaylistBatch.mockResolvedValue({
       batchId: 'batch-1',
@@ -77,6 +82,7 @@ describe('MusicScreen (Música — Slice 1)', () => {
     mockedRequestPlaylist.mockReset();
     mockedGetPlaylistBatch.mockReset();
     mockedGetItems.mockReset();
+    mockedGetPlayedAudio.mockReset();
   });
 
   it('shows the idle empty state below the 2-char minimum and issues no search', async () => {
@@ -131,7 +137,8 @@ describe('MusicScreen (Música — Slice 1)', () => {
     expect(await screen.findByText('Song One')).toBeInTheDocument();
     expect(screen.getByText('The Artist · The Album')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Descargar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Más opciones para Song One' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Descargar' }));
 
     await waitFor(() =>
       expect(mockedRequestDownload).toHaveBeenCalledWith({
@@ -141,6 +148,35 @@ describe('MusicScreen (Música — Slice 1)', () => {
         album: 'The Album',
       }),
     );
+  });
+
+  it('seeds a radio of related tracks when a search hit starts playing', async () => {
+    mockedGetItems.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
+    mockedSearchMusic.mockResolvedValue([
+      {
+        type: 'song',
+        videoId: 'vid-1',
+        title: 'Song One',
+        artist: 'The Artist',
+        artists: ['The Artist'],
+        album: 'The Album',
+        durationSeconds: 200,
+        thumbnailUrl: null,
+        source: 'ytmusic',
+      },
+    ] as never);
+
+    renderMusic();
+    fireEvent.change(screen.getByRole('searchbox', { name: /buscar música/i }), {
+      target: { value: 'song' },
+    });
+    expect(await screen.findByText('Song One')).toBeInTheDocument();
+
+    // The hit isn't downloaded, so its play button is the "sin descargar"
+    // preview — the radio has to fire on that path too, not only on library hits.
+    fireEvent.click(screen.getByRole('button', { name: 'Reproducir Song One sin descargar' }));
+
+    await waitFor(() => expect(mockedGetRecommendations).toHaveBeenCalledWith('vid-1', 15));
   });
 
   it('renders the Jellyfin Audio library under the Canciones tab, newest first', async () => {

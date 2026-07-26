@@ -5,6 +5,12 @@ import {
   JellyfinItemSchema,
   JellyfinPlaybackInfoResponseSchema,
   JellyfinQueryResultSchema,
+  ActivityLogResponseSchema,
+  SessionListSchema,
+  JellyfinUserListSchema,
+  type ActivityLogResponse,
+  type SessionInfo,
+  type JellyfinUser,
   type JellyfinAuthResponse,
   type JellyfinItem,
   type JellyfinPlaybackInfoResponse,
@@ -148,6 +154,91 @@ export async function getResumeItems(
   query.set('EnableImageTypes', params.enableImageTypes ?? 'Primary');
 
   return apiFetch('jellyfin', `/Users/${userId}/Items/Resume?${query.toString()}`, {
+    schema: JellyfinQueryResultSchema,
+  });
+}
+
+/**
+ * Jellyfin's activity log — the per-user playback timeline behind the usage
+ * monitor. Admin-only on the server side; the caller's own token is what
+ * authorises it, so a non-admin session gets a 403 rather than someone else's
+ * data. `minDate` is an ISO timestamp; the log is rolling, so an older window
+ * simply returns whatever survived.
+ */
+export async function getActivityEntries(params: {
+  limit?: number;
+  minDate?: string;
+} = {}): Promise<ActivityLogResponse> {
+  const query = new URLSearchParams({ limit: String(params.limit ?? 200) });
+  if (params.minDate) query.set('minDate', params.minDate);
+  return apiFetch('jellyfin', `/System/ActivityLog/Entries?${query.toString()}`, {
+    schema: ActivityLogResponseSchema,
+  });
+}
+
+/** Who is connected right now, and what they have open. Admin-only. */
+export async function getActiveSessions(): Promise<SessionInfo[]> {
+  return apiFetch('jellyfin', '/Sessions', { schema: SessionListSchema });
+}
+
+/** Id -> name for the users the activity log refers to. Admin-only. */
+export async function getJellyfinUsers(): Promise<JellyfinUser[]> {
+  return apiFetch('jellyfin', '/Users', { schema: JellyfinUserListSchema });
+}
+
+export interface PlayedAudioParams {
+  limit?: number;
+  /** `DatePlayed` = what they just listened to; `PlayCount` = what they keep
+   * coming back to. The feed uses both: recency for "Escuchar de nuevo",
+   * frequency for the mixes. */
+  sortBy?: 'DatePlayed' | 'PlayCount';
+}
+
+/**
+ * This user's played `Audio` items — the raw taste profile behind Música's
+ * personalised feed. It is per user by construction: Jellyfin scopes UserData
+ * (PlayCount / LastPlayedDate / IsFavorite) to the requesting user, so two
+ * accounts on the same server never see each other's history.
+ */
+export async function getPlayedAudio(
+  userId: string,
+  params: PlayedAudioParams = {},
+): Promise<JellyfinQueryResult> {
+  const query = new URLSearchParams({
+    IncludeItemTypes: 'Audio',
+    Recursive: 'true',
+    Filters: 'IsPlayed',
+    SortBy: params.sortBy ?? 'DatePlayed',
+    SortOrder: 'Descending',
+    Limit: String(params.limit ?? 40),
+    Fields: 'UserData',
+    EnableImageTypes: 'Primary',
+  });
+  return apiFetch('jellyfin', `/Users/${userId}/Items?${query.toString()}`, {
+    schema: JellyfinQueryResultSchema,
+  });
+}
+
+/**
+ * The same played-history query, with the item runtime included so listening
+ * time can be estimated. Kept separate from `getPlayedAudio` so the feed (which
+ * needs neither runtime nor genres) doesn't pay for the extra fields.
+ */
+export async function getPlayedAudioWithRuntime(
+  userId: string,
+  limit = 200,
+): Promise<JellyfinQueryResult> {
+  const query = new URLSearchParams({
+    IncludeItemTypes: 'Audio',
+    Recursive: 'true',
+    Filters: 'IsPlayed',
+    SortBy: 'PlayCount',
+    SortOrder: 'Descending',
+    Limit: String(limit),
+    Fields: 'UserData,RunTimeTicks',
+    EnableImageTypes: 'Primary',
+  });
+  return apiFetch('jellyfin', `/Users/${userId}/Items?${query.toString()}`, {
     schema: JellyfinQueryResultSchema,
   });
 }

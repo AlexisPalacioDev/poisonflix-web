@@ -5,7 +5,7 @@ import { useGenreSongs } from '../../hooks/useGenreSongs';
 import { audioItemToTrack } from '../../lib/domain/musicTrack';
 import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
-import { useMusicPlayer } from './MusicPlayerProvider';
+import { useMusicPlayer } from './musicPlayerCore';
 
 // Géneros browse tab: genre chips sourced from Jellyfin's own `MusicGenre`
 // tags. Tapping a chip filters the Audio library to that genre and lists the

@@ -5,12 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 
 type PlayMock = MockInstance<(...args: never[]) => Promise<void>>;
 type VoidMock = MockInstance<(...args: never[]) => void>;
-import {
-  MusicPlayerProvider,
-  useMusicPlayer,
-  type MusicPlayerContextValue,
-  type MusicTrack,
-} from './MusicPlayerProvider';
+import { MusicPlayerProvider } from './MusicPlayerProvider';
+import { useMusicPlayer, type MusicPlayerContextValue, type MusicTrack } from './musicPlayerCore';
 import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 

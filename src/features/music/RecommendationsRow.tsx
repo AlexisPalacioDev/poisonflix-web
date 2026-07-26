@@ -39,6 +39,9 @@ function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
 export interface RecommendationsRowProps {
   items: MusicResultItem[];
   isLoading: boolean;
+  /** Row heading. The personalised feed names each row after the reason it
+   * exists ("Porque escuchaste …"); it defaults to the generic title. */
+  title?: string;
   onPlay: (result: MusicSearchResult, itemId: string) => void;
   onPreview: (result: MusicSearchResult) => void;
 }
@@ -46,6 +49,7 @@ export interface RecommendationsRowProps {
 export function RecommendationsRow({
   items,
   isLoading,
+  title = 'Recomendados para ti',
   onPlay,
   onPreview,
 }: RecommendationsRowProps) {
@@ -89,8 +93,8 @@ export function RecommendationsRow({
   if (!isLoading && items.length === 0) return null;
 
   return (
-    <section className="pf-music__section" aria-label="Recomendados para ti">
-      <h2 className="pf-music__heading">Recomendados para ti</h2>
+    <section className="pf-music__section" aria-label={title}>
+      <h2 className="pf-music__heading">{title}</h2>
       {isLoading ? (
         <div className="pf-music__rail" aria-hidden="true">
           {Array.from({ length: 5 }).map((_, i) => (

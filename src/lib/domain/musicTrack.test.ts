@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { audioItemToTrack } from './musicTrack';
+import { audioItemToTrack, previewStreamUrl, searchResultToTrack } from './musicTrack';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
+import type { MusicSearchResult } from '../../api/schemas/music';
 
 // A minimal `Audio` item; each test overrides only the fields it exercises.
 function audioItem(overrides: Partial<JellyfinItem>): JellyfinItem {
@@ -69,5 +70,69 @@ describe('audioItemToTrack', () => {
   it('yields a null cover (→ ♪ placeholder) when no image exists anywhere', () => {
     const track = audioItemToTrack(audioItem({ ImageTags: {} }), 'tok');
     expect(track.coverUrl).toBeNull();
+  });
+});
+
+// A minimal worker search hit; each test overrides only what it exercises.
+function searchResult(overrides: Partial<MusicSearchResult> = {}): MusicSearchResult {
+  return {
+    videoId: 'vid-1',
+    title: 'Song One',
+    artist: 'The Band',
+    artists: ['The Band'],
+    album: null,
+    durationSeconds: null,
+    thumbnailUrl: 'https://i.ytimg.com/vi/vid-1/hq.jpg',
+    source: 'ytmusic',
+    genre: null,
+    downloaded: false,
+    jellyfinItemId: null,
+    ...overrides,
+  } as MusicSearchResult;
+}
+
+describe('previewStreamUrl', () => {
+  it('proxies the videoId through the BFF stream route', () => {
+    const parsed = new URL(previewStreamUrl('vid-1', 'ytmusic'), 'http://localhost');
+    expect(parsed.pathname).toBe('/bff/music/stream');
+    expect(parsed.searchParams.get('videoId')).toBe('vid-1');
+    expect(parsed.searchParams.get('source')).toBe('ytmusic');
+  });
+
+  it('omits an unknown source so the worker picks one itself', () => {
+    const parsed = new URL(previewStreamUrl('vid-1', null), 'http://localhost');
+    expect(parsed.searchParams.has('source')).toBe(false);
+  });
+});
+
+describe('searchResultToTrack', () => {
+  // The radio mixes downloaded and not-yet-downloaded hits in one queue, so the
+  // two branches below have to produce interchangeable player tracks.
+  it('plays a downloaded hit from its Jellyfin item, with no preview src', () => {
+    const track = searchResultToTrack(
+      searchResult({ downloaded: true, jellyfinItemId: 'aud-9' }),
+    );
+    expect(track.itemId).toBe('aud-9');
+    expect(track.streamUrl).toBeUndefined();
+    expect(track.title).toBe('Song One');
+    expect(track.artist).toBe('The Band');
+  });
+
+  it('streams a not-downloaded hit through the proxy, keyed by videoId', () => {
+    const track = searchResultToTrack(searchResult());
+    expect(track.itemId).toBe('vid-1');
+    expect(new URL(track.streamUrl as string, 'http://localhost').pathname).toBe(
+      '/bff/music/stream',
+    );
+  });
+
+  it('falls back to the preview when the worker flags downloaded without an item id', () => {
+    const track = searchResultToTrack(searchResult({ downloaded: true, jellyfinItemId: null }));
+    expect(track.itemId).toBe('vid-1');
+    expect(track.streamUrl).toBeDefined();
+  });
+
+  it('titles an untitled hit rather than rendering an empty row', () => {
+    expect(searchResultToTrack(searchResult({ title: null })).title).toBe('Sin título');
   });
 });

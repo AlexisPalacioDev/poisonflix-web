@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { UsageSection } from './UsageSection';
 import { Navigate } from 'react-router-dom';
 import { ConfirmOverlay } from '../../components/ConfirmOverlay';
 import { Header } from '../../components/Header';
@@ -194,6 +195,8 @@ export function AdminScreen() {
               );
             })()}
         </section>
+
+        <UsageSection />
 
         <section className="pf-admin__section">
           <h2 className="pf-admin__section-title">Invitaciones</h2>

@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NowPlayingBar } from './NowPlayingBar';
-import { MusicPlayerProvider, useMusicPlayer, type MusicTrack } from './MusicPlayerProvider';
+import { MusicPlayerProvider } from './MusicPlayerProvider';
+import { useMusicPlayer, type MusicTrack } from './musicPlayerCore';
 import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 

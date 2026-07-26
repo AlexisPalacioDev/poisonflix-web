@@ -9,7 +9,7 @@ import { audioItemToTrack } from '../../lib/domain/musicTrack';
 import { CoverImage } from './CoverImage';
 import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
-import { useMusicPlayer } from './MusicPlayerProvider';
+import { useMusicPlayer } from './musicPlayerCore';
 import './music.css';
 
 // Album detail (Slice 3): route /musica/album/:id. Header (cover, album name,

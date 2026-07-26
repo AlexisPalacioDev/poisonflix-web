@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  musicPlayerReducer as reducer,
-  musicPlayerInitialState as initial,
-  naturalOrder,
-  shuffleOrder,
-  type MusicPlayerState,
-  type MusicTrack,
-} from './MusicPlayerProvider';
+import { musicPlayerReducer as reducer, musicPlayerInitialState as initial, naturalOrder, shuffleOrder, type MusicPlayerState, type MusicTrack } from './musicPlayerCore';
 
 // Slice 2 queue-model unit tests. The reducer is pure (randomness enters only
 // via the `order` payload the provider computes), so every transition —

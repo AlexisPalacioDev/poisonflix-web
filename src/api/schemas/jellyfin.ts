@@ -130,3 +130,53 @@ export const JellyfinPlaybackInfoResponseSchema = z.object({
   PlaySessionId: z.string().nullable().optional(),
 });
 export type JellyfinPlaybackInfoResponse = z.infer<typeof JellyfinPlaybackInfoResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Usage monitor: Jellyfin's own activity log + live sessions.
+//
+// The activity log is the only per-user *timeline* the server keeps without a
+// plugin — UserData gives totals (PlayCount) but never says when. It is a
+// rolling log, so it answers "lately", not "ever"; the monitor says so rather
+// than implying a completeness it can't have.
+// ---------------------------------------------------------------------------
+
+export const ActivityEntrySchema = z.object({
+  Id: z.number(),
+  Name: z.string().nullable().optional(),
+  // e.g. "AudioPlaybackStopped", "VideoPlaybackStarted", "SessionStarted".
+  Type: z.string().nullable().optional(),
+  ItemId: z.string().nullable().optional(),
+  Date: z.string(),
+  UserId: z.string().nullable().optional(),
+  Severity: z.string().nullable().optional(),
+});
+export type ActivityEntry = z.infer<typeof ActivityEntrySchema>;
+
+export const ActivityLogResponseSchema = z.object({
+  Items: z.array(ActivityEntrySchema).default([]),
+  TotalRecordCount: z.number().default(0),
+});
+export type ActivityLogResponse = z.infer<typeof ActivityLogResponseSchema>;
+
+export const SessionInfoSchema = z.object({
+  Id: z.string().nullable().optional(),
+  UserId: z.string().nullable().optional(),
+  UserName: z.string().nullable().optional(),
+  Client: z.string().nullable().optional(),
+  DeviceName: z.string().nullable().optional(),
+  NowPlayingItem: z
+    .object({
+      Name: z.string().nullable().optional(),
+      Type: z.string().nullable().optional(),
+      Artists: z.array(z.string()).default([]),
+    })
+    .nullable()
+    .optional(),
+});
+export type SessionInfo = z.infer<typeof SessionInfoSchema>;
+
+export const SessionListSchema = z.array(SessionInfoSchema);
+
+// Reuses the JellyfinUserSchema declared at the top of this file — the usage
+// monitor only needs id -> name to label the activity log.
+export const JellyfinUserListSchema = z.array(JellyfinUserSchema);

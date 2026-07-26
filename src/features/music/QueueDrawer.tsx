@@ -1,4 +1,4 @@
-import { useMusicPlayer } from './MusicPlayerProvider';
+import { useMusicPlayer } from './musicPlayerCore';
 import './QueueDrawer.css';
 
 // Slide-in queue panel toggled from the NowPlayingBar. Lists the queue in
@@ -23,7 +23,8 @@ function RemoveIcon() {
 }
 
 export function QueueDrawer({ onClose }: { onClose: () => void }) {
-  const { queue, currentIndex, jumpTo, removeFromQueue } = useMusicPlayer();
+  const { queue, currentIndex, jumpTo, removeFromQueue, autoplay, setAutoplay } =
+    useMusicPlayer();
 
   return (
     <div className="pf-queue" role="dialog" aria-label="Cola de reproducción">
@@ -31,6 +32,27 @@ export function QueueDrawer({ onClose }: { onClose: () => void }) {
         <h2 className="pf-queue__heading">Cola</h2>
         <button type="button" className="pf-queue__close" onClick={onClose} aria-label="Cerrar cola">
           <CloseIcon />
+        </button>
+      </div>
+
+      {/* Autoplay lives here, the way YouTube Music puts it at the end of the
+          queue: it's a statement about what happens when this list runs out. */}
+      <div className="pf-queue__autoplay">
+        <span className="pf-queue__autoplay-text">
+          <span className="pf-queue__autoplay-label">Autoplay</span>
+          <span className="pf-queue__autoplay-hint">
+            {autoplay ? 'Sigue con temas similares' : 'La música para al final de la cola'}
+          </span>
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoplay}
+          aria-label="Autoplay"
+          className={`pf-queue__switch${autoplay ? ' pf-queue__switch--on' : ''}`}
+          onClick={() => setAutoplay(!autoplay)}
+        >
+          <span className="pf-queue__knob" aria-hidden="true" />
         </button>
       </div>
 

@@ -13,7 +13,7 @@ import { audioItemToTrack } from '../../lib/domain/musicTrack';
 import { CoverImage } from './CoverImage';
 import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
-import { useMusicPlayer } from './MusicPlayerProvider';
+import { useMusicPlayer } from './musicPlayerCore';
 import './music.css';
 
 // User playlist detail (/musica/playlist/:id): a header (name, "N temas",

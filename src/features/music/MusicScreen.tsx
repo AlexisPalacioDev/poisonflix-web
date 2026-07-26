@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Header } from '../../components/Header';
 import { useAuth } from '../../hooks/useAuth';
@@ -7,12 +7,12 @@ import { useMusicLibrary } from '../../hooks/useMusicLibrary';
 import { useMusicAlbums } from '../../hooks/useMusicAlbums';
 import { useMusicArtists } from '../../hooks/useMusicArtists';
 import { useMusicDownload } from '../../hooks/useMusicDownload';
-import { useMusicRecommendations } from '../../hooks/useMusicRecommendations';
+import { usePersonalMusicFeed } from '../../hooks/usePersonalMusicFeed';
 import { resolveCoverUrl } from '../../lib/domain/posterUrl';
-import { audioItemToTrack } from '../../lib/domain/musicTrack';
+import { audioItemToTrack, searchResultToTrack } from '../../lib/domain/musicTrack';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
-import type { MusicSearchResult, MusicSource } from '../../api/schemas/music';
-import { useMusicPlayer } from './MusicPlayerProvider';
+import type { MusicSearchResult, MusicSongResult, MusicSource } from '../../api/schemas/music';
+import { useMusicPlayer } from './musicPlayerCore';
 import { SourceToggle } from './SourceToggle';
 import { CoverImage } from './CoverImage';
 import { MusicResultRow } from './MusicResultRow';
@@ -22,7 +22,10 @@ import { GenresPanel } from './GenresPanel';
 import { PlaylistsPanel } from './PlaylistsPanel';
 import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
+import { MyMusicStats } from './MyMusicStats';
 import { deleteItem } from '../../api/jellyfin';
+import { getRecommendations } from '../../api/music';
+import { RADIO_SIZE } from './useAutoplayRadio';
 import { queryKeys } from '../../hooks/queryKeys';
 import { useQueryClient } from '@tanstack/react-query';
 import './music.css';
@@ -79,7 +82,7 @@ export function MusicScreen() {
 
   const { debouncedQuery, enabled, isLoading, isError, results } = useMusicSearch(query, source);
   const { download, stateByVideoId, itemByVideoId } = useMusicDownload();
-  const { items: recommendations, isLoading: recsLoading } = useMusicRecommendations();
+  const { rows: feedRows, isLoading: feedLoading } = usePersonalMusicFeed();
   const { items: libraryItems, isLoading: libraryLoading } = useMusicLibrary();
   const { items: albums, isLoading: albumsLoading, isError: albumsError } = useMusicAlbums(
     tab === 'albumes',
@@ -87,7 +90,7 @@ export function MusicScreen() {
   const { items: artists, isLoading: artistsLoading, isError: artistsError } = useMusicArtists(
     tab === 'artistas',
   );
-  const { playNow, enqueue, current, isPlaying, toggle } = useMusicPlayer();
+  const { playNow, enqueue, current, isPlaying, toggle, autoplay } = useMusicPlayer();
   const queryClient = useQueryClient();
   const handleDeleteLibrary = async (id: string) => {
     await deleteItem(id);
@@ -117,28 +120,46 @@ export function MusicScreen() {
     coverUrl: result.thumbnailUrl ?? null,
   });
 
-  const handlePlayResult = (result: MusicSearchResult, itemId: string) =>
+  // Radio, the YouTube Music model: playing a search hit doesn't only play that
+  // hit — it fills the queue with related tracks *up front*, the way YT Music
+  // turns any song you tap into a station. The worker's /recommendations?seed=
+  // is ytmusicapi's get_watch_playlist, i.e. that very station. `useAutoplayRadio`
+  // then keeps extending it from any surface once it runs out; this immediate
+  // seed is what makes tapping a search result feel like YT Music rather than
+  // like a one-track queue that only continues after it ends.
+  const radioRunRef = useRef(0);
+
+  const startRadio = async (seedVideoId: string) => {
+    if (!autoplay) return;
+    const run = ++radioRunRef.current;
+    try {
+      const related = await getRecommendations(seedVideoId, RADIO_SIZE);
+      // A newer play happened while this was in flight: dropping the stale radio
+      // keeps it from landing behind whatever the user is listening to now.
+      if (run !== radioRunRef.current) return;
+      const tracks = related
+        .filter((item): item is MusicSongResult => item.type === 'song')
+        .filter((song) => song.videoId !== seedVideoId)
+        .map(searchResultToTrack);
+      if (tracks.length > 0) enqueue(tracks);
+    } catch {
+      // Recommendations are best-effort on the worker too — stay quiet.
+    }
+  };
+
+  const handlePlayResult = (result: MusicSearchResult, itemId: string) => {
     playNow([resultToTrack(result, itemId)]);
+    void startRadio(result.videoId);
+  };
   const handleEnqueueResult = (result: MusicSearchResult, itemId: string) =>
     enqueue(resultToTrack(result, itemId));
 
-  // Instant-play a result that isn't downloaded yet: build a "preview" track
-  // whose src is the worker's /bff/music/stream proxy for its videoId, so it
-  // plays right away without waiting on a download.
+  // Instant-play a result that isn't downloaded yet: `searchResultToTrack` gives
+  // it a "preview" src — the worker's /bff/music/stream proxy for its videoId —
+  // so it plays right away without waiting on a download.
   const handlePreview = (result: MusicSearchResult) => {
-    const params = new URLSearchParams({ videoId: result.videoId });
-    if (result.source === 'ytmusic' || result.source === 'youtube') {
-      params.set('source', result.source);
-    }
-    playNow([
-      {
-        itemId: result.videoId,
-        title: result.title ?? 'Sin título',
-        artist: result.artist ?? null,
-        coverUrl: result.thumbnailUrl ?? null,
-        streamUrl: `/bff/music/stream?${params.toString()}`,
-      },
-    ]);
+    playNow([searchResultToTrack(result)]);
+    void startRadio(result.videoId);
   };
 
   const albumSubtitle = (item: JellyfinItem): string | null =>
@@ -226,13 +247,33 @@ export function MusicScreen() {
           )}
         </section>
       ) : (
-        <RecommendationsRow
-          items={recommendations}
-          isLoading={recsLoading}
-          onPlay={handlePlayResult}
-          onPreview={handlePreview}
-        />
+        <>
+          {/* One rail per reason: the mix first, then a row per artist the
+              history says they're into. While the first load is in flight the
+              generic-looking single rail keeps the layout from jumping. */}
+          {feedRows.length === 0 ? (
+            <RecommendationsRow
+              items={[]}
+              isLoading={feedLoading}
+              onPlay={handlePlayResult}
+              onPreview={handlePreview}
+            />
+          ) : (
+            feedRows.map((row) => (
+              <RecommendationsRow
+                key={row.key}
+                title={row.title}
+                items={row.items}
+                isLoading={false}
+                onPlay={handlePlayResult}
+                onPreview={handlePreview}
+              />
+            ))
+          )}
+        </>
       )}
+
+      {!searching && <MyMusicStats />}
 
       <section className="pf-music__section" aria-label="Tu música">
         <div className="pf-music__tabs" role="tablist" aria-label="Explorar tu música">

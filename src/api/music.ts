@@ -48,6 +48,24 @@ export async function getRecommendations(
   return results;
 }
 
+// What a radio is seeded from. A search hit knows its `videoId`; a library /
+// album / playlist track only knows its Jellyfin `itemId`, which the worker
+// reverses back to the videoId the file was downloaded from.
+export type RadioSeed = { videoId: string } | { itemId: string };
+
+// The endless-radio feed behind autoplay: related tracks for whatever is
+// playing, so a queue never just stops. Same endpoint (and same `song` shape)
+// as the recommendations rail — only the seed differs.
+export async function getRadio(seed: RadioSeed, limit = 15): Promise<MusicResultItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if ('videoId' in seed) params.set('seed', seed.videoId);
+  else params.set('itemId', seed.itemId);
+  const { results } = await apiFetch('bff', `/music/recommendations?${params.toString()}`, {
+    schema: MusicRecommendationsResponseSchema,
+  });
+  return results;
+}
+
 // Kicks off a whole-collection download. The worker accepts a YT Music playlist
 // id, an album `browseId`, or a raw playlist URL — reached from the search /
 // recommendation collection cards. Returns a batch handle (202 Accepted) whose

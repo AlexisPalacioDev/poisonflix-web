@@ -63,6 +63,17 @@ export const queryKeys = {
   // batchId), the Géneros chip list (keyed by user), and the songs under one
   // selected genre (keyed by user + genre).
   musicRecommendations: (seed: string) => ['music', 'recommendations', seed] as const,
+  // Personalised feed: this user's played-audio history, and the radio built
+  // from one of its tracks. Both keyed by user so switching accounts can never
+  // serve someone else's taste from cache.
+  musicHistory: (userId: string, sortBy: string) =>
+    ['music', 'history', userId, sortBy] as const,
+  musicSeedRadio: (userId: string, seedItemId: string) =>
+    ['music', 'seedRadio', userId, seedItemId] as const,
+  // Usage monitor. `serverUsage` is admin-wide; `myMusicStats` is per user.
+  serverUsage: (days: number) => ['usage', 'server', days] as const,
+  activeSessions: () => ['usage', 'sessions'] as const,
+  myMusicStats: (userId: string) => ['usage', 'me', userId] as const,
   musicPlaylistBatch: (batchId: string) => ['music', 'playlist', batchId] as const,
   musicGenres: (userId: string) => ['music', 'genres', userId] as const,
   musicGenreSongs: (userId: string, genre: string) =>

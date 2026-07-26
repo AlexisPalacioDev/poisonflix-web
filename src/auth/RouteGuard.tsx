@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuthContext } from './AuthContext';
+import { useAuthContext } from './useAuthContext';
 
 // Redirects unauthenticated users to /onboarding (design.md §5/§7).
 export function RouteGuard({ children }: { children: ReactNode }) {

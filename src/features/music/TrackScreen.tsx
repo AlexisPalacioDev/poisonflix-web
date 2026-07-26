@@ -11,7 +11,7 @@ import { CoverImage } from './CoverImage';
 import { PlayButton } from './PlayButton';
 import { AddToPlaylistButton } from './AddToPlaylistButton';
 import { MusicRowMenu } from './MusicRowMenu';
-import { useMusicPlayer } from './MusicPlayerProvider';
+import { useMusicPlayer } from './musicPlayerCore';
 import './music.css';
 
 // Track detail (/musica/track/:id): the Spotify-style page a song row opens to.

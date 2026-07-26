@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuthContext } from '../../auth/AuthContext';
+import { useAuthContext } from '../../auth/useAuthContext';
 import { mapOnboardingError } from './errorMessage';
 import { PoisonMark } from './PoisonMark';
 import './onboarding.css';

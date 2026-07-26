@@ -2,12 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  MusicPlayerProvider,
-  useMusicPlayer,
-  type MusicPlayerContextValue,
-  type MusicTrack,
-} from './MusicPlayerProvider';
+import { MusicPlayerProvider } from './MusicPlayerProvider';
+import { useMusicPlayer, type MusicPlayerContextValue, type MusicTrack } from './musicPlayerCore';
 import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 
