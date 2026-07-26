@@ -125,12 +125,50 @@ export async function deleteUser(id) {
   if (!res.ok && res.status !== 204) throw new Error(`jellyfin delete user -> ${res.status}`);
 }
 
-/** Import a freshly created Jellyfin user into Jellyseerr so login works. */
-export async function importToJellyseerr(jellyfinUserId) {
-  const res = await fetch(`${JELLYSEERR_URL}/api/v1/user/import-from-jellyfin`, {
+async function jellyseerr(path, init = {}) {
+  return fetch(`${JELLYSEERR_URL}${path}`, {
+    ...init,
+    headers: {
+      'X-Api-Key': JELLYSEERR_API_KEY,
+      accept: 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+}
+
+/**
+ * Give a just-imported Jellyseerr user a unique, deterministic email.
+ *
+ * Jellyfin local accounts have no email, so Jellyseerr imports them with an
+ * empty-string email. Its `user.email` column is UNIQUE, so a SECOND empty-email
+ * import fails with `SQLITE_CONSTRAINT: user.email` and blocks ALL new signups.
+ * Assigning `<username>@poisonflix.local` keeps every account's email distinct.
+ *
+ * Best-effort: the import already succeeded, so a failure here must not roll the
+ * account back. Looks the user up by its Jellyfin id (stable) to get its
+ * Jellyseerr id, then writes the email via the user-settings endpoint.
+ */
+async function assignUniqueEmail(jellyfinUserId, username) {
+  const listed = await jellyseerr('/api/v1/user?take=200');
+  if (!listed.ok) return;
+  const { results = [] } = await listed.json();
+  const created = results.find((u) => u.jellyfinUserId === jellyfinUserId);
+  if (!created) return;
+  await jellyseerr(`/api/v1/user/${created.id}/settings/main`, {
     method: 'POST',
-    headers: { 'X-Api-Key': JELLYSEERR_API_KEY, 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: `${username}@poisonflix.local` }),
+  });
+}
+
+/** Import a freshly created Jellyfin user into Jellyseerr so login works. */
+export async function importToJellyseerr(jellyfinUserId, username) {
+  const res = await jellyseerr('/api/v1/user/import-from-jellyfin', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jellyfinUserIds: [jellyfinUserId] }),
   });
   if (!res.ok) throw new Error(`jellyseerr import -> ${res.status}`);
+  // Prevent the empty-email UNIQUE collision that would break the next signup.
+  await assignUniqueEmail(jellyfinUserId, username);
 }

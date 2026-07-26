@@ -1,4 +1,5 @@
 import { apiFetch } from '../lib/http/client';
+import { getSession } from '../lib/session/store';
 import {
   JellyfinAuthResponseSchema,
   JellyfinItemSchema,
@@ -56,9 +57,14 @@ export interface GetItemsParams {
   includeItemTypes?: string;
   recursive?: boolean;
   limit?: number;
+  startIndex?: number;
   searchTerm?: string;
   genres?: string;
   parentId?: string;
+  // Música browse (Slice 3): filter albums/tracks by their album artist. Maps
+  // to Jellyfin's `AlbumArtistIds`, the reliable way to list a `MusicArtist`'s
+  // albums (artists aren't folder parents, so `ParentId` doesn't cover them).
+  albumArtistIds?: string;
   fields?: string;
 }
 
@@ -69,9 +75,11 @@ export async function getItems(userId: string, params: GetItemsParams = {}): Pro
   if (params.includeItemTypes) query.set('IncludeItemTypes', params.includeItemTypes);
   query.set('Recursive', String(params.recursive ?? true));
   if (params.limit != null) query.set('Limit', String(params.limit));
+  if (params.startIndex != null) query.set('StartIndex', String(params.startIndex));
   if (params.searchTerm) query.set('SearchTerm', params.searchTerm);
   if (params.genres) query.set('Genres', params.genres);
   if (params.parentId) query.set('ParentId', params.parentId);
+  if (params.albumArtistIds) query.set('AlbumArtistIds', params.albumArtistIds);
   query.set('Fields', params.fields ?? 'ProviderIds,MediaStreams');
 
   return apiFetch('jellyfin', `/Users/${userId}/Items?${query.toString()}`, {
@@ -97,6 +105,19 @@ export async function getUserViews(userId: string): Promise<JellyfinQueryResult>
  */
 export async function deleteItem(itemId: string): Promise<void> {
   await apiFetch('jellyfin', `/Items/${itemId}`, { method: 'DELETE' });
+}
+
+/**
+ * Add or remove a library item from the user's Jellyfin favorites
+ * (`POST|DELETE /Users/{userId}/FavoriteItems/{itemId}`). UserId comes from the
+ * stored session, like the playlist writes, so callers pass only the item.
+ */
+export async function setFavorite(itemId: string, favorite: boolean): Promise<void> {
+  const userId = getSession()?.jellyfinUserId;
+  if (!userId) throw new Error('No Jellyfin session — cannot set favorite');
+  await apiFetch('jellyfin', `/Users/${userId}/FavoriteItems/${itemId}`, {
+    method: favorite ? 'POST' : 'DELETE',
+  });
 }
 
 export interface GetResumeItemsParams {

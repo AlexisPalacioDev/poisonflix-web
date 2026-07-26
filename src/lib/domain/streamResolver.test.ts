@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JellyfinMediaSource, JellyfinPlaybackInfoResponse } from '../../api/schemas/jellyfin';
 import {
+  buildAudioStreamUrl,
   buildDirectPlayUrl,
   resolvePlayback,
   resolveStreamSource,
@@ -160,5 +161,21 @@ describe('resolvePlayback', () => {
     expect(() => resolvePlayback('item-1', playbackInfo, 'TOKEN', '/jellyfin')).toThrow(
       'Jellyfin returned no MediaSources for item item-1',
     );
+  });
+});
+
+describe('buildAudioStreamUrl', () => {
+  it('builds the static DirectPlay Audio/{id}/stream.m4a URL with the token as api_key', () => {
+    const url = buildAudioStreamUrl('audio-1', 'user-1', 'TOKEN', '/jellyfin');
+    const parsed = new URL(url, 'http://app');
+
+    expect(parsed.pathname).toBe('/jellyfin/Audio/audio-1/stream.m4a');
+    expect(parsed.searchParams.get('static')).toBe('true');
+    expect(parsed.searchParams.get('api_key')).toBe('TOKEN');
+  });
+
+  it('normalizes a base without a trailing slash', () => {
+    const url = buildAudioStreamUrl('audio-2', 'u', 't', '/jellyfin');
+    expect(url.startsWith('/jellyfin/Audio/audio-2/stream.m4a?')).toBe(true);
   });
 });

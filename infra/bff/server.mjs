@@ -35,6 +35,10 @@ const {
   RADARR_API_KEY = '',
   SONARR_API_KEY = '',
   PROWLARR_API_KEY = '',
+  // Internal audio downloader for the "Música" feature (poisonflix-music-worker).
+  // Reachable only from the BFF; every call below is gated on an authenticated
+  // Jellyseerr session, same as the rest of the BFF-fronted backends.
+  MUSIC_WORKER_URL = 'http://music-worker:8790',
 } = process.env;
 
 // Jellyseerr permission bitfield: ADMIN grants everything and is bit 2.
@@ -381,7 +385,7 @@ async function handleRegister(req, res) {
   }
 
   try {
-    await importToJellyseerr(userId);
+    await importToJellyseerr(userId, username);
   } catch {
     await deleteUser(userId).catch(() => {});
     return send(res, 502, { error: 'jellyseerr_import_failed' });
@@ -474,6 +478,85 @@ async function handleAdminStorage(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// /bff/music/* — thin proxy to the internal music worker. Any authenticated
+// user may search/download; the worker itself never faces the public and holds
+// its own Jellyfin key. The worker returns clean JSON envelopes we pass through
+// verbatim; an unreachable worker surfaces as a 502 the SPA can degrade on.
+// ---------------------------------------------------------------------------
+
+async function handleMusic(req, res, subPath, search) {
+  const method = req.method;
+  // Allowlist: exactly the routes the SPA needs, nothing else reaches the
+  // worker. `subPath` is the part after `/bff/music`.
+  const isDownloadsCollection = subPath === '/downloads';
+  const isDownloadJob = /^\/downloads\/[^/]+$/.test(subPath);
+  const isSearch = subPath === '/search';
+  const isRecommendations = subPath === '/recommendations';
+  const isPlaylistsCollection = subPath === '/playlists';
+  const isPlaylistBatch = /^\/playlists\/[^/]+$/.test(subPath);
+  // Instant-play: the worker streams the audio for a videoId without downloading.
+  const isStream = subPath === '/stream';
+
+  let ok = false;
+  if (
+    method === 'GET' &&
+    (isSearch ||
+      isRecommendations ||
+      isDownloadsCollection ||
+      isDownloadJob ||
+      isPlaylistBatch ||
+      isStream)
+  ) {
+    ok = true;
+  }
+  if (method === 'POST' && (isDownloadsCollection || isPlaylistsCollection)) ok = true;
+  if (!ok) return send(res, 404, { error: 'not found' });
+
+  const body = method === 'POST' ? await readBody(req) : undefined;
+  const headers = {};
+  const contentType = req.headers['content-type'];
+  if (contentType) headers['content-type'] = contentType;
+  // Forward Range so audio seeking works end to end (browser -> BFF -> worker).
+  if (req.headers['range']) headers['range'] = req.headers['range'];
+
+  let upstream;
+  try {
+    upstream = await fetch(`${MUSIC_WORKER_URL}${subPath}${search || ''}`, {
+      method,
+      headers,
+      body,
+    });
+  } catch {
+    return send(res, 502, { error: 'music_worker_unreachable' });
+  }
+
+  // Audio stream: pipe the body straight through (never buffer a whole track),
+  // preserving status (200/206) and the Range/length headers for seeking.
+  if (isStream) {
+    const passthrough = {};
+    for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range']) {
+      const value = upstream.headers.get(h);
+      if (value) passthrough[h] = value;
+    }
+    passthrough['cache-control'] = 'no-store';
+    res.writeHead(upstream.status, passthrough);
+    if (upstream.body) {
+      const { Readable } = await import('node:stream');
+      Readable.fromWeb(upstream.body).pipe(res);
+    } else {
+      res.end();
+    }
+    return;
+  }
+
+  const buf = Buffer.from(await upstream.arrayBuffer());
+  res.writeHead(upstream.status, {
+    'content-type': upstream.headers.get('content-type') || 'application/json',
+  });
+  res.end(buf);
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -514,6 +597,11 @@ const server = createServer(async (req, res) => {
 
     if (path === '/bff/cancel' && req.method === 'POST') {
       return await handleCancel(req, res, user);
+    }
+
+    // Música: any authenticated user may search + enqueue downloads.
+    if (path.startsWith('/bff/music/')) {
+      return await handleMusic(req, res, path.slice('/bff/music'.length), url.search);
     }
 
     const seg = path.split('/'); // ['', 'radarr', 'api', ...]

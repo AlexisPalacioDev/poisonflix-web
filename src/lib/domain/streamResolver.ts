@@ -87,6 +87,32 @@ export function buildDirectPlayUrl(
 }
 
 /**
+ * Builds an audio stream URL for the Música feature's `<audio>` element.
+ * Mirrors the DirectPlay video builder exactly: `Audio/{itemId}/stream.m4a`
+ * with `static=true` and the session token as the `api_key` query param
+ * (a bare `<audio>` tag can't send an `X-Emby-Token` header). Every track we
+ * download is m4a/AAC, which DirectPlays natively in every browser we target,
+ * so no server transcode is needed.
+ *
+ * NOTE: the `Audio/{id}/universal` endpoint returns HTTP 400 for this
+ * client's parameters (verified against the live Jellyfin), so we use the
+ * static DirectPlay stream — the same path video uses and the one that
+ * actually serves bytes. `userId` is kept for signature stability but is not
+ * needed by the static stream.
+ */
+export function buildAudioStreamUrl(
+  itemId: string,
+  _userId: string,
+  token: string,
+  base: string = DEFAULT_JELLYFIN_BASE,
+): string {
+  const query = new URLSearchParams();
+  query.set('static', 'true');
+  query.set('api_key', token);
+  return `${normalizeBase(base)}Audio/${itemId}/stream.m4a?${query.toString()}`;
+}
+
+/**
  * The single decision point (design.md §3.3, §10): no `TranscodingUrl` ->
  * DirectPlay via `api_key`; `TranscodingUrl` present -> `Transcoded`, which
  * callers MUST render as an explicit "not supported in this version" state

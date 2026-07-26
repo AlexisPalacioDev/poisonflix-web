@@ -38,4 +38,37 @@ export const queryKeys = {
   invites: () => ['bff', 'invites'] as const,
   adminUsers: () => ['bff', 'adminUsers'] as const,
   adminStorage: () => ['bff', 'adminStorage'] as const,
+  // Música: YouTube Music search (via the worker), the user's Jellyfin Audio
+  // library, and per-download job polling. The search key is scoped by `source`
+  // too so toggling YT Music / YouTube caches each surface independently.
+  musicSearch: (debouncedQuery: string, source: string) =>
+    ['music', 'search', debouncedQuery, source] as const,
+  musicLibrary: (userId: string) => ['music', 'library', userId] as const,
+  musicJob: (jobId: string) => ['music', 'job', jobId] as const,
+  // Música browse (Slice 3): album/artist grids (keyed by user) and the two
+  // detail views — an album's track list and an artist's albums (keyed by id).
+  musicAlbums: (userId: string) => ['music', 'albums', userId] as const,
+  musicArtists: (userId: string) => ['music', 'artists', userId] as const,
+  musicAlbum: (albumId: string) => ['music', 'album', albumId] as const,
+  musicArtist: (artistId: string) => ['music', 'artist', artistId] as const,
+  // Track detail "Más de {artista}" section: other songs by the same artist
+  // (keyed by artist id). Its own key so it never collides with `musicArtist`,
+  // which caches the artist's *albums* under a different shape.
+  musicArtistSongs: (artistId: string) => ['music', 'artistSongs', artistId] as const,
+  // Música track detail (/musica/track/:id): a single `Audio` item fetched with
+  // its linkable ids (ArtistItems/AlbumId) + Genres for the detail screen.
+  musicTrack: (trackId: string) => ['music', 'track', trackId] as const,
+  // Música (Spotify redesign): the "Recomendados para ti" feed (keyed by seed,
+  // '' for the general mix), a playlist-download batch's progress (keyed by
+  // batchId), the Géneros chip list (keyed by user), and the songs under one
+  // selected genre (keyed by user + genre).
+  musicRecommendations: (seed: string) => ['music', 'recommendations', seed] as const,
+  musicPlaylistBatch: (batchId: string) => ['music', 'playlist', batchId] as const,
+  musicGenres: (userId: string) => ['music', 'genres', userId] as const,
+  musicGenreSongs: (userId: string, genre: string) =>
+    ['music', 'genre', userId, genre] as const,
+  // User-created Jellyfin Playlists (Playlists feature): the user's list of
+  // playlists (keyed by user) and one playlist's tracks (keyed by playlist id).
+  userPlaylists: (userId: string) => ['jellyfin', 'userPlaylists', userId] as const,
+  userPlaylist: (playlistId: string) => ['jellyfin', 'userPlaylist', playlistId] as const,
 };

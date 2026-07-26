@@ -50,6 +50,19 @@
 	handle {
 		root * /srv
 		try_files {path} /index.html
+
+		# Content-addressed build assets (hashed filenames) never change -> cache
+		# them forever so repeat loads are instant.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+
+		# The HTML shell (served for every SPA route) and the service worker MUST
+		# always revalidate, or iOS Safari's heuristic HTTP cache serves a stale
+		# index.html pointing at an old JS bundle after a deploy -> users run old
+		# code. `no-cache` = revalidate every time (ETag makes this cheap).
+		@dynamic not path /assets/*
+		header @dynamic Cache-Control "no-cache"
+
 		file_server
 	}
 }

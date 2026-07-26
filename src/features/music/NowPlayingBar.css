@@ -1,0 +1,498 @@
+.pf-nowplaying {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* Pin to the very bottom edge of the viewport. The safe-area inset is applied
+     as bottom PADDING (below) rather than a `bottom` offset, so the bar's
+     background reaches the screen edge while its controls sit above the iOS
+     home-indicator / gesture bar. */
+  bottom: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  /* Lift the controls above the iOS home indicator / gesture area. env() is 0
+     on platforms without a safe-area inset (desktop, Android), so this is a
+     no-op there. */
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  background: rgba(12, 12, 16, 0.92);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* --- Now-playing (left): art + title/artist --- */
+.pf-nowplaying__now {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pf-nowplaying__art {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pf-nowplaying__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pf-nowplaying__art-placeholder {
+  font-size: 1.25rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pf-nowplaying__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.pf-nowplaying__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-nowplaying__artist {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Center: transport controls + seek bar --- */
+.pf-nowplaying__center {
+  flex: 2 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 620px;
+}
+
+.pf-nowplaying__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pf-nowplaying__btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  transition: color 0.1s ease, background 0.1s ease;
+}
+
+.pf-nowplaying__btn:hover,
+.pf-nowplaying__btn:focus-visible {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pf-nowplaying__btn--on {
+  color: #1ed760;
+}
+
+/* Shuffle/repeat active cue: a small dot below the glyph, the established
+   media-player convention that the mode is engaged. Color alone is easy to
+   miss on a busy bar; the dot makes "on" unmistakable. Opt-in via --dot so
+   only shuffle and repeat carry it, and it scales cleanly between the 38px
+   desktop button and the 52px full-screen one. */
+.pf-nowplaying__btn--dot.pf-nowplaying__btn--on::after {
+  content: '';
+  position: absolute;
+  bottom: 18%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+
+.pf-nowplaying__toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #111;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.pf-nowplaying__toggle:hover,
+.pf-nowplaying__toggle:focus-visible {
+  transform: scale(1.05);
+}
+
+/* --- Seek bar --- */
+.pf-nowplaying__seek {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.pf-nowplaying__time {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.pf-nowplaying__seekbar {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* --- Right: volume + queue --- */
+.pf-nowplaying__extra {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.pf-nowplaying__volume {
+  width: 90px;
+  max-width: 30vw;
+}
+
+/* Range inputs: give the native control a consistent, focus-visible look. */
+.pf-nowplaying__seekbar,
+.pf-nowplaying__volume {
+  height: 4px;
+  accent-color: #1ed760;
+  cursor: pointer;
+}
+
+.pf-nowplaying__seekbar:focus-visible,
+.pf-nowplaying__volume:focus-visible {
+  outline: 2px solid #1ed760;
+  outline-offset: 4px;
+}
+
+/* =========================================================================
+   Mobile compact bar (< 900px): cover + meta (expands) | play/pause + next,
+   with a thin green progress line hugging the top edge.
+   ========================================================================= */
+.pf-nowplaying--compact {
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  /* The shorthand above resets padding-bottom, so re-apply the safe-area lift
+     for the compact (mobile) bar too. */
+  padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
+}
+
+.pf-nowplaying__progressline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.pf-nowplaying__progressline > span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: #1ed760;
+  transition: transform 0.25s linear;
+}
+
+/* The whole art+meta cluster is one big tap target that opens the full player. */
+.pf-nowplaying__expand {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.15rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 8px;
+}
+
+.pf-nowplaying__expand:focus-visible {
+  outline: 2px solid #1ed760;
+  outline-offset: 2px;
+}
+
+.pf-nowplaying__art--compact {
+  width: 44px;
+  height: 44px;
+}
+
+.pf-nowplaying__compact-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pf-nowplaying__toggle--compact {
+  width: 42px;
+  height: 42px;
+}
+
+/* =========================================================================
+   Mobile full-screen "Reproduciendo" player: slide-up overlay holding every
+   control (seek, transport, volume, queue).
+   ========================================================================= */
+.pf-fullplayer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1rem 1.5rem calc(1.75rem + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, #1f1a26 0%, #0c0c10 62%);
+  animation: pf-fullplayer-slide 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow-y: auto;
+}
+
+@keyframes pf-fullplayer-slide {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-fullplayer {
+    animation: none;
+  }
+}
+
+.pf-fullplayer__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pf-fullplayer__chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+
+.pf-fullplayer__chevron:hover,
+.pf-fullplayer__chevron:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.pf-fullplayer__eyebrow {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Large centered cover art. */
+.pf-fullplayer__art {
+  flex: 0 1 auto;
+  align-self: center;
+  width: min(72vw, 340px);
+  aspect-ratio: 1 / 1;
+  margin: 0.5rem 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.pf-fullplayer__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pf-fullplayer__art .pf-nowplaying__art-placeholder {
+  font-size: 4rem;
+}
+
+.pf-fullplayer__meta {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.pf-fullplayer__title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-fullplayer__artist {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.65);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-fullplayer__artist--link {
+  color: rgba(255, 255, 255, 0.75);
+  text-decoration: none;
+  width: fit-content;
+  border-radius: 4px;
+}
+
+.pf-fullplayer__artist--link:hover,
+.pf-fullplayer__artist--link:focus-visible {
+  color: #1ed760;
+  text-decoration: underline;
+  outline: none;
+}
+
+.pf-fullplayer__seek {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pf-fullplayer__seek .pf-nowplaying__seekbar {
+  width: 100%;
+  height: 5px;
+}
+
+.pf-fullplayer__times {
+  display: flex;
+  justify-content: space-between;
+}
+
+.pf-fullplayer__times .pf-nowplaying__time {
+  min-width: 0;
+  text-align: unset;
+}
+
+.pf-fullplayer__transport {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 5 controls (shuffle · prev · play · next · repeat) must fit small phones. */
+  gap: clamp(0.5rem, 4vw, 1.25rem);
+}
+
+.pf-fullplayer__transport .pf-nowplaying__btn {
+  width: 52px;
+  height: 52px;
+}
+
+.pf-fullplayer__toggle {
+  width: 68px;
+  height: 68px;
+}
+
+.pf-fullplayer__bottom {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pf-fullplayer__volume {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pf-fullplayer__volume-range {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: 180px;
+  height: 5px;
+}
+
+.pf-fullplayer__queue-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.pf-fullplayer__queue-btn:hover,
+.pf-fullplayer__queue-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.18);
+}

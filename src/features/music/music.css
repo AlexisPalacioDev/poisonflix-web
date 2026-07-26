@@ -1,0 +1,1083 @@
+/* Música — Spotify-inspired surface. Dark, near-black canvas with a subtle
+   green-tinted top wash, a Spotify-green accent for primary/active states,
+   large rounded artwork, and card hover lifts. Every interactive control is a
+   native <button>/<a>/<input> (D-pad reachable). Flex `gap` is used freely —
+   postcss-flex-gap-fallback.mjs emits margin fallbacks for the old LG webOS
+   (Chromium 53) browser, so no manual margins are needed here. */
+
+.pf-music {
+  /* Spotify-green accent, scoped to the Música feature so the app's brand gold
+     palette (theme.css) is left untouched elsewhere. */
+  --pf-green: #1db954;
+  --pf-green-bright: #1ed760;
+  --pf-green-press: #1aa34a;
+
+  min-height: 100vh;
+  /* Clear the fixed now-playing bar, plus the iOS safe-area inset the bar itself
+     reserves — so the last row is never hidden behind the bar or the home
+     indicator. env() is 0 where there's no inset. */
+  padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(120% 60% at 50% 0%, rgba(29, 185, 84, 0.14) 0%, rgba(29, 185, 84, 0) 60%),
+    var(--pf-bg);
+}
+
+/* --- Landing hero: search + source toggle ------------------------------- */
+
+.pf-music__hero {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: calc(var(--pf-header-h, 68px) + 1.5rem) 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pf-music__query {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pf-music__query-icon {
+  position: absolute;
+  left: 0.95rem;
+  display: flex;
+  color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+}
+
+.pf-music__input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  font-size: 1rem;
+  border-radius: var(--pf-radius-pill, 999px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--pf-surface-2, #191d26);
+  color: #fff;
+  transition: border-color var(--pf-dur-fast, 0.16s) ease, box-shadow var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__input--search {
+  padding-left: 2.85rem;
+}
+
+.pf-music__input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.pf-music__input:focus {
+  outline: none;
+  border-color: var(--pf-green);
+  box-shadow: 0 0 0 3px rgba(29, 185, 84, 0.28);
+}
+
+/* --- Source toggle (segmented pill) ------------------------------------- */
+
+.pf-music__source {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: var(--pf-radius-pill, 999px);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-music__source-btn {
+  padding: 0.4rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--pf-radius-pill, 999px);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast, 0.16s) ease, background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__source-btn:hover {
+  color: #fff;
+}
+
+.pf-music__source-btn--active {
+  color: #04160b;
+  background: var(--pf-green-bright);
+}
+
+/* --- Sections + headings ------------------------------------------------ */
+
+.pf-music__section {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 1rem 1rem 1.25rem;
+}
+
+.pf-music__heading {
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.9rem;
+  color: #fff;
+}
+
+.pf-music__heading--sub {
+  font-size: 1.05rem;
+  margin: 1.1rem 0 0.6rem;
+}
+
+.pf-music__empty {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.9rem;
+}
+
+/* --- Track / result rows ------------------------------------------------ */
+
+.pf-music__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.pf-music__row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--pf-radius-sm, 8px);
+  transition: background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__row:hover,
+.pf-music__row--active {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.pf-music__art {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--pf-radius-sm, 8px);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.pf-music__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pf-music__info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pf-music__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-music__badge {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pf-music__sub {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-music__dur {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-music__action {
+  flex: 0 0 auto;
+  padding: 0.42rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: var(--pf-radius-pill, 999px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease, transform var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.pf-music__action--primary {
+  border-color: transparent;
+  background: var(--pf-green);
+  color: #04160b;
+}
+
+.pf-music__action--primary:hover:not(:disabled) {
+  background: var(--pf-green-bright);
+  transform: scale(1.04);
+}
+
+.pf-music__action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Destructive pill — "Eliminar lista y temas". Red outline at rest so it reads
+   as dangerous next to the neutral "Eliminar lista", filling in on intent. */
+.pf-music__action--danger {
+  border-color: rgba(255, 99, 99, 0.5);
+  color: #ff8a8a;
+}
+
+.pf-music__action--danger:hover:not(:disabled) {
+  background: rgba(255, 70, 70, 0.16);
+  border-color: rgba(255, 99, 99, 0.85);
+}
+
+/* Per-row "delete from library" trash: quiet ghost by default, red on intent —
+   sits after "Quitar" without competing with it for attention at rest. */
+.pf-music__row-del {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease, color var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__row-del:hover:not(:disabled),
+.pf-music__row-del:focus-visible {
+  background: rgba(255, 70, 70, 0.16);
+  color: #ff8a8a;
+}
+
+.pf-music__row-del:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- Recomendados para ti (horizontal rail) ----------------------------- */
+
+.pf-music__rail {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding: 0.25rem 0 0.5rem;
+  scroll-snap-type: x proximity;
+  scroll-behavior: smooth;
+}
+
+/* Positioning context for the overlaid prev/next scroll arrows (mirrors the
+   main carousel in components/Row.css). :hover on it reveals the arrows; they
+   stay visible while focused for keyboard/D-pad users. */
+.pf-music__rail-viewport {
+  position: relative;
+}
+
+/* Overlaid prev/next scroll arrows. Only rendered by RecommendationsRow when
+   the rail can scroll that way, so an arrow is always actionable when shown. */
+.pf-music__rail-nav {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  /* Hidden until the rail is hovered/focused so the arrows don't clutter the
+     covers at rest; keyboard users tabbing in still get them via :focus-visible. */
+  opacity: 0;
+  transition: opacity var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__rail-nav--prev {
+  left: 0;
+  justify-content: flex-start;
+  padding-left: 6px;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.72), transparent);
+}
+
+.pf-music__rail-nav--next {
+  right: 0;
+  justify-content: flex-end;
+  padding-right: 6px;
+  background: linear-gradient(to left, rgba(0, 0, 0, 0.72), transparent);
+}
+
+.pf-music__rail-viewport:hover .pf-music__rail-nav,
+.pf-music__rail-nav:focus-visible {
+  opacity: 1;
+}
+
+.pf-music__rail-nav > svg {
+  transition: transform var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__rail-nav:hover > svg,
+.pf-music__rail-nav:focus-visible > svg {
+  transform: scale(1.2);
+}
+
+.pf-music__rail-nav:focus-visible {
+  outline: 2px solid var(--pf-green-bright, #1ed760);
+  outline-offset: -4px;
+  border-radius: var(--pf-radius-sm, 8px);
+}
+
+/* Touch/coarse pointers scroll by gesture and have no persistent hover, so the
+   arrows would either never show or stick on tap. Hide them there. */
+@media (hover: none) {
+  .pf-music__rail-nav {
+    display: none;
+  }
+}
+
+.pf-music__rec {
+  flex: 0 0 auto;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border-radius: var(--pf-radius-md, 12px);
+  background: var(--pf-surface, #12151b);
+  scroll-snap-align: start;
+  transition: background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__rec:hover {
+  background: var(--pf-surface-2, #191d26);
+}
+
+.pf-music__rec-art {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--pf-radius-sm, 8px);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.pf-music__rec-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Spotify's green play button: hidden until hover/focus, then lifts in. */
+.pf-music__rec-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--pf-green);
+  color: #04160b;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45);
+  transition: opacity var(--pf-dur-fast, 0.16s) ease, transform var(--pf-dur-fast, 0.16s) ease,
+    background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__rec:hover .pf-music__rec-btn,
+.pf-music__rec-btn:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pf-music__rec-btn:hover:not(:disabled) {
+  background: var(--pf-green-bright);
+  transform: scale(1.06);
+}
+
+.pf-music__rec-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.pf-music__rec-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-music__rec-sub {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-music__rec--skeleton .pf-music__rec-art {
+  box-shadow: none;
+}
+
+/* --- Collection cards (album / playlist results) ------------------------ */
+
+/* Row layout — sits inside the search "Resultados" list next to song rows. */
+.pf-music__row--coll .pf-music__info {
+  gap: 0.15rem;
+}
+
+.pf-music__coll-status,
+.pf-music__coll-error {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-music__coll-status {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pf-music__coll-error {
+  color: #ff8a8a;
+}
+
+/* Rail layout — a collection card riding the horizontal "Recomendados" rail. */
+.pf-music__rec--coll {
+  gap: 0.3rem;
+}
+
+.pf-music__rec-kind {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pf-green-bright);
+}
+
+.pf-music__coll-btn {
+  margin-top: 0.25rem;
+  align-self: flex-start;
+}
+
+/* --- Browse tabs -------------------------------------------------------- */
+
+.pf-music__tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 1.1rem;
+  flex-wrap: wrap;
+}
+
+.pf-music__tab {
+  padding: 0.42rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: var(--pf-radius-pill, 999px);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease, color var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__tab:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.pf-music__tab--active {
+  color: #04160b;
+  background: #fff;
+}
+
+/* --- Genre chips -------------------------------------------------------- */
+
+.pf-music__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.pf-music__chip {
+  padding: 0.55rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--pf-surface, #12151b);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--pf-radius-pill, 999px);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease, border-color var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__chip:hover {
+  background: var(--pf-surface-2, #191d26);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.pf-music__chip--active {
+  color: #04160b;
+  background: var(--pf-green-bright);
+  border-color: transparent;
+}
+
+.pf-music__genre-songs {
+  margin-top: 0.5rem;
+}
+
+/* --- Album / artist grids ----------------------------------------------- */
+
+.pf-music__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1.5rem 1.1rem;
+}
+
+.pf-music__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-decoration: none;
+  color: inherit;
+  padding: 0.75rem;
+  border-radius: var(--pf-radius-md, 12px);
+  background: var(--pf-surface, #12151b);
+  transition: background var(--pf-dur-fast, 0.16s) ease, transform var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__card:hover {
+  background: var(--pf-surface-2, #191d26);
+  transform: translateY(-2px);
+}
+
+.pf-music__card-art {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--pf-radius-sm, 8px);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.pf-music__grid--artists .pf-music__card-art,
+.pf-music__card-art--round {
+  border-radius: 50%;
+}
+
+.pf-music__card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pf-music__card-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-music__card-sub {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Detail pages (album / artist) — Spotify header treatment ----------- */
+
+.pf-music--detail {
+  background:
+    linear-gradient(to bottom, rgba(29, 185, 84, 0.22) 0%, rgba(29, 185, 84, 0) 340px),
+    var(--pf-bg);
+}
+
+.pf-music__detail-head {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: calc(var(--pf-header-h, 68px) + 1.5rem) 1rem 1rem;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: flex-end;
+  gap: 1.5rem;
+}
+
+.pf-music__detail-head--artist {
+  grid-template-columns: auto 1fr;
+}
+
+.pf-music__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__back:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.pf-music__detail-cover {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--pf-radius-md, 12px);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 4rem;
+  color: rgba(255, 255, 255, 0.4);
+  flex: 0 0 auto;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+.pf-music__detail-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pf-music__detail-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pf-music__detail-kicker {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pf-music__detail-title {
+  margin: 0;
+  font-size: clamp(1.8rem, 5vw, 3.5rem);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+
+.pf-music__detail-artist {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pf-music__play-album {
+  align-self: flex-start;
+  margin-top: 0.75rem;
+  padding: 0.7rem 2rem;
+  font-size: 0.92rem;
+  font-weight: 800;
+  border-radius: var(--pf-radius-pill, 999px);
+  border: none;
+  background: var(--pf-green, #1db954);
+  color: #04160b;
+  cursor: pointer;
+  transition: transform var(--pf-dur-fast, 0.16s) ease, background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__play-album:hover:not(:disabled) {
+  background: var(--pf-green-bright, #1ed760);
+  transform: scale(1.04);
+}
+
+.pf-music__play-album:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pf-music__track-no {
+  flex: 0 0 auto;
+  width: 1.9rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-music__link-btn {
+  background: none;
+  border: none;
+  color: var(--pf-green, #1db954);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* Song-row "open detail" target: the cover + info area is a real <Link> so the
+   whole row is navigable (and natively focusable on webOS), while the play
+   button stays a separate sibling control. */
+.pf-music__row-link {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--pf-radius-sm, 8px);
+}
+
+/* Album track list: only the title/artist block links to the track detail. */
+.pf-music__track-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.pf-music__row-link:focus-visible,
+.pf-music__track-link:focus-visible {
+  outline: 2px solid var(--pf-green, #1db954);
+  outline-offset: 2px;
+}
+
+/* Track detail metadata (álbum / género / año / duración). */
+.pf-music__facts {
+  margin: 0.35rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.5rem;
+}
+
+.pf-music__fact {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.pf-music__fact dt {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pf-music__fact dd {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.pf-music__detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+/* Anchor styled like an action pill keeps its natural inline sizing. */
+.pf-music__detail-actions .pf-music__action {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.pf-music__detail-actions .pf-music__play-album {
+  margin-top: 0;
+}
+
+@media (max-width: 560px) {
+  .pf-music__detail-head {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'back meta'
+      'cover meta';
+    align-items: center;
+  }
+
+  .pf-music__detail-cover {
+    width: 120px;
+    height: 120px;
+    font-size: 2.5rem;
+  }
+}
+
+/* --- Icon-only play button (Spotify-style ▶ pill) ----------------------- */
+
+.pf-music__play-icon {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--pf-green, #1db954);
+  color: #04160b;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: background var(--pf-dur-fast, 0.16s) ease, transform var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__play-icon:hover:not(:disabled) {
+  background: var(--pf-green-bright, #1ed760);
+  transform: scale(1.06);
+}
+
+.pf-music__play-icon:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* --- Add-to-playlist menu ("+" on a song row) --------------------------- */
+
+.pf-music__addpl {
+  flex: 0 0 auto;
+  position: relative;
+  display: inline-flex;
+}
+
+.pf-music__addpl-btn {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__addpl-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Transparent full-screen catcher so a click/tap outside closes the menu. */
+.pf-music__addpl-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.pf-music__addpl-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 41;
+  min-width: 220px;
+  max-width: 280px;
+  padding: 0.5rem;
+  border-radius: var(--pf-radius-md, 12px);
+  background: var(--pf-surface-2, #191d26);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.pf-music__addpl-heading {
+  margin: 0.15rem 0.5rem 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-music__addpl-empty {
+  margin: 0.2rem 0.5rem;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-music__addpl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.pf-music__addpl-item {
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #fff;
+  background: transparent;
+  border: none;
+  border-radius: var(--pf-radius-sm, 8px);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__addpl-item:hover:not(:disabled),
+.pf-music__addpl-item:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pf-music__addpl-item:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pf-music__addpl-item--new {
+  margin-top: 0.2rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  color: var(--pf-green-bright, #1ed760);
+}
+
+/* Destructive menu item ("Borrar de la biblioteca") — red so it can't be
+   fired by reflex. */
+.pf-music__addpl-item--danger {
+  color: #ff8a8a;
+}
+
+.pf-music__addpl-item--primary {
+  flex: 0 0 auto;
+  width: auto;
+  background: var(--pf-green, #1db954);
+  color: #04160b;
+}
+
+.pf-music__addpl-item--primary:hover:not(:disabled) {
+  background: var(--pf-green-bright, #1ed760);
+}
+
+.pf-music__addpl-create {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pf-music__addpl-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+  color: #fff;
+  background: var(--pf-surface, #12151b);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--pf-radius-sm, 8px);
+}
+
+.pf-music__addpl-input:focus {
+  outline: none;
+  border-color: var(--pf-green, #1db954);
+  box-shadow: 0 0 0 2px rgba(29, 185, 84, 0.28);
+}
+
+/* Visually-hidden live region for the "added / created" confirmation. */
+.pf-music__addpl-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Playlists tab ------------------------------------------------------ */
+
+.pf-music__playlists-head {
+  margin-bottom: 1.1rem;
+}
+
+.pf-music__playlists-head .pf-music__addpl-create {
+  margin: 0;
+  padding: 0;
+  border: none;
+  flex-wrap: wrap;
+}
+
+.pf-music__playlists-head .pf-music__addpl-input {
+  max-width: 280px;
+}
