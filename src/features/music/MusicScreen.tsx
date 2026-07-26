@@ -311,8 +311,6 @@ export function MusicScreen() {
         </>
       )}
 
-      {!searching && <MyMusicStats />}
-
       <section className="pf-music__section" aria-label="Tu música">
         <div className="pf-music__tabs" role="tablist" aria-label="Explorar tu música">
           {TABS.map(({ id, label }) => (
@@ -433,6 +431,10 @@ export function MusicScreen() {
 
         {tab === 'playlists' && <PlaylistsPanel active={tab === 'playlists'} />}
       </section>
+
+      {/* Last on the page on purpose: it is a look-back, not something to act
+          on, so it should not sit between the user and their library. */}
+      {!searching && <MyMusicStats />}
     </main>
   );
 }

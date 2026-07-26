@@ -6,6 +6,7 @@ import {
   MusicJobSchema,
   MusicPlaylistBatchSchema,
   MusicPlaylistBatchStatusSchema,
+  MusicPlaysResponseSchema,
   MusicRatingsResponseSchema,
   MusicRatingSchema,
   type MusicResultItem,
@@ -15,6 +16,7 @@ import {
   type MusicPlaylistBatch,
   type MusicPlaylistBatchStatus,
   type MusicRating,
+  type MusicPlay,
 } from './schemas/music';
 
 // Música client. Every call goes through `apiFetch('bff', '/music/...')`, which
@@ -94,6 +96,35 @@ export async function setTrackRating(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ videoId, rating }),
     schema: MusicRatingSchema,
+  });
+}
+
+/**
+ * Preview listens for this user, tallied by videoId.
+ *
+ * Jellyfin owns history for library items, but a preview has no Jellyfin item
+ * to bump a PlayCount on, so the worker keeps this second tally. Both are
+ * merged when the stats are built - neither alone is the user's listening.
+ */
+export async function getPreviewPlays(): Promise<MusicPlay[]> {
+  const { plays } = await apiFetch('bff', '/music/plays', {
+    schema: MusicPlaysResponseSchema,
+  });
+  return plays;
+}
+
+/** Counts one preview listened through. Metadata rides along because a bare
+ * videoId is not renderable and re-resolving it later costs a YouTube call. */
+export async function reportPreviewPlay(input: {
+  videoId: string;
+  title?: string;
+  artist?: string;
+  seconds?: number;
+}): Promise<void> {
+  await apiFetch('bff', '/music/plays', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
   });
 }
 

@@ -167,6 +167,21 @@ export const MusicRatingsResponseSchema = z.object({
 });
 export type MusicRatingsResponse = z.infer<typeof MusicRatingsResponseSchema>;
 
+/** One preview track this user has listened through, tallied by the worker. */
+export const MusicPlaySchema = z.object({
+  videoId: z.string(),
+  count: z.number(),
+  title: z.string().default(''),
+  artist: z.string().default(''),
+  /** Track length in seconds, 0 when it was never known. */
+  seconds: z.number().default(0),
+});
+export type MusicPlay = z.infer<typeof MusicPlaySchema>;
+
+export const MusicPlaysResponseSchema = z.object({
+  plays: z.array(MusicPlaySchema).default([]),
+});
+
 export const MusicRatingSchema = z.object({
   videoId: z.string(),
   rating: z.number(),

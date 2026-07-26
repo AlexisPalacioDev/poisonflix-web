@@ -108,6 +108,71 @@ function itemArtist(item: JellyfinItem): string | null {
   return item.Artists?.[0] ?? item.AlbumArtist ?? null;
 }
 
+/**
+ * A play tally from ANY source, so the two histories can be ranked together.
+ *
+ * Listening lives in two places and neither is wrong: Jellyfin's UserData for
+ * library items, and the worker's videoId tally for previews. Ranking either
+ * one alone answers a question nobody asked, so both are mapped onto this
+ * shape first and every top-N runs over the union.
+ */
+export interface PlayTally {
+  /** Jellyfin item id or YouTube videoId - only used to keep rows distinct. */
+  key: string;
+  title: string;
+  artist: string | null;
+  plays: number;
+  /** Length of ONE play in seconds; 0 when unknown (contributes no minutes). */
+  seconds: number;
+}
+
+const TICKS_PER_SECOND = 10_000_000;
+
+/** Library listens, from Jellyfin's own per-user UserData. */
+export function talliesFromItems(items: JellyfinItem[]): PlayTally[] {
+  return items.map((item) => ({
+    key: item.Id,
+    title: item.Name,
+    artist: itemArtist(item),
+    plays: item.UserData?.PlayCount ?? 0,
+    seconds: (item.RunTimeTicks ?? 0) / TICKS_PER_SECOND,
+  }));
+}
+
+/** Top artists by summed plays across every source. */
+export function topArtistsOf(tallies: PlayTally[], limit = 5): TopEntry[] {
+  const totals = new Map<string, number>();
+  for (const t of tallies) {
+    if (!t.artist || t.plays <= 0) continue;
+    totals.set(t.artist, (totals.get(t.artist) ?? 0) + t.plays);
+  }
+  return [...totals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([label, plays]) => ({ label, plays }));
+}
+
+/** Top tracks by plays across every source. */
+export function topTracksOf(tallies: PlayTally[], limit = 5): TopEntry[] {
+  return tallies
+    .filter((t) => t.plays > 0 && t.title)
+    .sort((a, b) => b.plays - a.plays)
+    .slice(0, limit)
+    .map((t) => ({ label: t.title, plays: t.plays, detail: t.artist }));
+}
+
+/** Estimated minutes across every source. Same caveat as the Jellyfin-only
+ * version: no per-play duration exists, so a skip counts as a full listen. */
+export function minutesOf(tallies: PlayTally[]): number {
+  const seconds = tallies.reduce((sum, t) => sum + t.seconds * t.plays, 0);
+  return Math.round(seconds / 60);
+}
+
+/** Total plays across every source. */
+export function totalPlaysOf(tallies: PlayTally[]): number {
+  return tallies.reduce((sum, t) => sum + t.plays, 0);
+}
+
 /** Top artists by summed PlayCount across their tracks. */
 export function topArtists(items: JellyfinItem[], limit = 5): TopEntry[] {
   const totals = new Map<string, number>();

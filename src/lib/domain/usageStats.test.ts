@@ -3,10 +3,16 @@ import {
   dailyPlays,
   estimateListeningMinutes,
   formatMinutes,
+  minutesOf,
   playbackEvents,
+  talliesFromItems,
   topArtists,
+  topArtistsOf,
   topTracks,
+  topTracksOf,
+  totalPlaysOf,
   usageByUser,
+  type PlayTally,
 } from './usageStats';
 import type { ActivityEntry, JellyfinItem, JellyfinUser } from '../../api/schemas/jellyfin';
 
@@ -171,5 +177,49 @@ describe('formatMinutes', () => {
     expect(formatMinutes(31)).toBe('31m');
     expect(formatMinutes(492)).toBe('8h 12m');
     expect(formatMinutes(120)).toBe('2h 0m');
+  });
+});
+
+describe('merged tallies (library + preview)', () => {
+  // The whole point of PlayTally: previews have no Jellyfin item, so ranking
+  // only what Jellyfin knows answers a question nobody asked.
+  const previewTally = (over: Partial<PlayTally>): PlayTally => ({
+    key: 'vid-1',
+    title: 'Radio Pick',
+    artist: 'The Band',
+    plays: 3,
+    seconds: 120,
+    ...over,
+  });
+
+  it('sums an artist across both sources instead of ranking them separately', () => {
+    const fromLibrary = talliesFromItems([
+      audio({ Name: 'Library Song', Artists: ['The Band'], UserData: { PlayCount: 2 } }),
+    ] as JellyfinItem[]);
+
+    const top = topArtistsOf([...fromLibrary, previewTally({})]);
+
+    expect(top).toEqual([{ label: 'The Band', plays: 5 }]);
+  });
+
+  it('ranks tracks from either source in one list', () => {
+    const fromLibrary = talliesFromItems([
+      audio({ Name: 'Library Song', Artists: ['The Band'], UserData: { PlayCount: 9 } }),
+    ] as JellyfinItem[]);
+
+    const top = topTracksOf([...fromLibrary, previewTally({ plays: 4 })]);
+
+    expect(top.map((t) => t.label)).toEqual(['Library Song', 'Radio Pick']);
+  });
+
+  it('counts minutes and plays across both sources', () => {
+    const tallies = [previewTally({ plays: 2, seconds: 180 }), previewTally({ key: 'vid-2', plays: 1, seconds: 60 })];
+
+    expect(totalPlaysOf(tallies)).toBe(3);
+    expect(minutesOf(tallies)).toBe(7);
+  });
+
+  it('ignores a source row with no artist rather than inventing a bucket', () => {
+    expect(topArtistsOf([previewTally({ artist: null })])).toEqual([]);
   });
 });

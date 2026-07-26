@@ -40,6 +40,7 @@ JOBS_PATH = os.path.join(DATA_DIR, "jobs.json")
 MANIFEST_PATH = os.path.join(DATA_DIR, "downloaded.json")
 BATCHES_PATH = os.path.join(DATA_DIR, "batches.json")
 RATINGS_PATH = os.path.join(DATA_DIR, "ratings.json")
+PLAYS_PATH = os.path.join(DATA_DIR, "plays.json")
 
 DOWNLOAD_TIMEOUT_S = 300  # ~5 min hard cap per yt-dlp run, then the job fails.
 MAX_JOBS_KEPT = 100  # recent-jobs cap returned by GET /downloads
@@ -85,6 +86,7 @@ _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 def _load_state():
     os.makedirs(DATA_DIR, exist_ok=True)
     _load_ratings()
+    _load_plays()
     try:
         with open(MANIFEST_PATH, "r", encoding="utf-8") as fh:
             _downloaded.update(json.load(fh))
@@ -185,6 +187,112 @@ def _annotate_ratings(results, user_id):
         if r.get("type") == "song":
             r["rating"] = votes.get(r.get("videoId"), 0)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Preview play tally.
+#
+# Jellyfin owns listening history for anything IN the library, and that is the
+# right owner: per user, persisted, backed up. But a preview -- a radio pick or
+# a search hit streamed straight from YouTube -- has no Jellyfin item, so there
+# is nothing there to bump. Since autoplay radio landed, that is most of what
+# actually gets played, which left "Tu musica en numeros" reporting a number
+# that was true and yet nothing like the user's listening.
+#
+# So previews are tallied HERE, keyed by videoId, exactly like ratings. Title,
+# artist and length are stored alongside the count because the videoId alone
+# says nothing renderable, and re-resolving it later would mean a YouTube round
+# trip per row.
+#
+# Shape: {userId: {videoId: {count, title, artist, seconds, last}}}
+# ---------------------------------------------------------------------------
+
+_plays = {}
+_plays_lock = threading.Lock()
+
+
+def _load_plays():
+    global _plays
+    try:
+        with open(PLAYS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            clean = {}
+            for uid, rows in data.items():
+                if not isinstance(rows, dict):
+                    continue
+                bucket = {}
+                for vid, row in rows.items():
+                    if not isinstance(row, dict):
+                        continue
+                    try:
+                        count = int(row.get("count", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if count <= 0:
+                        continue
+                    bucket[str(vid)] = {
+                        "count": count,
+                        "title": str(row.get("title") or ""),
+                        "artist": str(row.get("artist") or ""),
+                        "seconds": int(row.get("seconds") or 0),
+                        "last": float(row.get("last") or 0),
+                    }
+                if bucket:
+                    clean[str(uid)] = bucket
+            _plays = clean
+    except (FileNotFoundError, ValueError, AttributeError, TypeError):
+        _plays = {}
+
+
+def _persist_plays():
+    # Called under _plays_lock. Best-effort, mirrors _persist_ratings.
+    try:
+        tmp = PLAYS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_plays, fh)
+        os.replace(tmp, PLAYS_PATH)
+    except OSError:
+        pass
+
+
+def user_plays(user_id):
+    """This user's preview tally as a list of rows. Anonymous callers get an
+    empty view rather than sharing a global bucket -- same rule as ratings."""
+    if not user_id:
+        return []
+    with _plays_lock:
+        rows = dict(_plays.get(user_id, {}))
+    out = []
+    for vid, row in rows.items():
+        item = dict(row)
+        item["videoId"] = vid
+        out.append(item)
+    out.sort(key=lambda r: r.get("count", 0), reverse=True)
+    return out
+
+
+def record_play(user_id, video_id, title, artist, seconds):
+    """Counts one completed preview listen. Metadata is refreshed on every call
+    so a row recorded before the title was known still fills in later."""
+    if not user_id or not video_id:
+        return 0
+    with _plays_lock:
+        bucket = _plays.setdefault(user_id, {})
+        row = bucket.get(video_id) or {"count": 0, "title": "", "artist": "", "seconds": 0}
+        row["count"] = int(row.get("count", 0)) + 1
+        if title:
+            row["title"] = title
+        if artist:
+            row["artist"] = artist
+        if seconds:
+            row["seconds"] = int(seconds)
+        # `time` is already imported; an epoch float keeps the row JSON-plain
+        # and avoids pulling in datetime just for a timestamp nothing parses.
+        row["last"] = time.time()
+        bucket[video_id] = row
+        _persist_plays()
+        return row["count"]
 
 
 def _drop_disliked(results, user_id):
@@ -1416,6 +1524,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ratings":
             return self._send(200, {"ratings": user_ratings(self._user_id())})
 
+        if path == "/plays":
+            return self._send(200, {"plays": user_plays(self._user_id())})
+
         if path == "/recommendations":
             qs = urllib.parse.parse_qs(parsed.query)
             seed = (qs.get("seed", [""])[0]).strip() or None
@@ -1495,7 +1606,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path not in ("/downloads", "/playlists", "/ratings"):
+        if parsed.path not in ("/downloads", "/playlists", "/ratings", "/plays"):
             return self._send(404, {"error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -1517,6 +1628,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "invalid_rating"})
             stored = set_rating(self._user_id(), video_id, rating)
             return self._send(200, {"videoId": video_id, "rating": stored})
+
+        if parsed.path == "/plays":
+            video_id = (payload.get("videoId") or "").strip()
+            if not video_id:
+                return self._send(400, {"error": "missing_video_id"})
+            try:
+                seconds = int(payload.get("seconds") or 0)
+            except (TypeError, ValueError):
+                seconds = 0
+            count = record_play(
+                self._user_id(),
+                video_id,
+                (payload.get("title") or "").strip(),
+                (payload.get("artist") or "").strip(),
+                seconds,
+            )
+            return self._send(200, {"videoId": video_id, "count": count})
 
         if parsed.path == "/playlists":
             playlist_id = payload.get("playlistId")

@@ -501,6 +501,9 @@ async function handleMusic(req, res, subPath, search, user) {
   const isCollection = subPath === '/collection';
   // Thumbs up/down. GET reads this user's votes, POST casts one.
   const isRatings = subPath === '/ratings';
+  // Preview listening tally. Previews have no Jellyfin item to bump a
+  // PlayCount on, so the worker keeps the count keyed by videoId instead.
+  const isPlays = subPath === '/plays';
 
   let ok = false;
   if (
@@ -512,11 +515,17 @@ async function handleMusic(req, res, subPath, search, user) {
       isPlaylistBatch ||
       isStream ||
       isCollection ||
-      isRatings)
+      isRatings ||
+      isPlays)
   ) {
     ok = true;
   }
-  if (method === 'POST' && (isDownloadsCollection || isPlaylistsCollection || isRatings)) ok = true;
+  if (
+    method === 'POST' &&
+    (isDownloadsCollection || isPlaylistsCollection || isRatings || isPlays)
+  ) {
+    ok = true;
+  }
   if (!ok) return send(res, 404, { error: 'not found' });
 
   const body = method === 'POST' ? await readBody(req) : undefined;

@@ -6,16 +6,21 @@ import { clearSession, setSession } from '../../lib/session/store';
 import { reportPlaying, reportStopped } from '../../api/jellyfin';
 import { MusicPlayerProvider } from './MusicPlayerProvider';
 import { useMusicPlayer, type MusicTrack } from './musicPlayerCore';
-import { useMusicScrobble } from './useMusicScrobble';
+import { reportPreviewPlay } from '../../api/music';
+import { countsAsListen, useMusicScrobble } from './useMusicScrobble';
 
 vi.mock('../../api/jellyfin', () => ({
   reportPlaying: vi.fn(),
   reportProgress: vi.fn(),
   reportStopped: vi.fn(),
 }));
+vi.mock('../../api/music', () => ({
+  reportPreviewPlay: vi.fn(),
+}));
 
 const mockedReportPlaying = vi.mocked(reportPlaying);
 const mockedReportStopped = vi.mocked(reportStopped);
+const mockedReportPreviewPlay = vi.mocked(reportPreviewPlay);
 
 const LIBRARY_TRACK: MusicTrack = {
   itemId: 'aud-1',
@@ -111,5 +116,53 @@ describe('useMusicScrobble', () => {
         expect.objectContaining({ itemId: 'aud-1' }),
       ),
     );
+  });
+});
+
+describe('countsAsListen (preview tally threshold)', () => {
+  it('does not count a track skipped through', () => {
+    expect(countsAsListen(4, 210)).toBe(false);
+    expect(countsAsListen(29, 210)).toBe(false);
+  });
+
+  it('counts a track once past 30s', () => {
+    expect(countsAsListen(30, 210)).toBe(true);
+    expect(countsAsListen(180, 210)).toBe(true);
+  });
+
+  it('uses half the length for tracks shorter than a minute, so they stay countable', () => {
+    // A flat 30s threshold would make a 40s interlude impossible to ever count.
+    expect(countsAsListen(21, 40)).toBe(true);
+    expect(countsAsListen(19, 40)).toBe(false);
+  });
+
+  it('falls back to the flat threshold when the length is unknown', () => {
+    expect(countsAsListen(29, 0)).toBe(false);
+    expect(countsAsListen(31, 0)).toBe(true);
+  });
+});
+
+describe('useMusicScrobble preview tally', () => {
+  beforeEach(() => {
+    mockedReportPreviewPlay.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    mockedReportPreviewPlay.mockReset();
+  });
+
+  it('does not count a preview that was never listened to', async () => {
+    renderHarness();
+
+    fireEvent.click(screen.getByRole('button', { name: 'play preview' }));
+    await screen.findByText('now: Preview Song');
+
+    // Position never advances here (jsdom drives no <audio>), which is exactly
+    // the skipped-through case: switching away must count nothing.
+    fireEvent.click(screen.getByRole('button', { name: 'play library' }));
+    await screen.findByText('now: Library Song');
+
+    await waitFor(() => expect(mockedReportPlaying).toHaveBeenCalled());
+    expect(mockedReportPreviewPlay).not.toHaveBeenCalled();
   });
 });

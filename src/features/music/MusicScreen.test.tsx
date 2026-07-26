@@ -21,6 +21,9 @@ vi.mock('../../api/music', () => ({
   // resolve their track list before they can be played.
   getRatings: vi.fn().mockResolvedValue({}),
   setTrackRating: vi.fn(),
+  // "Tu música en números" now merges the worker's preview tally with Jellyfin.
+  getPreviewPlays: vi.fn().mockResolvedValue([]),
+  reportPreviewPlay: vi.fn().mockResolvedValue(undefined),
   getCollectionTracks: vi.fn().mockResolvedValue([]),
   searchMusic: vi.fn(),
   requestDownload: vi.fn(),

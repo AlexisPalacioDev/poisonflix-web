@@ -76,6 +76,8 @@ export const queryKeys = {
   serverUsage: (days: number) => ['usage', 'server', days] as const,
   activeSessions: () => ['usage', 'sessions'] as const,
   myMusicStats: (userId: string) => ['usage', 'me', userId] as const,
+  // Preview listens, tallied by the worker (no Jellyfin item exists for them).
+  previewPlays: (userId: string) => ['usage', 'me', userId, 'previews'] as const,
   musicPlaylistBatch: (batchId: string) => ['music', 'playlist', batchId] as const,
   musicGenres: (userId: string) => ['music', 'genres', userId] as const,
   musicGenreSongs: (userId: string, genre: string) =>
