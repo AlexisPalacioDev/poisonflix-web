@@ -13,6 +13,19 @@
   outline: none;
 }
 
+/* Fallback fullscreen for browsers whose Fullscreen API does not accept a
+   container element (iOS Safari allows it on <video> only, and that route
+   swaps in the OS player chrome). Pinning to the viewport keeps our own
+   controls on top instead. `100dvh` tracks Safari's collapsing toolbars, so
+   the bottom control row is not left under them. */
+.pf-player-surface--pseudo-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  width: 100vw;
+  height: 100dvh;
+}
+
 .pf-player-surface__video {
   width: 100%;
   height: 100%;

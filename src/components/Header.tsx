@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { AdultPinOverlay } from './AdultPinOverlay';
 import { PoisonMark } from '../features/onboarding/PoisonMark';
 import { useAdultUnlocked } from '../hooks/useAdultUnlocked';
 import { useAuth } from '../hooks/useAuth';
 import { useLanguage } from '../hooks/useLanguage';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { isAdultUnlocked } from '../lib/domain/adultSettings';
 import { toggleLanguage } from '../lib/domain/languageSettings';
 import './Header.css';
@@ -31,8 +32,61 @@ export function Header() {
   const language = useLanguage();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { session } = useAuth();
+  const location = useLocation();
+  const { session, logout } = useAuth();
   const isAdmin = session?.isAdmin === true;
+
+  // Whether we're inside the music section. When true the "Música" control
+  // flips into a "back to movies/series" (Netflix mode) affordance so the user
+  // always has a way out of /musica* - the button they were missing.
+  const inMusic = location.pathname === '/musica' || location.pathname.startsWith('/musica/');
+
+  // Below the now-playing bar's breakpoint (899px) the row of nav controls no
+  // longer fits, so they collapse behind a hamburger menu. Reuses the shared
+  // `useMediaQuery` hook for a single source of truth on that breakpoint.
+  const isMobile = useMediaQuery('(max-width: 899px)');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Growing to the desktop width auto-closes the menu so its dropdown never
+  // lingers over the now-inline row.
+  useEffect(() => {
+    if (!isMobile) setMenuOpen(false);
+  }, [isMobile]);
+
+  // Dismiss the open menu on an outside click or Escape (Escape returns focus
+  // to the toggle). Native listeners so it works regardless of which control
+  // spatial navigation currently has focused.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+        hamburgerRef.current?.focus();
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
+
+  // Move focus into the panel when it opens so keyboard / D-pad users land on
+  // the first item instead of being stranded on the toggle.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const first = panelRef.current?.querySelector<HTMLElement>('a, button');
+    first?.focus();
+  }, [menuOpen]);
 
   // +18 access lives in the top bar now (this app's addition - the projector
   // gated it from a Home tile). `useAdultUnlocked` reflects the in-memory
@@ -77,6 +131,14 @@ export function Header() {
     }
   };
 
+  const handleLogout = async () => {
+    // logout() never rejects (best-effort server invalidation + local clear),
+    // so the redirect always runs. Explicit navigate rather than leaning on
+    // RouteGuard's reactive bounce so logout works from any header context.
+    await logout();
+    navigate('/onboarding', { replace: true });
+  };
+
   const handleAdultPinClose = () => {
     setPinOpen(false);
     // Cancelled (Escape / backdrop) without unlocking: drop the pending nav so
@@ -84,45 +146,73 @@ export function Header() {
     if (!isAdultUnlocked()) pendingAdultNav.current = false;
   };
 
-  return (
-    <header className={`pf-header${scrolled ? ' pf-header--scrolled' : ''}`}>
-      <Link to="/" className="pf-header__brand" aria-label="PoisonFlix - Inicio">
-        <PoisonMark className="pf-header__mark" />
-        <span className="pf-header__title">PoisonFlix</span>
+  // Every nav control, rendered once so the desktop inline row and the mobile
+  // hamburger dropdown stay in perfect sync. `onSelect` fires after each action
+  // so picking an item from the mobile menu closes it; on desktop it's omitted.
+  const renderControls = (onSelect?: () => void) => (
+    <>
+      <button
+        type="button"
+        className="pf-header__search pf-header__lang-chip"
+        aria-label="Cambiar idioma"
+        onClick={() => {
+          handleToggleLanguage();
+          onSelect?.();
+        }}
+      >
+        <span className="pf-header__search-label">{language === 'es' ? 'ES' : 'EN'}</span>
+      </button>
+
+      <Link to="/search" className="pf-header__search" aria-label="Buscar" onClick={onSelect}>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" strokeWidth="2" />
+          <line x1="15" y1="15" x2="21" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        <span className="pf-header__search-label">Buscar</span>
       </Link>
 
-      <div className="pf-header__actions">
-        <button
-          type="button"
-          className="pf-header__search pf-header__lang-chip"
-          aria-label="Cambiar idioma"
-          onClick={handleToggleLanguage}
-        >
-          <span className="pf-header__search-label">{language === 'es' ? 'ES' : 'EN'}</span>
-        </button>
+      <button
+        type="button"
+        className="pf-header__search"
+        aria-label={adultUnlocked ? 'Contenido +18' : '+18 contenido bloqueado'}
+        onClick={() => {
+          handleAdultClick();
+          onSelect?.();
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="2" />
+        </svg>
+        <span className="pf-header__search-label">+18</span>
+      </button>
 
-        <Link to="/search" className="pf-header__search" aria-label="Buscar">
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
-            <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" strokeWidth="2" />
-            <line x1="15" y1="15" x2="21" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-          <span className="pf-header__search-label">Buscar</span>
-        </Link>
-
+      {inMusic ? (
+        // In the music section: flip to a "back to movies/series" (Netflix mode)
+        // affordance - a film-strip glyph that returns to the main home route.
         <button
           type="button"
           className="pf-header__search"
-          aria-label={adultUnlocked ? 'Contenido +18' : '+18 contenido bloqueado'}
-          onClick={handleAdultClick}
+          aria-label="Volver a películas y series"
+          onClick={() => {
+            navigate('/');
+            onSelect?.();
+          }}
         >
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
-            <rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
-            <path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" strokeWidth="2" />
+            <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              d="M7 4v16M17 4v16M3 9h4M17 9h4M3 15h4M17 15h4"
+            />
           </svg>
-          <span className="pf-header__search-label">+18</span>
+          <span className="pf-header__search-label">Películas y series</span>
         </button>
-
-        <Link to="/downloads" className="pf-header__search" aria-label="Descargas">
+      ) : (
+        <Link to="/musica" className="pf-header__search" aria-label="Música" onClick={onSelect}>
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
             <path
               fill="none"
@@ -130,36 +220,124 @@ export function Header() {
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              d="M12 4v10m0 0l-4-4m4 4l4-4M5 18h14"
+              d="M9 18V5l12-2v13"
+            />
+            <circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+            <circle cx="18" cy="16" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+          </svg>
+          <span className="pf-header__search-label">Música</span>
+        </Link>
+      )}
+
+      <Link to="/downloads" className="pf-header__search" aria-label="Descargas" onClick={onSelect}>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <path
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 4v10m0 0l-4-4m4 4l4-4M5 18h14"
+          />
+        </svg>
+        <span className="pf-header__search-label">Descargas</span>
+      </Link>
+
+      {isAdmin && (
+        <Link to="/admin" className="pf-header__search" aria-label="Admin" onClick={onSelect}>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+            <path
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+            />
+            <path
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
             />
           </svg>
-          <span className="pf-header__search-label">Descargas</span>
+          <span className="pf-header__search-label">Admin</span>
         </Link>
+      )}
 
-        {isAdmin && (
-          <Link to="/admin" className="pf-header__search" aria-label="Admin">
+      <button
+        type="button"
+        className="pf-header__search"
+        aria-label="Cerrar sesión"
+        onClick={() => {
+          handleLogout();
+          onSelect?.();
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <path
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M15 12H3m0 0l4-4m-4 4l4 4M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"
+          />
+        </svg>
+        <span className="pf-header__search-label">Cerrar sesión</span>
+      </button>
+    </>
+  );
+
+  return (
+    <header
+      className={`pf-header${scrolled ? ' pf-header--scrolled' : ''}${inMusic ? ' pf-header--music' : ''}`}
+    >
+      <Link to="/" className="pf-header__brand" aria-label="PoisonFlix - Inicio">
+        <PoisonMark className="pf-header__mark" variant={inMusic ? 'music' : 'default'} />
+        <span className="pf-header__title">{inMusic ? 'PoisonFy' : 'PoisonFlix'}</span>
+      </Link>
+
+      {isMobile ? (
+        <div className="pf-header__menu" ref={menuRef}>
+          <button
+            type="button"
+            ref={hamburgerRef}
+            className="pf-header__search pf-header__hamburger"
+            aria-label={menuOpen ? 'Cerrar menú' : 'Abrir menú'}
+            aria-haspopup="true"
+            aria-expanded={menuOpen}
+            aria-controls="pf-header-menu-panel"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
               <path
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
                 strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
-              />
-              <path
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"
+                d="M4 7h16M4 12h16M4 17h16"
               />
             </svg>
-            <span className="pf-header__search-label">Admin</span>
-          </Link>
-        )}
-      </div>
+          </button>
+
+          {menuOpen && (
+            <div
+              id="pf-header-menu-panel"
+              ref={panelRef}
+              className="pf-header__menu-panel"
+              role="menu"
+              aria-label="Menú de navegación"
+            >
+              {renderControls(() => setMenuOpen(false))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="pf-header__actions">{renderControls()}</div>
+      )}
 
       <AdultPinOverlay open={pinOpen} onClose={handleAdultPinClose} />
     </header>

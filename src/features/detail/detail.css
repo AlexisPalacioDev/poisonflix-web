@@ -26,12 +26,18 @@
   background: var(--pf-scrim-bottom), var(--pf-scrim-left);
 }
 
-.pf-detail__status {
+/* Full-screen loading / error states: direct children of `.pf-detail`, so they
+   must clear the FIXED header (padding-top) and honour the page gutter. Kept as
+   their own class because `.pf-detail__status` (below) is the in-content gold
+   readout used while a request is processing -- same name, different placement:
+   sharing it let the later rule strip this header clearance, dropping "Cargando…"
+   under the header and clipping it off the left edge. */
+.pf-detail__loading {
   padding: calc(var(--pf-header-h) + 48px) var(--pf-gutter) 48px;
   color: var(--pf-text-dim);
 }
 
-.pf-detail__status--error {
+.pf-detail__loading--error {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -168,11 +174,22 @@
   box-shadow: none;
 }
 
-.pf-detail__action--requesting {
-  background: rgba(242, 193, 78, 0.12);
-  border-color: var(--pf-gold);
+/* Pending/processing state readout. Replaces the old
+   `.pf-detail__action--requesting` disabled button: same gold voice, but no
+   button affordance, since the only action in this state is "Cancelar". */
+.pf-detail__status {
+  align-self: flex-start;
+  margin: 0;
+  padding: 10px 0;
   color: var(--pf-gold);
-  cursor: not-allowed;
+  font-weight: 600;
+}
+
+/* While requesting, "Cancelar" is the sole control on screen, so it takes the
+   full action-button footprint instead of the compact secondary one. */
+.pf-detail__secondary--primary {
+  padding: 14px 32px;
+  font-size: 1rem;
 }
 
 .pf-detail__error {

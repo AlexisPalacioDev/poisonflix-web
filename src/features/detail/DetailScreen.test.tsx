@@ -233,7 +233,7 @@ describe('DetailScreen (detail-request spec)', () => {
     expect(screen.queryByRole('button', { name: /reproducir/i })).not.toBeInTheDocument();
   });
 
-  it('Requesting: action is disabled and shows the current Jellyseerr status, no duplicate-request affordance', async () => {
+  it('Requesting: shows the Jellyseerr status as copy (not a button) and no duplicate-request affordance', async () => {
     mockedGetItems.mockResolvedValue(EMPTY_LIBRARY as never);
     mockedGetMovieDetails.mockResolvedValue(
       detailFixture({ mediaInfo: { id: 1, status: 3, mediaType: 'movie' } }) as never,
@@ -241,9 +241,11 @@ describe('DetailScreen (detail-request spec)', () => {
 
     renderDetail('603');
 
-    const pendingButton = await screen.findByRole('button', { name: /descargando/i });
-    expect(pendingButton).toBeDisabled();
+    expect(await screen.findByText(/descargando/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /descargando/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^pedir$/i })).not.toBeInTheDocument();
+    // The single action left in this state is the cancel one.
+    expect(screen.getByRole('button', { name: /cancelar/i })).toBeInTheDocument();
   });
 
   it('Successful request: status updates from response.media.status, not an assumed local value', async () => {
@@ -261,7 +263,12 @@ describe('DetailScreen (detail-request spec)', () => {
     const requestButton = await screen.findByRole('button', { name: /^pedir$/i });
     fireEvent.click(requestButton);
 
-    expect(await screen.findByRole('button', { name: /pendiente/i })).toBeDisabled();
+    // The pending state is copy, not a control: it used to be a disabled
+    // button sitting beside the real "Cancelar" one, which put two buttons on
+    // screen where only one acts. Asserting it is NOT a button guards the
+    // regression.
+    expect(await screen.findByText(/pendiente/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /pendiente/i })).not.toBeInTheDocument();
     expect(mockedRequestMedia).toHaveBeenCalledWith({ mediaType: 'movie', mediaId: 603 });
     expect(screen.queryByRole('button', { name: /^pedir$/i })).not.toBeInTheDocument();
   });
@@ -312,7 +319,8 @@ describe('DetailScreen (TV via ?type=tv)', () => {
 
     fireEvent.click(requestButton);
 
-    expect(await screen.findByRole('button', { name: /pendiente/i })).toBeDisabled();
+    expect(await screen.findByText(/pendiente/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /pendiente/i })).not.toBeInTheDocument();
     expect(mockedRequestMedia).toHaveBeenCalledWith({ mediaType: 'tv', mediaId: 1408 });
   });
 

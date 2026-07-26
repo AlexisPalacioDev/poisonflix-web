@@ -31,6 +31,10 @@ services:
     # Real API keys + upstream URLs. Copy infra/env.example -> infra/.env first.
     env_file:
       - .env
+    # MUSIC_WORKER_URL is a fixed internal address (not a secret), so it lives
+    # here rather than in .env; the override merges the secret env on top.
+    environment:
+      MUSIC_WORKER_URL: http://music-worker:8790
     # Persists invite codes for self-service registration (see bff/invites.mjs).
     volumes:
       - ./bff/data:/data
@@ -38,6 +42,29 @@ services:
     # jellyfin-server_default: reaches jellyfin-ts:8096 (jellyfin's net namespace)
     # by name for user creation/reset — robust against host LAN IP changes.
     # No published ports — only Caddy (also on these networks) talks to it.
+    networks:
+      - media-automation
+      - jellyfin-server_default
+
+  # Internal audio downloader for the "Música" feature. Holds its own
+  # JELLYFIN_API_KEY (music library scans + ensure), searches YouTube Music
+  # (ytmusicapi), downloads with yt-dlp, and writes m4a into the shared media
+  # volume under /media/Music so Jellyfin picks them up. No published ports —
+  # only the BFF (on media-automation) reaches it, and the BFF authenticates
+  # every caller against their Jellyseerr session first. Runs as PUID/PGID so
+  # written files are readable by Jellyfin (same media volume).
+  music-worker:
+    build: ./music-worker
+    container_name: poisonflix-music-worker
+    restart: always
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    volumes:
+      # The shared media disk — the worker writes /media/Music, Jellyfin reads it.
+      - ${DATA_DIR}/media:/media
+      # Jobs + dedup manifest + yt-dlp cache (best-effort persistence).
+      - ./music-worker/data:/data
     networks:
       - media-automation
       - jellyfin-server_default

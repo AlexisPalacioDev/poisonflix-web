@@ -81,10 +81,16 @@ function DetailAction({ status, isRequesting, onRequest, onPlay }: DetailActionP
         </button>
       );
     case 'Requesting':
+      // Rendered as text, not a disabled <button>. "Pendiente" is a STATE, not
+      // an action: as a button it sat next to the real "Cancelar" one, so the
+      // screen offered two controls where only one does anything, and tapping
+      // the prominent one did nothing. Kept as visible copy rather than
+      // dropped, because ProgressHint only appears once a percentage exists -
+      // without this the user would lose all feedback in the pending window.
       return (
-        <button type="button" className="pf-detail__action pf-detail__action--requesting" disabled>
+        <p className="pf-detail__status" role="status">
           {jellyseerrStatusLabel(status.jellyseerrStatus)}
-        </button>
+        </p>
       );
     case 'Requestable':
       return (
@@ -267,7 +273,7 @@ export function DetailScreen() {
     return (
       <main className="pf-detail">
         <Header />
-        <p className="pf-detail__status">Cargando…</p>
+        <p className="pf-detail__loading">Cargando…</p>
       </main>
     );
   }
@@ -276,7 +282,7 @@ export function DetailScreen() {
     return (
       <main className="pf-detail">
         <Header />
-        <div className="pf-detail__status pf-detail__status--error" role="alert">
+        <div className="pf-detail__loading pf-detail__loading--error" role="alert">
           <span>No se pudo cargar el detalle.</span>
           <button type="button" className="pf-detail__retry" onClick={() => refetch()}>
             Reintentar
@@ -420,7 +426,11 @@ export function DetailScreen() {
             {displayStatus?.kind === 'Requesting' && (
               <button
                 type="button"
-                className="pf-detail__secondary"
+                // Promoted to `--primary` sizing: while requesting this is the
+                // only action on screen, so it should not keep the smaller
+                // secondary treatment it had when it sat under a bigger
+                // (inert) "Pendiente" button.
+                className="pf-detail__secondary pf-detail__secondary--primary"
                 onClick={() => setShowCancelConfirm(true)}
                 disabled={cancelDownload.isPending}
               >

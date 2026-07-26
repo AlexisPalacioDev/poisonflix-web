@@ -2,9 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- PNG first, and unconditionally: SVG favicons need Chrome 80+, so the
+         2018 LG TV browser ignored the SVG-only declaration and fell back to
+         its generic globe on the home-screen tile. Modern browsers still
+         prefer the SVG below via the more specific type match. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>poisonflix-web</title>
+    <meta name="theme-color" content="#0a0c10" />
+    <!-- Names the tile/bookmark on TV and mobile home screens; without it the
+         label came from <title>, which read "poisonflix-web". -->
+    <meta name="application-name" content="PoisonFlix" />
+    <meta name="apple-mobile-web-app-title" content="PoisonFlix" />
+    <title>PoisonFlix</title>
   </head>
   <body>
     <div id="root"></div>

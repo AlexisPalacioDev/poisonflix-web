@@ -1,12 +1,38 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import legacy from '@vitejs/plugin-legacy';
 import { VitePWA } from 'vite-plugin-pwa';
+import flexGapFallback from './postcss-flex-gap-fallback.mjs';
 
 // https://vite.dev/config/
 export default defineConfig({
+  css: {
+    // Generates `.no-flex-gap ... > * + *` margin rules beside every flex
+    // `gap`, for the 2018 TV browser that silently drops the property. The
+    // class is only applied when runtime detection fails, so modern browsers
+    // are unaffected. See postcss-flex-gap-fallback.mjs.
+    postcss: { plugins: [flexGapFallback()] },
+  },
   plugins: [
     react(),
+    // The 2018 LG webOS 4.x TV browser is Chromium ~53, which predates
+    // `<script type="module">` (Chrome 61+). Vite's default `modules` target
+    // emits ONLY a module script, so that browser silently skipped it and
+    // rendered a black screen - no error, nothing executed at all.
+    //
+    // This emits a parallel ES5 + SystemJS bundle tagged `nomodule`, which
+    // module-aware browsers ignore and old ones load. Keep the targets low
+    // enough to cover that TV; raising them re-breaks it silently, since the
+    // failure mode is a blank page rather than a console error.
+    legacy({
+      targets: ['chrome >= 53', 'edge >= 15', 'safari >= 10'],
+      // webOS 4's engine is missing more than syntax (Promise.allSettled,
+      // Object.fromEntries, String.replaceAll...), so ship the polyfills the
+      // legacy chunk needs instead of only transpiling.
+      renderLegacyChunks: true,
+      modernPolyfills: true,
+    }),
     // PWA plugin present per design.md §9 but intentionally INACTIVE for MVP:
     // no service worker registration is wired up (injectRegister: null,
     // empty workbox globPatterns), so there's no offline caching / install
@@ -16,13 +42,18 @@ export default defineConfig({
       registerType: 'prompt',
       injectRegister: null,
       manifest: {
-        name: 'poisonflix-web',
-        short_name: 'poisonflix',
+        name: 'PoisonFlix',
+        short_name: 'PoisonFlix',
         description: 'Thin same-origin PWA client for Jellyfin + Jellyseerr',
         theme_color: '#0a0c10',
         background_color: '#0a0c10',
         display: 'standalone',
-        icons: [],
+        // Rendered from the live PoisonMark component (see the icon-*.png in
+        // public/) so the launcher icon cannot drift from the in-app mark.
+        icons: [
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+        ],
       },
       workbox: {
         globPatterns: [],

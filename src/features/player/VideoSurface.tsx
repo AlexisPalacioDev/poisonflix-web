@@ -261,6 +261,8 @@ export function VideoSurface({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Only ever true on browsers without element-level Fullscreen API (iOS).
+  const [pseudoFullscreen, setPseudoFullscreen] = useState(false);
 
   // Resume-seek-once guard (player spec: "only when position > 0"; carried
   // forward gotcha: never seek before metadata is actually ready, and never
@@ -459,8 +461,18 @@ export function VideoSurface({
     if (!el) return;
     if (document.fullscreenElement) {
       void document.exitFullscreen();
+    } else if (pseudoFullscreen) {
+      setPseudoFullscreen(false);
     } else if (el.requestFullscreen) {
       void el.requestFullscreen();
+    } else {
+      // iOS Safari exposes the Fullscreen API on <video> ONLY, never on a
+      // container div - so `el.requestFullscreen` is undefined here and the
+      // button used to do nothing at all. The <video> route does exist
+      // (webkitEnterFullscreen) but it hands playback to the OS player, which
+      // is precisely the chrome-stealing bug `playsInline` above fixes. A CSS
+      // overlay is the only fullscreen that keeps our own controls reachable.
+      setPseudoFullscreen(true);
     }
   };
 
@@ -536,7 +548,7 @@ export function VideoSurface({
   return (
     <div
       ref={containerRef}
-      className="pf-player-surface"
+      className={`pf-player-surface${pseudoFullscreen ? ' pf-player-surface--pseudo-fullscreen' : ''}`}
       onMouseMove={revealControls}
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -549,6 +561,12 @@ export function VideoSurface({
         // attachMedia/native-HLS assignment) in the effect above - never via
         // this JSX attribute, so React never fights hls.js for control of it.
         autoPlay
+        // Without this, iOS Safari refuses to play a <video> inline and hands
+        // it to the OS fullscreen player instead - which paints its own chrome
+        // over ours, so every custom control (subtitle picker, audio track,
+        // back button) becomes unreachable mid-playback. The custom controls
+        // below are only ever visible because playback stays in our element.
+        playsInline
         onLoadedMetadata={() => {
           setDuration(videoRef.current?.duration ?? 0);
           // Gotcha (file header, point 1): only DirectPlay's resume seek is
@@ -698,9 +716,11 @@ export function VideoSurface({
               type="button"
               className="pf-player-surface__icon-btn"
               onClick={toggleFullscreen}
-              aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+              aria-label={
+                isFullscreen || pseudoFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'
+              }
             >
-              {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
+              {isFullscreen || pseudoFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
             </button>
           </div>
         </div>

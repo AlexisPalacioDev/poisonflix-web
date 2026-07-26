@@ -24,8 +24,38 @@
       // Thin webOS launcher. The app itself is served same-origin behind the
       // Caddy reverse proxy, so we hand off to that origin instead of bundling
       // dist/ locally (relative /jellyfin & /jellyseerr paths only work there).
-      var ORIGIN = "https://poisonflix.tail3af19b.ts.net/";
-      window.location.replace(ORIGIN);
+      //
+      // LAN is tried FIRST and the public Funnel is only a fallback, because
+      // this origin also carries the video stream: over Funnel every byte of a
+      // multi-GB playback would round-trip through Tailscale's public relays,
+      // while the TV normally sits on the same network as the server. The probe
+      // is a tiny static file with a short timeout, so a TV away from home
+      // still lands on the public origin within a couple of seconds.
+      var LAN = "http://192.168.1.50:8600/";
+      var PUBLIC = "https://poisonflix-1.tail3af19b.ts.net/";
+
+      var settled = false;
+      function decide(origin) {
+        if (settled) return;
+        settled = true;
+        window.location.replace(origin);
+      }
+
+      var timer = setTimeout(function () {
+        decide(PUBLIC);
+      }, 2500);
+
+      // `no-store` keeps a cached success from a previous run out of the
+      // decision - webOS keeps the launcher warm between relaunches.
+      fetch(LAN + "updates/version.json", { cache: "no-store" })
+        .then(function (r) {
+          clearTimeout(timer);
+          decide(r.ok ? LAN : PUBLIC);
+        })
+        .catch(function () {
+          clearTimeout(timer);
+          decide(PUBLIC);
+        });
     </script>
   </body>
 </html>

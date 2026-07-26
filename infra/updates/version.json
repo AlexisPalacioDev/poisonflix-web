@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.8",
-  "apk": "poisonflix-v8.apk",
-  "notes": "Nuevo: Favoritos ⭐ — marcá pelis y series desde su ficha y encontralas en la fila 'Mis favoritos' del inicio."
+  "versionCode": 9,
+  "versionName": "1.9",
+  "apk": "poisonflix-v9.apk",
+  "notes": "Corrección: el estado 'Pendiente' ya no es un botón inerte — ahora 'Cancelar' es la única acción en pantalla mientras se descarga."
 }

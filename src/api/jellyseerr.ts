@@ -39,6 +39,19 @@ export async function authJellyfin({ username, password }: AuthJellyfinParams): 
 }
 
 /**
+ * Ends the server-side Jellyseerr session by invalidating its `connect.sid`
+ * cookie (Jellyseerr's `POST /api/v1/auth/logout`). Same-origin via the
+ * `/jellyseerr` proxy, so `apiFetch`'s `credentials:'include'` replays the
+ * cookie for the server to clear. Returns 204/JSON with nothing worth
+ * validating. Callers MUST treat this as best-effort: a failure here must not
+ * strand the user, so local session teardown proceeds regardless (AuthContext
+ * `logout`).
+ */
+export async function logout(): Promise<void> {
+  await apiFetch('jellyseerr', '/api/v1/auth/logout', { method: 'POST' });
+}
+
+/**
  * TMDB-backed multi-search; movie/tv results carry an embedded `mediaInfo`
  * once tracked.
  *

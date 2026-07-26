@@ -92,6 +92,57 @@
   justify-content: center;
 }
 
+/* Subtle music accent on the brand while inside the /musica section, so it's
+   clear at a glance you're in "music mode" (the film-strip button is the way
+   back to Netflix mode). */
+.pf-header--music .pf-header__title {
+  color: #1ed760;
+}
+
+/* Mobile hamburger menu. Below 899px (the now-playing bar's breakpoint) the
+   inline row is swapped in JS for this toggle + dropdown panel. */
+.pf-header__menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pf-header__hamburger {
+  width: 44px;
+  justify-content: center;
+  padding: 0;
+}
+
+.pf-header__menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+  padding: 10px;
+  border-radius: var(--pf-radius-md);
+  background: rgba(10, 12, 16, 0.96);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* Inside the panel every item is a full-width row with its label always shown,
+   overriding the icon-only collapse rule below. */
+.pf-header__menu-panel .pf-header__search {
+  width: 100%;
+  height: 44px;
+  justify-content: flex-start;
+  padding: 0 14px;
+}
+
+.pf-header__menu-panel .pf-header__search-label {
+  display: inline;
+}
+
 @media (max-width: 640px) {
   .pf-header__search-label {
     display: none;

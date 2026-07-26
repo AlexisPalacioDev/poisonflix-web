@@ -14,6 +14,12 @@ import { ContinueWatchingScreen } from '../features/browse/ContinueWatchingScree
 import { RegisterScreen } from '../features/register/RegisterScreen';
 import { ForgotPasswordScreen } from '../features/register/ForgotPasswordScreen';
 import { AdminScreen } from '../features/admin/AdminScreen';
+import { AppLayout } from '../features/music/AppLayout';
+import { MusicScreen } from '../features/music/MusicScreen';
+import { AlbumScreen } from '../features/music/AlbumScreen';
+import { ArtistScreen } from '../features/music/ArtistScreen';
+import { TrackScreen } from '../features/music/TrackScreen';
+import { PlaylistScreen } from '../features/music/PlaylistScreen';
 
 // Route tree per design.md §7. `:id` is the TMDB id for /detail and the
 // Jellyfin item id for /player.
@@ -47,6 +53,13 @@ export const routes: RouteObject[] = [
       </PublicOnlyRoute>
     ),
   },
+  {
+    // Pathless layout route: every authed screen renders inside AppLayout, which
+    // pins the persistent NowPlayingBar under the routed content. The bar stays
+    // mounted across authed navigations (the layout never remounts); the audio
+    // element itself lives higher still, in MusicPlayerProvider (App.tsx).
+    element: <AppLayout />,
+    children: [
   {
     // RouteGuard only guarantees a session exists; the isAdmin gate itself
     // lives inside AdminScreen (mirrors Downloads' admin-only +18 delete).
@@ -142,6 +155,58 @@ export const routes: RouteObject[] = [
         <DownloadsScreen />
       </RouteGuard>
     ),
+  },
+  {
+    // Música (Slice 1): search YouTube Music, download to the server, play from
+    // the Jellyfin library through the persistent bar.
+    path: '/musica',
+    element: (
+      <RouteGuard>
+        <MusicScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Música browse (Slice 3): album detail — header + track list, play the
+    // whole album or single tracks through the persistent bar.
+    path: '/musica/album/:id',
+    element: (
+      <RouteGuard>
+        <AlbumScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Música browse (Slice 3): artist detail — the artist's albums, each
+    // linking to its album page.
+    path: '/musica/artist/:id',
+    element: (
+      <RouteGuard>
+        <ArtistScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Música track detail: a single song's full info, with cross-links to its
+    // artist and album pages. Reached by clicking a song row/title/cover.
+    path: '/musica/track/:id',
+    element: (
+      <RouteGuard>
+        <TrackScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Música playlists: one user-created playlist's tracks — play the whole
+    // list, remove single tracks, or delete the list.
+    path: '/musica/playlist/:id',
+    element: (
+      <RouteGuard>
+        <PlaylistScreen />
+      </RouteGuard>
+    ),
+  },
+    ],
   },
   { path: '*', element: <Navigate to="/" replace /> },
 ];
