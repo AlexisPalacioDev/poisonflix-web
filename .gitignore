@@ -39,3 +39,10 @@ infra/.env
 *.njsproj
 *.sln
 *.sw?
+
+# Deploy backups, OTA apk, local override and runtime state
+infra/www.bak*/
+infra/updates/*.apk
+infra/docker-compose.override.yml
+infra/music-worker/data/
+infra/bff/data/
