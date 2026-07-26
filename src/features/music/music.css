@@ -1176,3 +1176,44 @@
   font-weight: 700;
   color: #1db954;
 }
+
+/* Collection cards: play / queue beside the download button ------------- */
+
+.pf-music__coll-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pf-music__coll-actions--rail {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+}
+
+/* The secondary action reads as secondary: same size and hit area, quieter
+   fill, so "Reproducir" stays the obvious primary. */
+.pf-music__play-icon--ghost {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.pf-music__play-icon--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.pf-music__spinner {
+  animation: pf-music-spin 0.8s linear infinite;
+}
+
+@keyframes pf-music-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-music__spinner {
+    animation-duration: 2.4s;
+  }
+}

@@ -1038,6 +1038,51 @@ def _map_watch_track(track):
     }
 
 
+def collection_tracks(browse_id=None, playlist_id=None, limit=200):
+    """Track list for an album or a playlist, WITHOUT downloading anything.
+
+    Collections were download-only until now: the SPA knew an album by its
+    browseId and a playlist by its playlistId, neither of which can be streamed
+    -- only the individual videoIds inside them can. Handing back that list is
+    what lets a collection be played or queued straight from search, through the
+    same /stream proxy a single search hit already uses.
+
+    Best-effort, like the rest of the ytmusicapi surface: an empty list means the
+    caller falls back to offering the download it always had.
+    """
+    try:
+        yt = _get_ytmusic()
+    except Exception:  # noqa: BLE001
+        return []
+
+    try:
+        if browse_id:
+            data = yt.get_album(browse_id) or {}
+        else:
+            pid = (playlist_id or "").strip()
+            # Search returns playlist ids both bare and "VL"-prefixed.
+            if pid.startswith("VL"):
+                pid = pid[2:]
+            if not pid:
+                return []
+            data = yt.get_playlist(pid, limit=limit) or {}
+    except Exception:  # noqa: BLE001
+        return []
+
+    # Album tracks inherit the cover art instead of carrying their own, so the
+    # collection art is the fallback rather than leaving every row blank.
+    fallback_thumb = _first_thumb(_item_thumbs(data))
+    results = []
+    for track in (data.get("tracks") or []):
+        if not track.get("videoId"):
+            continue
+        mapped = _map_watch_track(track)
+        if not mapped.get("thumbnailUrl"):
+            mapped["thumbnailUrl"] = fallback_thumb
+        results.append(mapped)
+    return results[:limit]
+
+
 def _recent_seed_video():
     """Most recent completed download's videoId, used as an implicit rec seed."""
     with _lock:
@@ -1277,6 +1322,23 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 results = recommendations(seed, limit)
             except Exception:  # noqa: BLE001 — recommendations are best-effort.
+                results = []
+            return self._send(200, {"results": _annotate_downloaded(results)})
+
+        if path == "/collection":
+            qs = urllib.parse.parse_qs(parsed.query)
+            browse_id = (qs.get("browseId", [""])[0]).strip() or None
+            playlist_id = (qs.get("playlistId", [""])[0]).strip() or None
+            if not browse_id and not playlist_id:
+                return self._send(400, {"error": "missing_collection_id"})
+            try:
+                limit = int(qs.get("limit", ["200"])[0])
+            except ValueError:
+                limit = 200
+            limit = max(1, min(limit, 500))
+            try:
+                results = collection_tracks(browse_id, playlist_id, limit)
+            except Exception:  # noqa: BLE001 — best-effort, same as search.
                 results = []
             return self._send(200, {"results": _annotate_downloaded(results)})
 

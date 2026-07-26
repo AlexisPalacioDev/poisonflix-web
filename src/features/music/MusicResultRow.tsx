@@ -18,6 +18,8 @@ export interface MusicResultRowProps {
   onDownload: (result: MusicSearchResult) => void;
   onPlay: (result: MusicSearchResult, itemId: string) => void;
   onEnqueue: (result: MusicSearchResult, itemId: string) => void;
+  /** Queue a not-yet-downloaded hit as a stream. */
+  onEnqueuePreview: (result: MusicSearchResult) => void;
   // Instant-play a not-yet-downloaded result by streaming it (no download).
   onPreview: (result: MusicSearchResult) => void;
   /** The player's current track, so the row that is sounding shows ⏸ and its
@@ -34,6 +36,7 @@ export function MusicResultRow({
   onDownload,
   onPlay,
   onEnqueue,
+  onEnqueuePreview,
   onPreview,
   current,
   isPlaying,
@@ -86,7 +89,7 @@ export function MusicResultRow({
           album: result.album ?? undefined,
         }}
         onDownload={() => onDownload(result)}
-        onEnqueue={(id) => onEnqueue(result, id)}
+        onEnqueue={(id) => (id ? onEnqueue(result, id) : onEnqueuePreview(result))}
       />
     </li>
   );

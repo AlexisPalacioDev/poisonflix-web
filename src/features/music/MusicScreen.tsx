@@ -10,6 +10,7 @@ import { useMusicDownload } from '../../hooks/useMusicDownload';
 import { usePersonalMusicFeed } from '../../hooks/usePersonalMusicFeed';
 import { resolveCoverUrl } from '../../lib/domain/posterUrl';
 import { audioItemToTrack, searchResultToTrack } from '../../lib/domain/musicTrack';
+import { songsOnly } from '../../lib/domain/musicTaste';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { MusicSearchResult, MusicSongResult, MusicSource } from '../../api/schemas/music';
 import { useMusicPlayer } from './musicPlayerCore';
@@ -24,7 +25,7 @@ import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
 import { MyMusicStats } from './MyMusicStats';
 import { deleteItem } from '../../api/jellyfin';
-import { getRecommendations } from '../../api/music';
+import { getCollectionTracks, getRecommendations, type CollectionRef } from '../../api/music';
 import { RADIO_SIZE } from './useAutoplayRadio';
 import { queryKeys } from '../../hooks/queryKeys';
 import { useQueryClient } from '@tanstack/react-query';
@@ -154,6 +155,32 @@ export function MusicScreen() {
   };
   const handleEnqueueResult = (result: MusicSearchResult, itemId: string) =>
     enqueue(resultToTrack(result, itemId));
+  // A hit that isn't downloaded is still playable, so it must be queueable:
+  // the queued track simply carries its stream URL instead of a Jellyfin id.
+  const handleEnqueuePreview = (result: MusicSearchResult) =>
+    enqueue(searchResultToTrack(result));
+
+  // Albums and playlists were download-only because the SPA only knew their id.
+  // Resolving the track list turns them into an ordinary queue of streamable
+  // tracks — downloaded ones still play from Jellyfin, courtesy of the worker's
+  // `downloaded` annotation flowing through `searchResultToTrack`.
+  // The awaited promise is what the card uses to show its own pending state:
+  // resolving a 300-track playlist is not instant, and a button that looks
+  // inert while it works reads as broken.
+  const resolveCollection = async (ref: CollectionRef) => {
+    const items = await getCollectionTracks(ref);
+    return songsOnly(items).map(searchResultToTrack);
+  };
+
+  const handlePlayCollection = async (ref: CollectionRef) => {
+    const tracks = await resolveCollection(ref);
+    if (tracks.length > 0) playNow(tracks);
+  };
+
+  const handleEnqueueCollection = async (ref: CollectionRef) => {
+    const tracks = await resolveCollection(ref);
+    if (tracks.length > 0) enqueue(tracks);
+  };
 
   // Instant-play a result that isn't downloaded yet: `searchResultToTrack` gives
   // it a "preview" src — the worker's /bff/music/stream proxy for its videoId —
@@ -231,6 +258,7 @@ export function MusicScreen() {
                     onDownload={handleDownload}
                     onPlay={handlePlayResult}
                     onEnqueue={handleEnqueueResult}
+                    onEnqueuePreview={handleEnqueuePreview}
                     onPreview={handlePreview}
                     current={current}
                     isPlaying={isPlaying}
@@ -244,6 +272,8 @@ export function MusicScreen() {
                         : `playlist-${result.playlistId}`
                     }
                     item={result}
+                    onPlay={handlePlayCollection}
+                    onEnqueue={handleEnqueueCollection}
                   />
                 ),
               )}

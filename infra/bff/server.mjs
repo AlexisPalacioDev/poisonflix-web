@@ -496,6 +496,9 @@ async function handleMusic(req, res, subPath, search) {
   const isPlaylistBatch = /^\/playlists\/[^/]+$/.test(subPath);
   // Instant-play: the worker streams the audio for a videoId without downloading.
   const isStream = subPath === '/stream';
+  // The tracks inside an album/playlist, so a collection can be played or
+  // queued without downloading it first.
+  const isCollection = subPath === '/collection';
 
   let ok = false;
   if (
@@ -505,7 +508,8 @@ async function handleMusic(req, res, subPath, search) {
       isDownloadsCollection ||
       isDownloadJob ||
       isPlaylistBatch ||
-      isStream)
+      isStream ||
+      isCollection)
   ) {
     ok = true;
   }

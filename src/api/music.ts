@@ -66,6 +66,30 @@ export async function getRadio(seed: RadioSeed, limit = 15): Promise<MusicResult
   return results;
 }
 
+// What identifies a collection to the worker.
+export type CollectionRef = { browseId: string } | { playlistId: string };
+
+/**
+ * The tracks inside an album or playlist, without downloading any of them.
+ *
+ * A collection is only an id: it cannot be streamed, but the videoIds inside it
+ * can. Resolving that list is what lets "Reproducir" and "Agregar a la cola"
+ * exist on a collection card at all, reusing the same per-track stream proxy a
+ * single search hit uses.
+ */
+export async function getCollectionTracks(
+  ref: CollectionRef,
+  limit = 200,
+): Promise<MusicResultItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if ('browseId' in ref) params.set('browseId', ref.browseId);
+  else params.set('playlistId', ref.playlistId);
+  const { results } = await apiFetch('bff', `/music/collection?${params.toString()}`, {
+    schema: MusicSearchResponseSchema,
+  });
+  return results;
+}
+
 // Kicks off a whole-collection download. The worker accepts a YT Music playlist
 // id, an album `browseId`, or a raw playlist URL — reached from the search /
 // recommendation collection cards. Returns a batch handle (202 Accepted) whose

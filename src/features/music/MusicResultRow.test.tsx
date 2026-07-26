@@ -29,6 +29,7 @@ function renderRow(over: Partial<Parameters<typeof MusicResultRow>[0]> = {}) {
     onDownload: vi.fn(),
     onPlay: vi.fn(),
     onEnqueue: vi.fn(),
+    onEnqueuePreview: vi.fn(),
     onPreview: vi.fn(),
     current: null as MusicTrack | null,
     isPlaying: false,

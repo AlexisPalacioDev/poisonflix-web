@@ -40,8 +40,10 @@ export interface MusicRowMenuProps {
   downloadParams?: RequestDownloadParams;
   /** Fire the shared per-row download (drives the row's own state). */
   onDownload?: () => void;
-  /** Enqueue the already-in-library track. */
-  onEnqueue?: (itemId: string) => void;
+  /** Enqueue this track. Receives the Jellyfin itemId when the track is in the
+   *  library, or null for a search hit that will be queued as a stream — a
+   *  not-yet-downloaded track is playable, so it must be queueable too. */
+  onEnqueue?: (itemId: string | null) => void;
   /** Delete the track's file from the library (library rows). Confirms first. */
   onDelete?: (itemId: string) => void | Promise<void>;
   /** Remove the track from the current playlist (playlist rows only). */
@@ -226,7 +228,7 @@ export function MusicRowMenu({
           <div className="pf-music__addpl-menu" role="menu" aria-label={`Opciones para ${title}`}>
             {view === 'menu' ? (
               <ul className="pf-music__addpl-list">
-                {itemId && onEnqueue && (
+                {onEnqueue && (
                   <li>
                     <button
                       type="button"
