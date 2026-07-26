@@ -46,3 +46,7 @@ infra/updates/*.apk
 infra/docker-compose.override.yml
 infra/music-worker/data/
 infra/bff/data/
+
+# Python bytecode from the music worker (regenerated on every run)
+__pycache__/
+*.pyc
