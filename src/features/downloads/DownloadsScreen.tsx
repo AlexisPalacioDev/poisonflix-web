@@ -19,9 +19,13 @@ import './downloads.css';
 // Downloads screen (projector-feature-map.md §9, walkthrough §14) - ported
 // from `DownloadsScreen.kt`/`DownloadsViewModel.kt`: a dedicated grid of
 // every active Jellyseerr request, distinct from Home's deferred "En camino"
-// row. Each card shows its status pill + live download %; long-pressing a
-// card (D-pad long-press on the native app, press-and-hold here via
-// `PosterCard.onLongClick`) opens the cancel confirm.
+// row. Each card shows its status pill + live download %.
+//
+// Cancelling is reachable two ways, because the long-press ported from the
+// D-pad app is undiscoverable with a mouse - nothing on screen suggests a
+// card can be held. So a "Cancelar" action now surfaces on hover/focus over
+// the poster, swapping in for the status pill, while the long-press stays for
+// touch and D-pad. Both open the same confirm overlay.
 
 function statusVariant(statusLabel: string): StatusBadgeVariant {
   // Green "available" treatment once done downloading; gold "in progress"
@@ -160,11 +164,24 @@ export function DownloadsScreen() {
       {!isLoading && !isError && visibleItems.length > 0 && (
         <div className="pf-downloads__grid">
           {visibleItems.map((item) => (
-            <PosterCard
-              key={item.id}
-              item={toPosterItem(item)}
-              onLongClick={() => setPendingCancel(item)}
-            />
+            // The cancel action is a SIBLING of the card, not a child: the
+            // card itself renders as a <button>, and a nested button is
+            // invalid HTML (and unreachable for keyboard users). The cell is
+            // the positioning context; downloads.css overlays the action on
+            // the poster and fades the status pill out under it.
+            <div key={item.id} className="pf-downloads__cell">
+              <PosterCard item={toPosterItem(item)} onLongClick={() => setPendingCancel(item)} />
+              {item.statusLabel !== 'Disponible' && (
+                <button
+                  type="button"
+                  className="pf-downloads__cancel"
+                  onClick={() => setPendingCancel(item)}
+                  aria-label={`Cancelar la descarga de ${item.title}`}
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}

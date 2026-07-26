@@ -142,7 +142,10 @@ describe('DownloadsScreen (projector-feature-map.md §9, walkthrough §14)', () 
 
     renderDownloads();
 
-    const card = await screen.findByRole('button', { name: /603/ });
+    // Target the card itself, not the sibling "Cancelar" action that now also
+    // carries 603 in its accessible name - hence the title-then-closest-button
+    // lookup instead of a name regex.
+    const card = (await screen.findByText('603')).closest('button') as HTMLElement;
 
     vi.useFakeTimers();
     fireEvent.pointerDown(card);
@@ -159,5 +162,35 @@ describe('DownloadsScreen (projector-feature-map.md §9, walkthrough §14)', () 
 
     expect(mutate).toHaveBeenCalledWith({ tmdbId: 603, requestId: 1 }, expect.anything());
     expect(screen.queryByText('Cancelar descarga')).not.toBeInTheDocument();
+  });
+
+  it('exposes a per-card Cancelar action reachable without a long-press', async () => {
+    mockedGetRequests.mockResolvedValue(REQUESTS_FIXTURE as never);
+    mockedUseDownloadProgress.mockReturnValue({
+      progressByTmdbId: new Map([[603, 42]]),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+    const mutate = mockCancelDownload();
+
+    renderDownloads();
+
+    // The long-press is ported from a D-pad remote and is undiscoverable with
+    // a mouse, so the action also exists as a real control. It is a sibling of
+    // the card (the card is itself a <button>), revealed on hover/focus by CSS
+    // but always present in the DOM - which is what makes it keyboard-reachable
+    // rather than mouse-only.
+    const cancel = await screen.findByRole('button', { name: 'Cancelar la descarga de 603' });
+
+    fireEvent.click(cancel);
+
+    // Same confirm overlay as the long-press path - one cancel flow, two ways in.
+    expect(await screen.findByText('Cancelar descarga')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sí, cancelar' }));
+
+    expect(mutate).toHaveBeenCalledWith({ tmdbId: 603, requestId: 1 }, expect.anything());
   });
 });

@@ -134,3 +134,77 @@
   font-size: 0.85rem;
   margin: 0 0 var(--pf-space-md);
 }
+
+/* Cancel-on-hover. The action has to live OUTSIDE `PosterCard` (that card is
+   itself a <button>, so nesting one would be invalid HTML), hence the cell
+   wrapper as a positioning context. Anchored to the TOP of the poster rather
+   than replacing the badge at its exact `bottom: 14px`: the cell is taller
+   than the art (it also contains the title), so a bottom offset would float
+   the button below the poster. Top-left anchors to the art reliably. */
+.pf-downloads__cell {
+  position: relative;
+}
+
+.pf-downloads__cancel {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 4px 11px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  background: #c0392b;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.pf-downloads__cancel:hover {
+  background: #e04b39;
+}
+
+/* Revealed by hovering the cell OR by keyboard focus landing anywhere in it,
+   so this is not a mouse-only affordance. */
+.pf-downloads__cell:hover .pf-downloads__cancel,
+.pf-downloads__cell:focus-within .pf-downloads__cancel {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Swap in place: the status pill fades out as the action fades in, so the
+   poster never shows two competing labels at once. */
+.pf-downloads__cell .pf-poster-card__badge {
+  transition: opacity 120ms ease;
+}
+
+.pf-downloads__cell:hover .pf-poster-card__badge,
+.pf-downloads__cell:focus-within .pf-poster-card__badge {
+  opacity: 0;
+}
+
+/* Touch has no hover. The long-press still works, but an action nobody can
+   discover is not an action - so show it outright there. */
+@media (hover: none) {
+  .pf-downloads__cancel {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .pf-downloads__cell .pf-poster-card__badge {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-downloads__cancel,
+  .pf-downloads__cell .pf-poster-card__badge {
+    transition: none;
+  }
+}
