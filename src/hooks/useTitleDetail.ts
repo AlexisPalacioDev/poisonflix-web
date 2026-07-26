@@ -69,7 +69,11 @@ function parseYear(dateStr: string | null | undefined): number | null {
 
 export function useTitleDetail(tmdbId: string, mediaType: MediaType) {
   const idNum = Number(tmdbId);
-  const validId = Number.isFinite(idNum);
+  // `Number('')` is 0, NOT NaN, so an isFinite check alone lets an empty id
+  // through and fires `GET /jellyseerr/api/v1/movie/0` -> 500 (x4, counting
+  // react-query retries) on every mount that renders a detail with no
+  // selection. TMDB ids are positive, so require > 0.
+  const validId = Number.isFinite(idNum) && idNum > 0;
 
   const detailQuery = useQuery({
     queryKey: queryKeys.detail(mediaType, tmdbId),
