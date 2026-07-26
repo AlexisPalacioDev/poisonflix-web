@@ -53,7 +53,8 @@ function toPosterItem(entry: SearchResultEntry): PosterItem {
 export function SearchScreen() {
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { debouncedQuery, enabled, isLoading, isError, entries, refetch } = useSearch(query);
+  const { debouncedQuery, enabled, isSuggestions, isLoading, isError, entries, refetch } =
+    useSearch(query);
 
   const posterItems = useMemo(() => entries.map(toPosterItem), [entries]);
 
@@ -74,9 +75,11 @@ export function SearchScreen() {
     entries[0] ??
     null;
 
+  // With no query typed the carousel shows trending suggestions (useSearch),
+  // so this only ever renders if trending itself came back empty.
   const emptyMessage = enabled
     ? `Sin resultados para "${debouncedQuery}"`
-    : 'Escribí al menos 2 caracteres para buscar.';
+    : 'No hay sugerencias para mostrar ahora mismo.';
 
   return (
     <main className="pf-search">
@@ -95,7 +98,7 @@ export function SearchScreen() {
       </div>
 
       <Row
-        title={enabled ? 'Resultados' : 'Buscar'}
+        title={isSuggestions ? 'Sugerencias' : 'Resultados'}
         items={posterItems}
         isLoading={isLoading}
         isError={isError}
@@ -116,9 +119,11 @@ function BigPreview({ entry }: { entry: SearchResultEntry | null }) {
   // the whole carousel - reusing `useTitleDetail`'s shared `queryKeys.detail`
   // cache, so re-selecting a previously-viewed result is served from cache
   // instead of refetching. Hooks must run unconditionally (rules of hooks),
-  // so with no selection this just calls the hook with an empty id: inside
-  // `useTitleDetail`, `Number('')` is not finite, so `validId` is false and
-  // the query stays disabled - no request fires while nothing is selected.
+  // so with no selection this just calls the hook with an empty id, which
+  // `useTitleDetail` gates out via `idNum > 0`. NOTE: that gate used to be a
+  // bare `Number.isFinite`, which does NOT reject an empty string - `Number('')`
+  // is 0 - so it fired `GET /jellyseerr/api/v1/movie/0` -> 500 on every mount.
+  // Fixed there; do not weaken it back to isFinite alone.
   // Typing doesn't cause extra fetches either: `entries` (and therefore
   // `selectedEntry`) only changes once the debounced query settles, not on
   // every keystroke.

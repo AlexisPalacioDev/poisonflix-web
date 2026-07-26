@@ -7,6 +7,7 @@ import { LibraryIndex, type TitleStatus } from '../lib/domain/libraryIndex';
 import { queryKeys } from './queryKeys';
 import { useDebouncedValue } from './useDebouncedValue';
 import { useLibraryRow } from './useLibraryRow';
+import { useTrendingRow } from './useTrendingRow';
 
 // Search's ViewModel-equivalent (design.md §4.3, search spec), ported from
 // `SearchViewModel.kt` L106-119/L238. Debounces the raw query 350ms and only
@@ -46,15 +47,27 @@ export function useSearch(rawQuery: string) {
     staleTime: 30_000,
   });
 
+  // Below the minimum query length the carousel would render nothing but an
+  // "escribí 2 caracteres" placeholder, which wastes the whole screen. Fall
+  // back to Home's Trending row as the suggestion source: SAME query key ->
+  // same react-query cache entry, so arriving from Home costs no extra
+  // request, and no new endpoint is introduced.
+  const trendingQuery = useTrendingRow();
+
   // Reuses Home's Library row query (same query key -> same cache entry) so
   // the badge join never issues an extra Jellyfin request Home hasn't
   // already made (design.md §4.4: correlate against the library).
   const library = useLibraryRow();
 
-  const entries = useMemo<SearchResultEntry[]>(() => {
-    if (!searchQuery.data) return [];
+  // Both queries resolve the same `JellyseerrSearchResponse` shape, so the
+  // dedup + LibraryIndex badge join below is identical for either source -
+  // suggestions get "En biblioteca"/"Pedir" badges exactly like results do.
+  const active = enabled ? searchQuery : trendingQuery;
 
-    const deduped = distinctBy(searchQuery.data.results, (result) => result.id);
+  const entries = useMemo<SearchResultEntry[]>(() => {
+    if (!active.data) return [];
+
+    const deduped = distinctBy(active.data.results, (result) => result.id);
     // TV/series results are deferred (search spec's Deferred section) -
     // movie/tv are the only media types with a poster+detail story in the
     // MVP; "person" entries from the multi-search endpoint are dropped.
@@ -71,15 +84,17 @@ export function useSearch(rawQuery: string) {
         result.mediaInfo?.status ?? null,
       ),
     }));
-  }, [searchQuery.data, library.data]);
+  }, [active.data, library.data]);
 
   return {
     query: rawQuery,
     debouncedQuery: trimmed,
     enabled,
-    isLoading: enabled && searchQuery.isLoading,
-    isError: enabled && searchQuery.isError,
+    /** True while the entries are trending suggestions rather than search hits. */
+    isSuggestions: !enabled,
+    isLoading: active.isLoading,
+    isError: active.isError,
     entries,
-    refetch: searchQuery.refetch,
+    refetch: active.refetch,
   };
 }

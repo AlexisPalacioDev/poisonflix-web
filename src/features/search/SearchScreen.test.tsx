@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SearchScreen } from './SearchScreen';
 import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 import { getItem, getItems } from '../../api/jellyfin';
-import { getMovieDetails, getTvDetails, search } from '../../api/jellyseerr';
+import { discoverTrending, getMovieDetails, getTvDetails, search } from '../../api/jellyseerr';
 import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
 
 vi.mock('../../api/jellyfin', () => ({
@@ -16,6 +16,7 @@ vi.mock('../../api/jellyfin', () => ({
 }));
 vi.mock('../../api/jellyseerr', () => ({
   search: vi.fn(),
+  discoverTrending: vi.fn(),
   getMovieDetails: vi.fn(),
   getTvDetails: vi.fn(),
 }));
@@ -25,6 +26,9 @@ const mockedGetItem = vi.mocked(getItem);
 const mockedSearch = vi.mocked(search);
 const mockedGetMovieDetails = vi.mocked(getMovieDetails);
 const mockedGetTvDetails = vi.mocked(getTvDetails);
+const mockedDiscoverTrending = vi.mocked(discoverTrending);
+
+const EMPTY_RESPONSE = { page: 1, totalPages: 1, totalResults: 0, results: [] };
 
 const LIBRARY_FIXTURE = {
   Items: [{ Id: 'jf-1', Name: 'Breaking Bad', ProviderIds: { Tmdb: '1396' }, ImageTags: null }],
@@ -85,6 +89,14 @@ function renderSearch() {
 }
 
 describe('SearchScreen (search spec)', () => {
+  // The idle (empty-query) carousel now falls back to Trending, so every
+  // render resolves this query. Default it to empty so tests that are not
+  // about suggestions keep their original empty-carousel assumptions; a
+  // queryFn resolving `undefined` would make react-query error the row.
+  beforeEach(() => {
+    mockedDiscoverTrending.mockResolvedValue(EMPTY_RESPONSE as never);
+  });
+
   afterEach(() => {
     clearSession();
     mockedGetItems.mockReset();
@@ -92,6 +104,7 @@ describe('SearchScreen (search spec)', () => {
     mockedSearch.mockReset();
     mockedGetMovieDetails.mockReset();
     mockedGetTvDetails.mockReset();
+    mockedDiscoverTrending.mockReset();
   });
 
   it('does not issue a request below the 2-char minimum, and shows a non-error empty state', async () => {
@@ -108,7 +121,9 @@ describe('SearchScreen (search spec)', () => {
     });
 
     expect(mockedSearch).not.toHaveBeenCalled();
-    expect(screen.getByText(/al menos 2 caracteres/i)).toBeInTheDocument();
+    // Trending is the idle fallback; with it empty the row shows the
+    // suggestions empty state, still non-error.
+    expect(await screen.findByText(/no hay sugerencias/i)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -267,29 +282,36 @@ describe('SearchScreen (search spec)', () => {
     expect(await screen.findByText('Audio disponible: Inglés · Español')).toBeInTheDocument();
   });
 
-  it('empty query shows the idle "Buscar" state with no results and a non-blank preview placeholder', async () => {
+  it('empty query shows trending suggestions instead of an idle empty state', async () => {
     mockedGetItems.mockResolvedValue(LIBRARY_FIXTURE as never);
-    // `mockClear` (not asserted on below, just a defensive reset): a prior
-    // test's unmount can leave react-query's own internal "refetch a stale
-    // query on teardown" bookkeeping to invoke the mocked `search` once more
-    // a few ms after that test already finished (confirmed in isolation with
-    // a bare `useSearch` harness - unrelated to this change, and to nothing
-    // this test types), which would otherwise make a raw
-    // `not.toHaveBeenCalled()` here order-dependent on whichever test ran
-    // right before it.
+    mockedGetTvDetails.mockResolvedValue(tvDetailsFixture() as never);
     mockedSearch.mockClear();
+    mockedDiscoverTrending.mockResolvedValue({
+      page: 1,
+      totalPages: 1,
+      totalResults: 1,
+      results: [resultFixture({ id: 1396, name: 'Breaking Bad', mediaType: 'tv' })],
+    } as never);
+
     renderSearch();
 
-    // No query typed yet - `enabled` is false, so no NEW Jellyseerr search
-    // fires (there is no separate "recommended/trending" fetch for Search in
-    // this web port; the idle empty-query state is the intentional fallback).
+    // Nothing typed -> no Jellyseerr *search* fires...
     expect(mockedSearch).not.toHaveBeenCalled();
-    expect(screen.getByRole('heading', { name: 'Buscar' })).toBeInTheDocument();
-    expect(screen.getByText(/al menos 2 caracteres/i)).toBeInTheDocument();
 
-    // Preview is never blank: with nothing selected it shows its own
-    // explicit empty-state message instead of rendering nothing.
-    expect(screen.getByText('Buscá y elegí un título para ver el detalle.')).toBeInTheDocument();
+    // ...but the carousel is no longer a dead end: it falls back to Home's
+    // Trending row (same query key -> same react-query cache entry, so
+    // arriving from Home costs no extra request), badge-joined against the
+    // library exactly like real search results.
+    expect(await screen.findByRole('heading', { name: 'Sugerencias' })).toBeInTheDocument();
+    expect(await screen.findAllByRole('button', { name: /breaking bad/i })).toHaveLength(1);
+    expect((await screen.findAllByText('En biblioteca')).length).toBeGreaterThan(0);
+
+    // And the big preview auto-selects the first suggestion instead of
+    // rendering its placeholder.
+    expect(await screen.findByRole('heading', { name: 'Breaking Bad' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Buscá y elegí un título para ver el detalle.'),
+    ).not.toBeInTheDocument();
   });
 
   it('clears the big preview on a settled empty-results query (walkthrough §21 deliberate deviation)', async () => {
