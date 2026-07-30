@@ -140,9 +140,15 @@ export const MusicPlaylistBatchSchema = z.object({
 });
 export type MusicPlaylistBatch = z.infer<typeof MusicPlaylistBatchSchema>;
 
+// The batch endpoint keys jobs by `jobId`, like every other job payload here,
+// and can report `unknown` for a job id it no longer holds state for (a worker
+// restart drops the in-memory map). This schema required `id` and rejected
+// `unknown`, so EVERY poll of a playlist/album download failed validation: the
+// card sat on "Descargar" forever with no progress and no error, while the
+// download completed fine server-side. See music-worker/server.py batch_status.
 export const MusicBatchJobSchema = z.object({
-  id: z.string(),
-  state: MusicJobStateSchema,
+  jobId: z.string(),
+  state: z.union([MusicJobStateSchema, z.literal('unknown')]),
   title: z.string().nullable().optional(),
   error: z.string().nullable().optional(),
   videoId: z.string().nullable().optional(),

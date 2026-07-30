@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { reportPlaying, reportProgress, reportStopped } from '../../api/jellyfin';
 import { reportPreviewPlay } from '../../api/music';
+import { reportFailure } from '../../lib/obs/report';
 import { secondsToTicks } from '../../lib/domain/streamResolver';
 import { useOptionalMusicPlayer } from './musicPlayerCore';
 
@@ -59,6 +60,22 @@ export function useMusicScrobble(): void {
   // on the position ticking once a second.
   const positionRef = useRef(0);
   positionRef.current = player?.position ?? 0;
+
+  // The LAST NON-ZERO position seen for the current track.
+  //
+  // `positionRef` alone cannot be used at teardown. It is assigned during render,
+  // and every track change resets position to 0 in the same reducer step, so the
+  // render that precedes cleanup has already written 0. Cleanup therefore always
+  // read 0: `countsAsListen(0, …)` was never true, so `reportPreviewPlay` never
+  // fired at all, and Jellyfin got `positionTicks: 0` — which it will not turn
+  // into a Played mark. The feed had no history to work from and the user's stats
+  // read zero while they listened every day.
+  //
+  // Ignoring zero is what makes this survive the reset. React runs cleanup BEFORE
+  // the next effect setup, so the outgoing track reads its own last good value and
+  // the incoming one starts from a clean slate.
+  const lastGoodPositionRef = useRef(0);
+  if (positionRef.current > 0) lastGoodPositionRef.current = positionRef.current;
   const playingRef = useRef(isPlaying);
   playingRef.current = isPlaying;
 
@@ -68,8 +85,7 @@ export function useMusicScrobble(): void {
 
   useEffect(() => {
     if (!itemId) return;
-    // Position at the moment this track was torn down — captured before the
-    // async stop report so it can't read the next track's position.
+    lastGoodPositionRef.current = 0;
     let stopped = false;
 
     void reportPlaying({
@@ -77,9 +93,11 @@ export function useMusicScrobble(): void {
       playSessionId: null,
       playMethod: 'DirectPlay',
       positionTicks: 0,
-    }).catch(() => {
-      // Reporting is best-effort: a failed report costs a little personalisation
-      // accuracy, never playback.
+    }).catch((cause: unknown) => {
+      // Best-effort still: a failed report must never break playback. But it now
+      // leaves a trace — a silent catch is why this whole path could be dead for
+      // weeks without anyone noticing.
+      reportFailure('music.scrobble.playing', cause, { itemId });
     });
 
     const interval = setInterval(() => {
@@ -90,7 +108,7 @@ export function useMusicScrobble(): void {
         playMethod: 'DirectPlay',
         positionTicks: secondsToTicks(positionRef.current),
         isPaused: false,
-      }).catch(() => {});
+      }).catch((cause: unknown) => reportFailure('music.scrobble.progress', cause, { itemId }));
     }, PROGRESS_INTERVAL_MS);
 
     return () => {
@@ -101,8 +119,8 @@ export function useMusicScrobble(): void {
       void reportStopped({
         itemId,
         playSessionId: null,
-        positionTicks: secondsToTicks(positionRef.current),
-      }).catch(() => {});
+        positionTicks: secondsToTicks(lastGoodPositionRef.current),
+      }).catch((cause: unknown) => reportFailure('music.scrobble.stopped', cause, { itemId }));
     };
   }, [itemId]);
 
@@ -115,21 +133,21 @@ export function useMusicScrobble(): void {
 
   useEffect(() => {
     if (!previewVideoId) return;
+    lastGoodPositionRef.current = 0;
 
     // Counted on teardown, not on start — mirroring how Jellyfin only turns a
     // *Stopped* report into a PlayCount. Starting a track is not listening to
     // it.
     return () => {
-      if (!countsAsListen(positionRef.current, previewSeconds)) return;
+      if (!countsAsListen(lastGoodPositionRef.current, previewSeconds)) return;
 
       void reportPreviewPlay({
         videoId: previewVideoId,
         title: previewTitle,
         artist: previewArtist,
         seconds: Math.round(previewSeconds),
-      }).catch(() => {
-        // Best-effort, same rule as the Jellyfin half: a lost report costs a
-        // little accuracy, never playback.
+      }).catch((cause: unknown) => {
+        reportFailure('music.scrobble.preview', cause, { videoId: previewVideoId });
       });
     };
   }, [previewVideoId, previewTitle, previewArtist, previewSeconds]);

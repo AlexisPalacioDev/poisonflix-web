@@ -10,6 +10,7 @@ import {
 import { useAuth } from '../../hooks/useAuth';
 import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/musicPrefs';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
+import { reportFailure } from '../../lib/obs/report';
 import {
   MusicPlayerContext,
   currentIndexOf,
@@ -44,10 +45,15 @@ function mediaSessionArtwork(coverUrl: string | null): MediaImage[] {
   }));
 }
 
+// Two dead tracks in a row is a broken upstream, not a broken file.
+const MAX_CONSECUTIVE_AUDIO_ERRORS = 3;
+
 export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastTickRef = useRef(0);
+  // Consecutive <audio> failures. Reset by a successful load; see onError below.
+  const consecutiveErrorsRef = useRef(0);
   const [autoplay, setAutoplayState] = useState(getAutoplayPreference);
   const { session } = useAuth();
 
@@ -73,6 +79,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const current = currentIndex >= 0 ? (state.queue[currentIndex] ?? null) : null;
 
   const currentItemId = current?.itemId ?? null;
+  // Read inside the error handler, which must not re-create on every track.
+  const currentItemIdRef = useRef<string | null>(null);
+  currentItemIdRef.current = currentItemId;
 
   // Resolve a track's playable URL, or null when it can't be built. A preview
   // track carries its own `streamUrl` (the /bff/music/stream proxy for a
@@ -422,13 +431,37 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
             }
           }
         }}
-        onLoadedMetadata={(e) =>
-          dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 })
-        }
+        onLoadedMetadata={(e) => {
+          // A track that loads proves the chain is healthy again.
+          consecutiveErrorsRef.current = 0;
+          dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
+        }}
         onDurationChange={(e) =>
           dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 })
         }
         onEnded={() => dispatch({ type: 'NEXT', auto: true })}
+        onError={(e) => {
+          // Nothing listened for this before, and the worker returns 502 for a
+          // stale yt-dlp resolve or a throttled upstream — routine, not rare.
+          // With no handler the element just stopped: `isPlaying` stayed true,
+          // no NEXT was dispatched, and the UI showed a pause button at 0:00
+          // forever while the queue refused to advance past the dead track.
+          const el = e.currentTarget;
+          reportFailure('music.player.audioError', el.error?.message ?? 'media error', {
+            code: el.error?.code,
+            itemId: currentItemIdRef.current,
+          });
+
+          consecutiveErrorsRef.current += 1;
+          // Skipping past one broken track is right; sprinting through a whole
+          // radio queue because the worker is down is not. Stop and stay stopped
+          // so the failure is visible instead of looking like an instant finish.
+          if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_AUDIO_ERRORS) {
+            dispatch({ type: 'SET_PLAYING', value: false });
+            return;
+          }
+          dispatch({ type: 'NEXT', auto: true });
+        }}
       />
       {children}
     </MusicPlayerContext.Provider>

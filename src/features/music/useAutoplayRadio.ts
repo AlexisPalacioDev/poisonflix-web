@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { getRadio } from '../../api/music';
+import { reportFailure } from '../../lib/obs/report';
 import { searchResultToTrack } from '../../lib/domain/musicTrack';
 import type { MusicSongResult } from '../../api/schemas/music';
 import { useOptionalMusicPlayer } from './musicPlayerCore';
@@ -63,9 +64,12 @@ export function useAutoplayRadio(): void {
           // safe and keeps a later replay of this same track extendable.
           seededRef.current = null;
         }
-      } catch {
-        // Best-effort, like the worker's own recommendations: no radio just
-        // means the queue ends after this track, the pre-autoplay behaviour.
+      } catch (cause) {
+        // Best-effort still — no radio just means the queue ends after this
+        // track. But it leaves a trace now: the worker answers 200 with an empty
+        // list when ytmusicapi fails, so "radio silently stopped" and "there was
+        // nothing to play" were indistinguishable from here.
+        reportFailure('music.autoplayRadio', cause, { seed: seedKey });
       }
     })();
   }, [autoplay, current, hasNext, repeat]);
