@@ -71,6 +71,9 @@ const BACKENDS = {
 // ---------------------------------------------------------------------------
 
 const AUTH_TTL_MS = 30_000;
+// Hard ceiling, not a sweep trigger. Far above any real household's concurrent
+// sessions, so eviction only ever bites an abusive caller.
+const AUTH_CACHE_MAX = 512;
 /** @type {Map<string, { exp: number, user: { id: number, isAdmin: boolean } | null }>} */
 const authCache = new Map();
 
@@ -100,12 +103,23 @@ async function resolveUser(cookie) {
   }
 
   authCache.set(cookie, { exp: now + AUTH_TTL_MS, user });
-  if (authCache.size > 512) pruneAuthCache(now);
+  if (authCache.size > AUTH_CACHE_MAX) pruneAuthCache(now);
   return user;
 }
 
+// The key is the whole raw Cookie header — fully attacker-controlled. Sweeping
+// only EXPIRED entries meant an unauthenticated caller sending distinct Cookie
+// headers faster than the 30s TTL grew the map without bound, while the sweep
+// found nothing to delete and burned CPU walking it on every insert. So expire
+// first, then enforce a hard ceiling by evicting oldest-first: Map preserves
+// insertion order, which makes that a FIFO with no extra bookkeeping.
 function pruneAuthCache(now) {
   for (const [k, v] of authCache) if (v.exp <= now) authCache.delete(k);
+  while (authCache.size > AUTH_CACHE_MAX) {
+    const oldest = authCache.keys().next();
+    if (oldest.done) break;
+    authCache.delete(oldest.value);
+  }
 }
 
 // Structured error log. The BFF ran for days emitting exactly ONE line (its own
@@ -130,10 +144,51 @@ function send(res, status, body, headers = {}) {
   res.end(payload);
 }
 
+// Every body this service handles is small: a register payload, a cancel, a music
+// request, or a full *arr movie object on the unmonitor PUT. Uncapped, an attacker
+// could stream unbounded data into memory, and the public /bff/register reaches
+// this after only the rate-limit check.
+const MAX_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Answer an over-sized upload.
+ *
+ * Deliberately does NOT touch the request. Calling `req.destroy()` here tore the
+ * socket down before the response could flush, so the client never saw the 413 —
+ * curl reported a bare `100` and Caddy turned it into a 502. `Connection: close`
+ * is what ends the upload: Node writes the response, then closes, and the sender
+ * stops. readBody has already paused and stopped buffering, so nothing is
+ * accumulating in the meantime.
+ */
+function sendTooLarge(res) {
+  return send(res, 413, { error: 'payload_too_large' }, { connection: 'close' });
+}
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super('body too large');
+    this.name = 'BodyTooLargeError';
+  }
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
+    let size = 0;
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        // Pause, do NOT destroy. Destroying here killed the socket before a
+        // response could be written, so the caller's 413 never left the process
+        // and Caddy reported a bare 502 instead. Pausing stops the flow and stops
+        // buffering — which is what bounds the memory — while leaving the socket
+        // alive long enough to answer properly. The caller destroys it after.
+        req.pause();
+        reject(new BodyTooLargeError());
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
@@ -213,7 +268,15 @@ async function handlePassthrough(req, res, prefix, restPath, user) {
   }
 
   const backend = BACKENDS[prefix];
-  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req);
+  let body;
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) return sendTooLarge(res);
+      throw err;
+    }
+  }
   const headers = { 'X-Api-Key': backend.key };
   const contentType = req.headers['content-type'];
   if (contentType) headers['content-type'] = contentType;
@@ -395,9 +458,17 @@ function rateLimited(key, now, max = REGISTER_MAX) {
   return false;
 }
 
+/** Returns the parsed body, or a marker: 'too_large' | null (unparseable). */
 async function parseJson(req) {
+  let raw;
   try {
-    return JSON.parse((await readBody(req)).toString() || '{}');
+    raw = await readBody(req);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) return 'too_large';
+    return null;
+  }
+  try {
+    return JSON.parse(raw.toString() || '{}');
   } catch {
     return null;
   }
@@ -419,6 +490,7 @@ async function handleRegister(req, res) {
   }
 
   const body = await parseJson(req);
+  if (body === 'too_large') return sendTooLarge(res);
   if (!body) return send(res, 400, { error: 'invalid_json' });
 
   const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : '';
@@ -482,7 +554,9 @@ async function handleAdminInvites(req, res, user) {
     return send(res, 200, { invites: await listInvites() });
   }
   if (req.method === 'POST') {
-    const body = (await parseJson(req)) || {};
+    const parsed = await parseJson(req);
+    if (parsed === 'too_large') return sendTooLarge(res);
+    const body = parsed || {};
     let expiresInDays = null;
     if (body.expiresInDays != null) {
       expiresInDays = Number(body.expiresInDays);
@@ -515,6 +589,7 @@ async function handleAdminUsers(req, res) {
 
 async function handleResetPassword(req, res, userId) {
   const body = await parseJson(req);
+  if (body === 'too_large') return sendTooLarge(res);
   if (!body) return send(res, 400, { error: 'invalid_json' });
   const passwordErr = validatePassword(body.newPassword);
   if (passwordErr) return send(res, 400, { error: 'invalid_password', message: passwordErr });
@@ -602,7 +677,15 @@ async function handleMusic(req, res, subPath, search, user) {
   }
   if (!ok) return send(res, 404, { error: 'not found' });
 
-  const body = method === 'POST' ? await readBody(req) : undefined;
+  let body;
+  if (method === 'POST') {
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) return sendTooLarge(res);
+      throw err;
+    }
+  }
   const headers = {};
   const contentType = req.headers['content-type'];
   if (contentType) headers['content-type'] = contentType;
@@ -681,6 +764,34 @@ const server = createServer(async (req, res) => {
     const path = url.pathname;
 
     if (path === '/healthz') return send(res, 200, { ok: true });
+
+    // CSRF. Auth is purely the ambient `connect.sid` cookie, so a page on another
+    // origin could drive any mutation here — cancel a request, queue a download,
+    // mint or revoke an invite, reset a password. In practice Jellyseerr's session
+    // cookie defaults to SameSite=Lax, which blocks cross-site POST, but the BFF
+    // neither sets that cookie nor verifies it: the entire protection was an
+    // upstream default it had no say over.
+    //
+    // Compared against the request's own Host rather than a configured list, so it
+    // holds for localhost, the LAN IP and the Funnel hostname without knowing any
+    // of them. Only a PRESENT and mismatched Origin is refused — a browser always
+    // sends Origin on a cross-origin mutation, while non-browser clients may omit
+    // it entirely, and rejecting the absent case would break them for no gain.
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const origin = req.headers.origin;
+      if (origin) {
+        let originHost = null;
+        try {
+          originHost = new URL(origin).host;
+        } catch {
+          originHost = null;
+        }
+        if (!originHost || originHost !== req.headers.host) {
+          logError('csrf', 'origin mismatch', { origin, host: req.headers.host, path });
+          return send(res, 403, { error: 'bad_origin' });
+        }
+      }
+    }
 
     // PUBLIC: invite-gated self-service registration. Must be reachable without a
     // session (the caller has no account yet). Everything below this line requires
