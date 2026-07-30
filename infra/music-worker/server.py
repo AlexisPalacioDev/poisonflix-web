@@ -1489,6 +1489,56 @@ def _public_job(job):
     }
 
 
+# --- Stream pre-warm --------------------------------------------------------
+# The first play of any track paid the full yt-dlp resolve inside the request:
+# measured 2.8-3.1s to first byte cold against 0.05s warm. Raising STREAM_URL_TTL
+# only helps the SECOND play, so the complaint "it takes forever to start" was
+# untouched by it.
+#
+# Search is the natural place to hide that cost: the user reads the result list
+# for a second or two before tapping anything, so resolving the top few hits in
+# the background turns their first tap into a cache hit. Bounded and daemonised —
+# a pre-warm is pure optimisation and must never delay a response, hold the
+# process open, or storm YouTube.
+_PREWARM_TOP_N = 4
+_prewarm_seen = set()
+_prewarm_lock = threading.Lock()
+_prewarm_pool = queue.Queue(maxsize=32)
+
+
+def _prewarm_worker():
+    while True:
+        video_id, source = _prewarm_pool.get()
+        try:
+            _resolve_stream_url(video_id, source)
+        except Exception:  # noqa: BLE001 - best effort, never surfaces
+            pass
+        finally:
+            with _prewarm_lock:
+                _prewarm_seen.discard(video_id)
+            _prewarm_pool.task_done()
+
+
+def prewarm_streams(results, source="auto"):
+    """Queue the top results for a background stream resolve. Never blocks."""
+    for item in (results or [])[:_PREWARM_TOP_N]:
+        video_id = item.get("videoId") if isinstance(item, dict) else None
+        if not video_id:
+            continue
+        with _stream_lock:
+            if video_id in _stream_cache:
+                continue  # already warm
+        with _prewarm_lock:
+            if video_id in _prewarm_seen:
+                continue  # already queued
+            _prewarm_seen.add(video_id)
+        try:
+            _prewarm_pool.put_nowait((video_id, source))
+        except queue.Full:
+            with _prewarm_lock:
+                _prewarm_seen.discard(video_id)
+            return
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1599,6 +1649,10 @@ class Handler(BaseHTTPRequestHandler):
                 results = search_music(query, limit, source)
             except Exception as exc:  # noqa: BLE001
                 return self._send(502, {"error": "search_failed", "message": str(exc)[:200]})
+            # Hide the cold-resolve cost behind the time it takes to read the
+            # list: by the time a row is tapped, its stream URL is usually cached.
+            prewarm_streams(results, source)
+
             # Search is NOT filtered: the user asked for this by name, and hiding
             # a result they typed would read as a broken search. Only annotated,
             # so the row can render the vote it already carries.
@@ -1763,6 +1817,11 @@ def main():
 
     # Ensure the Jellyfin music library exists (best-effort, off the hot path).
     threading.Thread(target=ensure_music_library, daemon=True).start()
+    # Two pre-warm workers: enough to hide the resolve for the top search results
+    # while the user is still reading the list, without opening a burst of yt-dlp
+    # processes at once. Daemonised — a pre-warm must never hold the process open.
+    for _ in range(2):
+        threading.Thread(target=_prewarm_worker, daemon=True).start()
 
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"poisonflix-music-worker listening on :{PORT}", flush=True)
