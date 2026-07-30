@@ -93,6 +93,18 @@ function pruneAuthCache(now) {
   for (const [k, v] of authCache) if (v.exp <= now) authCache.delete(k);
 }
 
+// Structured error log. The BFF ran for days emitting exactly ONE line (its own
+// startup banner) while users hit failures, because every failure path either
+// swallowed the error or answered a status with no trace. One line per failure,
+// to stdout, is what makes `docker compose logs bff` worth reading.
+function logError(scope, err, detail) {
+  const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  // eslint-disable-next-line no-console
+  console.error(
+    JSON.stringify({ at: new Date().toISOString(), level: 'error', scope, message, ...detail }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -561,8 +573,24 @@ async function handleMusic(req, res, subPath, search, user) {
     passthrough['cache-control'] = 'no-store';
     res.writeHead(upstream.status, passthrough);
     if (upstream.body) {
+      // `pipeline`, not `.pipe()`. `.pipe()` does not forward source errors, and
+      // with no 'error' listener and no process guard a mid-track failure became
+      // an uncaughtException that KILLED THE BFF — taking every in-flight
+      // /radarr, /sonarr, /prowlarr and /bff request with it, plus the auth cache
+      // and the register rate-limit state. The worker closing a stream (a client
+      // seek, a restart, an expired googlevideo URL) is routine, so this was a
+      // routine full-service outage that `restart: unless-stopped` disguised as
+      // an intermittent blip. Headers are already sent here, so there is nothing
+      // to report to the client but the socket teardown; the point is that the
+      // process survives and the failure gets logged.
+      const { pipeline } = await import('node:stream/promises');
       const { Readable } = await import('node:stream');
-      Readable.fromWeb(upstream.body).pipe(res);
+      try {
+        await pipeline(Readable.fromWeb(upstream.body), res);
+      } catch (err) {
+        logError('music.stream', err, { path: url.pathname });
+        res.destroy();
+      }
     } else {
       res.end();
     }
@@ -632,9 +660,26 @@ const server = createServer(async (req, res) => {
     }
 
     return send(res, 404, { error: 'not found' });
-  } catch {
+  } catch (err) {
+    // This answered 500 with no trace at all, so an internal error was
+    // indistinguishable from a working endpoint returning nothing.
+    logError('router', err, { method: req.method, url: req.url });
     return send(res, 500, { error: 'internal' });
   }
+});
+
+// Backstop. The stream pipeline above is the known crasher and is handled at the
+// source, but an unguarded process exits on ANY stray async error and every
+// in-flight request dies with it. Rejections are logged and survived; an
+// uncaughtException leaves the process in an unknown state, so it is logged and
+// then allowed to exit for Docker to restart — the difference from before is
+// that there is now a line saying why.
+process.on('unhandledRejection', (reason) => {
+  logError('unhandledRejection', reason);
+});
+process.on('uncaughtException', (err) => {
+  logError('uncaughtException', err);
+  process.exit(1);
 });
 
 server.listen(Number(PORT), () => {

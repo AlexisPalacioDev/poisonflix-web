@@ -40,7 +40,14 @@ cd infra
 # still-running container keeps serving the OLD inode (now www.bak). Without
 # --force-recreate, `docker compose up` leaves Caddy untouched (config/image
 # unchanged) and it silently serves the previous bundle.
-docker compose up -d --build bff
+# music-worker MUST be here too. Both server.mjs and server.py are baked into
+# their images (neither is bind-mounted), and this line used to build only `bff` —
+# so editing infra/music-worker/server.py and running this script was a COMPLETE
+# SILENT NO-OP: it printed "deploy OK" and both smoke tests passed, because they
+# only probe / and /radarr. The BFF would go on allowlisting a route the running,
+# stale worker still answered 404 for, which is the real mechanism behind "the
+# endpoint exists but the front-end gets a 404".
+docker compose up -d --build bff music-worker
 docker compose up -d --force-recreate caddy
 
 # Force-recreating Caddy gives it a NEW container. The Tailscale Funnel sidecar

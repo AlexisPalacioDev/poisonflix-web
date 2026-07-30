@@ -1033,16 +1033,46 @@ def _new_job(payload, state):
 # Playlists: resolve a YouTube / YT Music playlist and fan out into jobs
 # ---------------------------------------------------------------------------
 
-_PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
+# A bare playlist id. The leading character is constrained separately so an id can
+# never begin with `-`: the value is passed to yt-dlp as a positional argv element,
+# and `-rm-cache-dir`-shaped input would be read as a FLAG rather than a URL.
+_PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{9,}$")
+
+# The only hosts a playlist may resolve from. Anything else was an SSRF: the URL
+# was returned verbatim and handed straight to `yt-dlp <url>`, and this container
+# sits on both the media-automation and jellyfin networks — so any authenticated
+# user could make it issue GETs to radarr:7878, sonarr:8989, prowlarr:9696,
+# qbittorrent:8080, jellyfin:8096 and jellyseerr:5055. Blind, but the
+# resolve_failed / empty / 202 distinction is a clean oracle for host+port
+# scanning, and any internal side effects fired for real.
+_PLAYLIST_HOSTS = frozenset(
+    {
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtu.be",
+    }
+)
 
 
 def _normalize_playlist_url(url):
-    """Accept a full playlist URL or a bare playlist id. Returns a URL or None."""
+    """Accept a full YouTube playlist URL or a bare playlist id, or return None.
+
+    The host is parsed, never substring-matched: `https://evil.test/?x=youtube.com`
+    contains the allowed name and must still be refused.
+    """
     url = (url or "").strip()
     if not url:
         return None
     if url.startswith("http://") or url.startswith("https://"):
-        return url
+        try:
+            host = (urllib.parse.urlsplit(url).hostname or "").lower()
+        except ValueError:
+            return None
+        if host in _PLAYLIST_HOSTS:
+            return url
+        return None
     if _PLAYLIST_ID_RE.match(url):
         return f"https://music.youtube.com/playlist?list={url}"
     return None
