@@ -107,11 +107,25 @@ _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 # requests stay valid — the patch is four bytes. Verified locally: the patched
 # file is byte-identical in size, still parses, and a real browser still reports
 # the correct duration.
-_SIDX_SCAN_LIMIT = 1 << 20  # sidx sits right after moov; never megabytes in.
+_SIDX_SCAN_LIMIT = 1 << 20  # both boxes sit right after moov; never megabytes in.
+
+# Boxes that redundantly restate the total duration. The device log settled which
+# one mattered: with `sidx` already stripped, an iPhone (iOS 18.7 / Safari 26.5)
+# still reported 386.34s for a 193.18s track, so the sum was not coming from the
+# segment index. `mvhd`, `mdhd` AND the edit list all declare the full length, and
+# WebKit adds `mvhd` to the `elst` segment_duration:
+#
+#     mvhd 161.469s + elst 161.469s = 322.938s   (Mi Comedia, ~161s of dead air)
+#
+# `edts` is dropped whole rather than editing `elst` inside it. Its only other
+# payload is media_time=1600 — 1600 samples of AAC encoder priming at 44100Hz,
+# about 36ms — so losing it costs an inaudible sliver at the very start of a
+# track, against two minutes of silence at the end.
+_REDUNDANT_DURATION_BOXES = (b"sidx", b"edts")
 
 
 def _neutralize_sidx(chunk, stream_offset):
-    """Rewrite any `sidx` box type to `free` within this chunk.
+    """Rewrite redundant duration boxes to `free` within this chunk.
 
     `stream_offset` is where the chunk starts in the response body. A box header
     straddling a chunk boundary is deliberately left alone: chunks are 64 KiB and
@@ -120,14 +134,15 @@ def _neutralize_sidx(chunk, stream_offset):
     """
     if stream_offset > _SIDX_SCAN_LIMIT:
         return chunk
-    idx = chunk.find(b"sidx")
-    if idx < 4:  # not found, or no room for the preceding 4-byte size field
-        return chunk
-    patched = bytearray(chunk)
-    while idx >= 4:
-        patched[idx:idx + 4] = b"free"
-        idx = patched.find(b"sidx", idx + 4)
-    return bytes(patched)
+    patched = None
+    for tag in _REDUNDANT_DURATION_BOXES:
+        idx = (patched or chunk).find(tag)
+        while idx >= 4:  # need room for the preceding 4-byte size field
+            if patched is None:
+                patched = bytearray(chunk)
+            patched[idx:idx + 4] = b"free"
+            idx = patched.find(tag, idx + 4)
+    return bytes(patched) if patched is not None else chunk
 
 def _load_state():
     os.makedirs(DATA_DIR, exist_ok=True)
