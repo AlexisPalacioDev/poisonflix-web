@@ -738,7 +738,13 @@ async function handleMusic(req, res, subPath, search, user) {
       try {
         await pipeline(Readable.fromWeb(upstream.body), res);
       } catch (err) {
-        logError('music.stream', err, { path: url.pathname });
+        // `subPath`, not `url` — handleMusic never receives a URL object, so the
+        // first version of this line threw a ReferenceError from inside the error
+        // handler itself. The router then tried to answer 500 on a response whose
+        // headers were already sent, which surfaced as an unhandledRejection. Found
+        // by driving a real seek in the browser, caught by the very logging this
+        // block adds.
+        logError('music.stream', err, { path: subPath });
         res.destroy();
       }
     } else {
