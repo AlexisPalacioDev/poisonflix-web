@@ -45,6 +45,10 @@ export interface PlayerState {
   order: number[]; // play order as queue indices; current is queue[order[pos]]
   pos: number; // cursor into `order`; -1 when nothing is loaded
   isPlaying: boolean;
+  // Raw stall signal from `waiting`/`stalled`, armed by the provider's settle
+  // timer and cleared on `playing`/`canplay`. Never read directly by the UI —
+  // see `visibleBuffering` below for why.
+  buffering: boolean;
   position: number; // seconds
   duration: number; // seconds
   volume: number; // 0..1
@@ -72,13 +76,21 @@ export type Action =
   | { type: 'SET_VOLUME'; volume: number }
   | { type: 'SET_MUTED'; value: boolean }
   | { type: 'SET_REPEAT'; mode: RepeatMode }
-  | { type: 'SET_SHUFFLE'; value: boolean; order: number[] };
+  | { type: 'SET_SHUFFLE'; value: boolean; order: number[] }
+  // Reconciles state from a real <audio> element event (play/playing/pause/
+  // waiting/stalled/canplay). A single identity-returning patch action rather
+  // than one action per event — see design.md §A: five per-event actions
+  // would bloat the reducer switch for no benefit, and reusing SET_PLAYING
+  // would conflate *intent* (a gesture) with *observation* (the element told
+  // us), which loses the identity-return no-render-churn guarantee.
+  | { type: 'SYNC_MEDIA'; playing?: boolean; buffering?: boolean };
 
 export const initialState: PlayerState = {
   queue: [],
   order: [],
   pos: -1,
   isPlaying: false,
+  buffering: false,
   position: 0,
   duration: 0,
   volume: 1,
@@ -242,9 +254,57 @@ export function reducer(state: PlayerState, action: Action): PlayerState {
       const pos = action.order.indexOf(currentIndex);
       return { ...state, shuffle: action.value, order: action.order, pos };
     }
+    case 'SYNC_MEDIA': {
+      const playing = action.playing ?? state.isPlaying;
+      const buffering = action.buffering ?? state.buffering;
+      if (playing === state.isPlaying && buffering === state.buffering) return state;
+      return { ...state, isPlaying: playing, buffering };
+    }
     default:
       return state;
   }
+}
+
+// Milliseconds a `waiting`/`stalled` signal must persist before the UI shows
+// it. At the stream's measured throughput (~32 KB/s vs a 129 kbps track)
+// sub-window underruns are routine and inaudible; asserting them anyway would
+// give the spinner a habit of lying. See design.md §B — this value is an
+// explicit override of the spec's provisional 250ms figure.
+export const BUFFERING_SETTLE_MS = 600;
+
+/**
+ * The buffering flag actually shown to the UI: a stuck `buffering` flag can
+ * never outlive playback, without touching any of the 11 track-change reducer
+ * branches above (each of which already resets `isPlaying` where it matters).
+ * Pure and exported so this rule is asserted directly, with no React and no
+ * dependency on which branch last touched `buffering`.
+ */
+export function visibleBuffering(state: PlayerState): boolean {
+  return state.buffering && state.isPlaying;
+}
+
+/**
+ * True when the <audio> element's reported `duration` disagrees with the
+ * track's already-known `durationSeconds` by more than a tolerance band: 5%
+ * (tolerates remux drift; the unidentified 2x-duration defect is 100% off) or
+ * a 2s floor (covers short tracks where 5% is too tight to mean anything).
+ * Diagnostic-only — see MusicPlayerProvider's durationchange/ended wiring.
+ * Never true for a non-finite/zero/negative/missing value on either side.
+ */
+export function durationMismatch(
+  elementDuration: number,
+  trackDuration?: number | null,
+): boolean {
+  if (!Number.isFinite(elementDuration) || elementDuration <= 0) return false;
+  if (
+    trackDuration == null ||
+    !Number.isFinite(trackDuration) ||
+    trackDuration <= 0
+  ) {
+    return false;
+  }
+  const tolerance = Math.max(2, trackDuration * 0.05);
+  return Math.abs(elementDuration - trackDuration) > tolerance;
 }
 
 export interface MusicPlayerContextValue {
@@ -252,6 +312,8 @@ export interface MusicPlayerContextValue {
   queue: MusicTrack[];
   currentIndex: number; // index into `queue` of the current track, or -1
   isPlaying: boolean;
+  // The stall indicator actually safe to show — see `visibleBuffering`.
+  buffering: boolean;
   position: number;
   duration: number;
   volume: number;

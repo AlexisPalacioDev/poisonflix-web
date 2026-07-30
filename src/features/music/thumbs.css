@@ -56,3 +56,21 @@
 .pf-thumbs--bar .pf-thumbs__btn:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+
+/* In the mobile full-screen player they sit as a circular icon-only pair at
+   the iOS-minimum 44x44px tap target. Touch surfaces don't have a reliable
+   `:hover`, so the pressed cue is `:active` instead. */
+.pf-thumbs--full {
+  gap: 0.4rem;
+}
+
+.pf-thumbs--full .pf-thumbs__btn {
+  width: 44px;
+  height: 44px;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.pf-thumbs--full .pf-thumbs__btn:active {
+  background: rgba(255, 255, 255, 0.16);
+}

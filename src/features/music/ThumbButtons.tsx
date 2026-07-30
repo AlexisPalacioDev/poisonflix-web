@@ -39,8 +39,9 @@ function ThumbDownGlyph({ filled }: { filled: boolean }) {
 export interface ThumbButtonsProps {
   videoId: string;
   title: string;
-  /** `menu` sits inside the ⋮ list; `bar` sits in the NowPlayingBar. */
-  variant?: 'menu' | 'bar';
+  /** `menu` sits inside the ⋮ list; `bar` sits in the desktop NowPlayingBar;
+   * `full` sits in the mobile full-screen player. */
+  variant?: 'menu' | 'bar' | 'full';
 }
 
 export function ThumbButtons({ videoId, title, variant = 'menu' }: ThumbButtonsProps) {

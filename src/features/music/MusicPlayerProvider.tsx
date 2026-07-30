@@ -12,16 +12,31 @@ import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/m
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { reportFailure } from '../../lib/obs/report';
 import {
+  BUFFERING_SETTLE_MS,
   MusicPlayerContext,
   currentIndexOf,
+  durationMismatch,
   initialState,
   naturalOrder,
   reducer,
   shuffleOrder,
+  visibleBuffering,
   type Action,
   type MusicPlayerContextValue,
   type MusicTrack,
 } from './musicPlayerCore';
+
+// `TimeRanges.end()` throws `IndexSizeError` on an empty range (jsdom
+// exercises this: the element starts with no seekable/buffered data at all).
+// Diagnostics must never crash on that — read through this null-returning
+// guard instead of calling `.end()` directly.
+function timeRangeEnd(ranges: TimeRanges): number | null {
+  try {
+    return ranges.length > 0 ? ranges.end(ranges.length - 1) : null;
+  } catch {
+    return null;
+  }
+}
 
 // The <audio> element and everything that drives it. State lives in
 // `musicPlayerCore`; this module exports the component and nothing else, so
@@ -74,6 +89,18 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // flip isPlaying back to paused (that only guards the genuine pre-unlock
   // autoplay block on iOS).
   const unlockedRef = useRef(false);
+  // Open synchronously right before the unlock probe's own play(), closed
+  // FROM the resulting `pause` event handler — never in a `.then()`/`.catch()`
+  // microtask, which would race ahead of the `pause` event's task and let the
+  // probe's own pause leak through as a reconciled user pause. `unlockedRef`
+  // cannot serve this role: it is already `true` by the time the probe runs.
+  const probeRef = useRef(false);
+  // Arms the 600ms buffering-settle window (see BUFFERING_SETTLE_MS); cleared
+  // on `playing`/`canplay` and on unmount.
+  const bufferingTimerRef = useRef<number | null>(null);
+  // The track key (itemId) a duration-mismatch report was already sent for —
+  // at most one report per track load. Reset in the currentSrc effect below.
+  const durationReportedRef = useRef<string | null>(null);
 
   const currentIndex = currentIndexOf(state);
   const current = currentIndex >= 0 ? (state.queue[currentIndex] ?? null) : null;
@@ -163,12 +190,14 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     if (!audio) return;
     if (!currentSrc) {
       srcUrlRef.current = null;
+      durationReportedRef.current = null;
       audio.removeAttribute('src');
       audio.load();
       return;
     }
     if (srcUrlRef.current === currentSrc) return; // already loaded (e.g. by the gesture)
     srcUrlRef.current = currentSrc;
+    durationReportedRef.current = null;
     audio.src = currentSrc;
     audio.load();
     // `isPlaying` is intentionally not a dep — the play/pause effect below owns it.
@@ -208,10 +237,33 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       if (!audio) return;
       unlockedRef.current = true;
       if (srcUrlRef.current && !stateRef.current.isPlaying) {
+        // Open the suppression window synchronously, BEFORE play() — its
+        // resulting `play`/`pause` events must be swallowed by the handlers
+        // below, not observed as a real user play/pause.
+        probeRef.current = true;
         const p = audio.play();
         if (p && typeof p.then === 'function') {
-          p.then(() => audio.pause()).catch(() => {});
+          p.then(() => {
+            if (stateRef.current.isPlaying) {
+              // The user won the race with a real play in the meantime —
+              // nothing to suppress, and pausing now would be a real pause.
+              probeRef.current = false;
+              return;
+            }
+            audio.pause(); // its `pause` event closes the window (see onPause)
+          }).catch(() => {
+            probeRef.current = false;
+          });
+        } else {
+          probeRef.current = false;
         }
+        // Belt-and-suspenders: if the probe's play() never settles, don't
+        // deadlock reconciliation forever. A leaked probe-pause after this is
+        // harmless — the probe only runs when `!isPlaying`, so the dispatch
+        // it would have made is an identity-return no-op anyway.
+        window.setTimeout(() => {
+          probeRef.current = false;
+        }, 3000);
       }
     };
     document.addEventListener('pointerdown', unlock, { once: true });
@@ -221,6 +273,66 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('touchend', unlock);
     };
   }, []);
+
+  // The settle timer lives in a ref (armed/cleared from event handlers, not
+  // effects) so it must be cleared explicitly on unmount too.
+  useEffect(() => {
+    return () => {
+      if (bufferingTimerRef.current !== null) {
+        window.clearTimeout(bufferingTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Arms the settle window on a `waiting`/`stalled` stall signal. Re-arming
+  // while already armed is a no-op — the first stall already started the
+  // clock the spec cares about.
+  const armBufferingTimer = useCallback(() => {
+    if (bufferingTimerRef.current !== null) return;
+    bufferingTimerRef.current = window.setTimeout(() => {
+      bufferingTimerRef.current = null;
+      dispatch({ type: 'SYNC_MEDIA', buffering: true });
+    }, BUFFERING_SETTLE_MS);
+  }, []);
+
+  // Clears any pending/settled buffering flag immediately — the indicator
+  // must never outlive the stall it reported.
+  const clearBuffering = useCallback(() => {
+    if (bufferingTimerRef.current !== null) {
+      window.clearTimeout(bufferingTimerRef.current);
+      bufferingTimerRef.current = null;
+    }
+    dispatch({ type: 'SYNC_MEDIA', buffering: false });
+  }, []);
+
+  // Diagnostic-only: reports an unidentified duration disagreement between
+  // what the element measures and what the track declared. Never alters
+  // playback. `src` is deliberately excluded from the payload — it embeds the
+  // Jellyfin `api_key` (see buildAudioStreamUrl).
+  const reportDurationMismatch = useCallback(
+    (event: 'durationchange' | 'ended') => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const track = current;
+      const known = track?.durationSeconds;
+      if (!durationMismatch(audio.duration, known)) return;
+      const key = currentItemIdRef.current;
+      if (key && durationReportedRef.current === key) return;
+      durationReportedRef.current = key;
+      reportFailure('music.player.durationMismatch', 'element/track duration disagree', {
+        elementDuration: audio.duration,
+        trackDuration: known ?? null,
+        currentTime: audio.currentTime,
+        readyState: audio.readyState,
+        seekableEnd: timeRangeEnd(audio.seekable),
+        bufferedEnd: timeRangeEnd(audio.buffered),
+        event,
+        itemId: key,
+        videoId: track?.videoId ?? null,
+      });
+    },
+    [current],
+  );
 
   // Force the element to `position` whenever a seek/restart bumps the nonce.
   // Re-plays afterwards when playing so a repeat-one loop actually restarts.
@@ -364,6 +476,8 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       queue: state.queue,
       currentIndex,
       isPlaying: state.isPlaying,
+      // A stuck flag can never outlive playback — derived, never read raw.
+      buffering: visibleBuffering(state),
       position: state.position,
       duration: state.duration,
       volume: state.volume,
@@ -436,10 +550,43 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           consecutiveErrorsRef.current = 0;
           dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
         }}
-        onDurationChange={(e) =>
-          dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 })
-        }
-        onEnded={() => dispatch({ type: 'NEXT', auto: true })}
+        onDurationChange={(e) => {
+          dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
+          reportDurationMismatch('durationchange');
+        }}
+        onEnded={() => {
+          reportDurationMismatch('ended');
+          dispatch({ type: 'NEXT', auto: true });
+        }}
+        onPlay={() => {
+          // Swallowed while the unlock probe's own play() is in flight — it
+          // is not a real user play.
+          if (probeRef.current) return;
+          dispatch({ type: 'SYNC_MEDIA', playing: true });
+        }}
+        onPlaying={() => {
+          if (bufferingTimerRef.current !== null) {
+            window.clearTimeout(bufferingTimerRef.current);
+            bufferingTimerRef.current = null;
+          }
+          dispatch({ type: 'SYNC_MEDIA', playing: true, buffering: false });
+        }}
+        onPause={(e) => {
+          if (probeRef.current) {
+            // Closes the suppression window FROM this task — a `.then()`/
+            // `.catch()` microtask would run before this event's task and
+            // let the probe's own pause leak through as a user pause.
+            probeRef.current = false;
+            return;
+          }
+          // Safari fires `pause` right after `ended`; that pause must not
+          // undo the NEXT auto-advance the `ended` handler already dispatched.
+          if (e.currentTarget.ended) return;
+          dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
+        }}
+        onWaiting={armBufferingTimer}
+        onStalled={armBufferingTimer}
+        onCanPlay={clearBuffering}
         onError={(e) => {
           // Nothing listened for this before, and the worker returns 502 for a
           // stale yt-dlp resolve or a throttled upstream — routine, not rare.

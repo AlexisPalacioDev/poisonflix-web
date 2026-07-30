@@ -167,18 +167,23 @@ function ToggleButton({
   onToggle,
   size = 24,
   className = 'pf-nowplaying__toggle',
+  buffering = false,
 }: {
   isPlaying: boolean;
   onToggle: () => void;
   size?: number;
   className?: string;
+  /** True while a stall has settled past the buffering window — the only UI
+   * cue that state exists at all (see musicPlayerCore's `visibleBuffering`). */
+  buffering?: boolean;
 }) {
   return (
     <button
       type="button"
-      className={className}
+      className={buffering ? `${className} pf-nowplaying__toggle--buffering` : className}
       onClick={onToggle}
       aria-label={isPlaying ? 'Pausar' : 'Reproducir'}
+      aria-busy={buffering || undefined}
     >
       {isPlaying ? <PauseIcon size={size} /> : <PlayIcon size={size} />}
     </button>
@@ -211,6 +216,7 @@ function DesktopBar({
   const {
     current,
     isPlaying,
+    buffering,
     position,
     duration,
     volume,
@@ -250,7 +256,7 @@ function DesktopBar({
           <button type="button" className="pf-nowplaying__btn" onClick={prev} aria-label="Anterior">
             <PrevIcon />
           </button>
-          <ToggleButton isPlaying={isPlaying} onToggle={toggle} />
+          <ToggleButton isPlaying={isPlaying} onToggle={toggle} buffering={buffering} />
           <button type="button" className="pf-nowplaying__btn" onClick={next} aria-label="Siguiente">
             <NextIcon />
           </button>
@@ -331,7 +337,7 @@ function CompactBar({
   player: NonNullable<PlayerControls>;
   onExpand: () => void;
 }) {
-  const { current, isPlaying, position, duration, prev, toggle, next } = player;
+  const { current, isPlaying, buffering, position, duration, prev, toggle, next } = player;
   const progress = duration > 0 ? Math.min(Math.max(position / duration, 0), 1) : 0;
 
   return (
@@ -362,6 +368,7 @@ function CompactBar({
           onToggle={toggle}
           size={26}
           className="pf-nowplaying__toggle pf-nowplaying__toggle--compact"
+          buffering={buffering}
         />
         <button type="button" className="pf-nowplaying__btn" onClick={next} aria-label="Siguiente">
           <NextIcon />
@@ -385,6 +392,7 @@ function FullPlayer({
   const {
     current,
     isPlaying,
+    buffering,
     position,
     duration,
     volume,
@@ -485,6 +493,7 @@ function FullPlayer({
           onToggle={toggle}
           size={34}
           className="pf-nowplaying__toggle pf-fullplayer__toggle"
+          buffering={buffering}
         />
         <button type="button" className="pf-nowplaying__btn" onClick={next} aria-label="Siguiente">
           <NextIcon />
@@ -501,6 +510,12 @@ function FullPlayer({
       </div>
 
       <div className="pf-fullplayer__bottom">
+        {/* Same "no rating possible" guard as the desktop bar (:307): a
+            library track never matched to a videoId has nothing the worker
+            can key a vote on. */}
+        {current.videoId && (
+          <ThumbButtons videoId={current.videoId} title={current.title} variant="full" />
+        )}
         <div className="pf-fullplayer__volume">
           <button
             type="button"

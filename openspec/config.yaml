@@ -1,0 +1,71 @@
+# openspec/config.yaml — poisonflix-web
+schema: spec-driven
+
+context: |
+  Tech stack: React 18 + Vite 5 + TypeScript SPA (strict tsconfig, tsc -b).
+  Backend: Node BFF (infra/bff/server.mjs, zero deps, http+fetch) and Python
+  stdlib music worker (infra/music-worker/server.py, yt-dlp), both baked into
+  Docker images — edits need `docker compose up -d --build music-worker bff`
+  run from infra/. Caddy on :8600 routes /bff,/radarr,/sonarr,/prowlarr to
+  BFF; /jellyfin,/jellyseerr direct; unmatched paths fall through to SPA
+  index.html with 200.
+  Testing: Vitest (525 tests / 72 files, green), Testing Library, jsdom.
+  Quality: oxlint (lint), tsc -b (typecheck), no formatter configured.
+  Branch: feat/projector-web-integration. Remote: github.com/AlexisPalacioDev/poisonflix-web.
+
+artifact_store:
+  mode: hybrid
+  engram_project: poisonflix-web
+
+strict_tdd: true
+
+testing:
+  test_runner:
+    command: "npx vitest run"
+    framework: Vitest
+  layers:
+    unit: true
+    integration: true # @testing-library/react + jsdom
+    e2e: false
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter:
+      available: true
+      command: "npx oxlint"
+    type_checker:
+      available: true
+      command: "npx tsc -b"
+    formatter:
+      available: false
+      command: ""
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Flag any change touching infra/bff or infra/music-worker as requiring a Docker rebuild
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Note Caddy routing impact for any new API path or SPA route
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns (container-presentational, atomic design where applicable)
+      - Strict TDD is active — write a failing test before implementation code for every task
+      - Changes under infra/bff or infra/music-worker require `docker compose up -d --build music-worker bff` from infra/ before verification
+    tdd: true
+    test_command: "npx vitest run"
+  verify:
+    test_command: "npx vitest run"
+    build_command: "npx tsc -b && npx vite build"
+    lint_command: "npx oxlint"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

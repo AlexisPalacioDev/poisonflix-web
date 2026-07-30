@@ -99,4 +99,37 @@ describe('ThumbButtons', () => {
       'false',
     );
   });
+
+  // Reliability change: a third variant for the mobile full-screen player,
+  // icon-only like `bar` (labels already gate on `variant === 'menu'`) but
+  // styled at a 44x44 tap target of its own — see thumbs.css.
+  describe("'full' variant (mobile full-screen player)", () => {
+    function renderThumbsFull() {
+      setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <ThumbButtons videoId="vid-1" title="Chachachá" variant="full" />
+          </AuthProvider>
+        </QueryClientProvider>,
+      );
+    }
+
+    it('renders both thumb-up and thumb-down controls', async () => {
+      renderThumbsFull();
+      await waitFor(() => expect(mockedGetRatings).toHaveBeenCalled());
+      expect(screen.getByRole('button', { name: /^Me gusta/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /No me gusta/ })).toBeInTheDocument();
+    });
+
+    it('carries a pf-thumbs--full wrapper class distinct from menu/bar', async () => {
+      renderThumbsFull();
+      await waitFor(() => expect(mockedGetRatings).toHaveBeenCalled());
+      const wrapper = screen.getByRole('button', { name: /^Me gusta/ }).closest('.pf-thumbs');
+      expect(wrapper).toHaveClass('pf-thumbs--full');
+      expect(wrapper).not.toHaveClass('pf-thumbs--menu');
+      expect(wrapper).not.toHaveClass('pf-thumbs--bar');
+    });
+  });
 });

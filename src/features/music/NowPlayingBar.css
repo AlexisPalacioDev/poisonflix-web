@@ -158,6 +158,29 @@
   transform: scale(1.05);
 }
 
+/* Buffering is otherwise invisible state — a settled stall (600ms, see
+   BUFFERING_SETTLE_MS) pulses the toggle so a stuck player doesn't read as a
+   dead one. */
+.pf-nowplaying__toggle--buffering {
+  animation: pf-nowplaying-toggle-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pf-nowplaying-toggle-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-nowplaying__toggle--buffering {
+    animation: none;
+  }
+}
+
 /* --- Seek bar --- */
 .pf-nowplaying__seek {
   display: flex;

@@ -1,13 +1,25 @@
 import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { render, screen, fireEvent, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NowPlayingBar } from './NowPlayingBar';
 import { MusicPlayerProvider } from './MusicPlayerProvider';
 import { useMusicPlayer, type MusicTrack } from './musicPlayerCore';
 import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
+import { getRatings, setTrackRating } from '../../api/music';
+
+// Only the new full-player thumbs tests below exercise ThumbButtons (the
+// default `tracks`/`unmatchedTracks` fixtures have no videoId, so it never
+// mounts elsewhere in this file) — mocked so those assertions don't depend on
+// a real network round-trip.
+vi.mock('../../api/music', () => ({
+  getRatings: vi.fn(),
+  setTrackRating: vi.fn(),
+}));
+const mockedGetRatings = vi.mocked(getRatings);
+const mockedSetTrackRating = vi.mocked(setTrackRating);
 
 // Slice 2 NowPlayingBar render test: the transport controls are present as
 // native focusable buttons (TV-remote reachable), and moving the seek bar
@@ -20,6 +32,35 @@ const tracks: MusicTrack[] = [
   { itemId: 'a', title: 'Track A', artist: 'Artist A', coverUrl: null, artistId: 'art-a' },
   { itemId: 'b', title: 'Track B', artist: 'Artist B', coverUrl: null },
 ];
+
+// A library track with no videoId (never matched to a YouTube hit) — the
+// same "no rating possible" guard the desktop bar already applies.
+const unmatchedTracks: MusicTrack[] = [
+  { itemId: 'u', title: 'Unmatched Track', artist: 'Artist U', coverUrl: null },
+];
+
+const ratedTracks: MusicTrack[] = [
+  { itemId: 'r', title: 'Rated Track', artist: 'Artist R', coverUrl: null, videoId: 'yt-r' },
+];
+
+// Stand-in server for the ratings mutation (mirrors ThumbButtons.test.tsx).
+let ratingsStore: Record<string, number> = {};
+beforeEach(() => {
+  ratingsStore = {};
+  mockedGetRatings.mockImplementation(async () => ({ ...ratingsStore }));
+  mockedSetTrackRating.mockImplementation(async (videoId, rating) => {
+    if (rating === 0) delete ratingsStore[videoId];
+    else ratingsStore[videoId] = rating;
+    return { videoId, rating };
+  });
+});
+afterEach(() => {
+  mockedGetRatings.mockReset();
+  mockedSetTrackRating.mockReset();
+  // A test that fails mid-fake-timer would otherwise leave fake timers active
+  // for the next test's `waitFor` (which needs real timers to resolve).
+  vi.useRealTimers();
+});
 
 // Force the desktop (false) or compact/mobile (true) layout by making
 // `matchMedia('(max-width: 899px)')` report `matches`. Other queries fall back
@@ -37,10 +78,10 @@ function setCompactViewport(isCompact: boolean) {
   })) as unknown as typeof window.matchMedia;
 }
 
-function Seed() {
+function Seed({ seedTracks = tracks }: { seedTracks?: MusicTrack[] }) {
   const { playNow } = useMusicPlayer();
   useEffect(() => {
-    playNow(tracks, 0);
+    playNow(seedTracks, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
@@ -51,7 +92,7 @@ function Probe() {
   return <div data-testid="position">{Math.round(position)}</div>;
 }
 
-function renderBar() {
+function renderBar(seedTracks?: MusicTrack[]) {
   setSession({ jellyfinToken: 'tok', jellyfinUserId: 'user', jellyseerrCookiePresent: true });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -61,7 +102,7 @@ function renderBar() {
       <MemoryRouter initialEntries={['/musica']}>
         <AuthProvider>
           <MusicPlayerProvider>
-            <Seed />
+            <Seed seedTracks={seedTracks} />
             <NowPlayingBar />
             <Probe />
           </MusicPlayerProvider>
@@ -113,6 +154,25 @@ describe('NowPlayingBar — desktop layout', () => {
     // The old mobile rule hid the whole `__extra` group; regression guard.
     expect(queueBtn.closest('.pf-nowplaying__extra')).not.toBeNull();
     expect(getComputedStyle(queueBtn).display).not.toBe('none');
+  });
+
+  // Reliability change: buffering is state nobody can see without a UI cue.
+  it('marks the toggle button aria-busy and pulsing once a stall settles', () => {
+    vi.useFakeTimers();
+    renderBar();
+    const toggle = screen.getByRole('button', { name: 'Pausar' });
+    expect(toggle).not.toHaveAttribute('aria-busy', 'true');
+    expect(toggle).not.toHaveClass('pf-nowplaying__toggle--buffering');
+
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    fireEvent.waiting(audio);
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(toggle).toHaveAttribute('aria-busy', 'true');
+    expect(toggle).toHaveClass('pf-nowplaying__toggle--buffering');
+    vi.useRealTimers();
   });
 });
 
@@ -193,5 +253,48 @@ describe('NowPlayingBar — compact mobile layout', () => {
     expect(screen.queryByRole('dialog', { name: 'Reproduciendo' })).not.toBeInTheDocument();
     // Back to the compact bar.
     expect(screen.getByRole('button', { name: 'Abrir reproductor: Track A' })).toBeInTheDocument();
+  });
+
+  // Reliability change: thumbs up/down reachable from the mobile full-screen
+  // player too, mirroring the desktop bar's `current.videoId` guard.
+  describe('full player — thumbs (music-track-feedback)', () => {
+    it('renders ThumbButtons as the leading item of the bottom row when videoId is defined', async () => {
+      renderBar(ratedTracks);
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Rated Track' }));
+      const dialog = screen.getByRole('dialog', { name: 'Reproduciendo' });
+      const inDialog = within(dialog);
+
+      const thumbUp = inDialog.getByRole('button', { name: /^Me gusta/ });
+      expect(thumbUp).toBeInTheDocument();
+      const wrapper = thumbUp.closest('.pf-thumbs');
+      expect(wrapper).toHaveClass('pf-thumbs--full');
+      // Leading item of .pf-fullplayer__bottom: the volume control comes after it.
+      const bottom = dialog.querySelector('.pf-fullplayer__bottom');
+      expect(bottom?.firstElementChild).toContainElement(wrapper as HTMLElement);
+    });
+
+    it('does not render for a library track with no videoId (unmatched guard)', () => {
+      renderBar(unmatchedTracks);
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Abrir reproductor: Unmatched Track' }),
+      );
+      const dialog = screen.getByRole('dialog', { name: 'Reproduciendo' });
+      expect(within(dialog).queryByText(/Me gusta/)).not.toBeInTheDocument();
+    });
+
+    it('a rating click reaches the same rate store as the bar/menu variants', async () => {
+      renderBar(ratedTracks);
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Rated Track' }));
+      const dialog = screen.getByRole('dialog', { name: 'Reproduciendo' });
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Me gusta/ }));
+      // useRatings persists via localStorage in this app's real store — the
+      // pressed state flipping proves the click reached the shared hook.
+      await waitFor(() =>
+        expect(within(dialog).getByRole('button', { name: /^Me gusta/ })).toHaveAttribute(
+          'aria-pressed',
+          'true',
+        ),
+      );
+    });
   });
 });

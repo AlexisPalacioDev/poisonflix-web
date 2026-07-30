@@ -72,7 +72,18 @@ _ytmusic = None  # lazily constructed YTMusic client
 # resolve. videoId -> (direct_url, expiry_monotonic).
 _stream_lock = threading.Lock()
 _stream_cache = {}
-STREAM_URL_TTL = 300.0  # 5 min; googlevideo URLs live hours, re-resolve is cheap
+# 1h. Scoped to S1 (slow-start / repeat-play latency) ONLY: googlevideo URLs
+# live hours (see the yt-dlp call above), and at the old 5 min TTL the second
+# play of any 3-4 min track missed the cache and paid the ~2.1-2.3s yt-dlp
+# resolve again. Explicitly NOT a fix for the unidentified 2x-duration
+# defect — that theory (a stale/spliced URL) was refuted by a controlled
+# experiment serving the worker's exact bytes to headless Chromium, which
+# reported the correct duration both with and without Range support. Not
+# raised further than this: _stream_cache is an unbounded dict with no
+# eviction, and a longer TTL widens the staleness window a re-resolve has to
+# cover; that staleness is already absorbed by the force=True re-resolve path
+# on a 403/410 upstream failure (see _resolve_stream_url's retry loop below).
+STREAM_URL_TTL = 3600.0
 
 # videoId -> Jellyfin itemId, derived from the "[videoId].ext" tail every
 # downloaded file carries (see target_path). Cached briefly so a burst of
