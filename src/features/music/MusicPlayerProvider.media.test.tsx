@@ -120,6 +120,12 @@ describe('MusicPlayerProvider — Safari ended-then-pause does not cancel auto-a
 });
 
 describe('MusicPlayerProvider — unlock probe suppression', () => {
+  // LIMITATION, stated rather than papered over: this proves the probe's pause does
+  // not flip state, but it cannot discriminate `probeRef` from a (wrong)
+  // `unlockedRef`-based guard, because `unlockedRef.current` is already true in this
+  // setup by the time the probe fires. The source is correct — verified by reading
+  // it — but reverting the guard would NOT turn this test red. Real iOS promise
+  // ordering is not reproducible under jsdom either.
   it('the probe play()->pause() sequence does not flip isPlaying as a direct result', async () => {
     renderProvider();
     await act(async () => {
@@ -312,6 +318,30 @@ describe('MusicPlayerProvider — duration mismatch diagnostics (security-sensit
     const before = recordedFailures().length;
     act(() => fireEvent.durationChange(audio));
     expect(recordedFailures().length).toBe(before);
+  });
+
+  it('also reports on ended, not only on durationchange', async () => {
+    // The spec requires BOTH triggers. `durationchange` catches a mismatch the
+    // element declares up front; `ended` catches the shape the user actually
+    // reported — audio that stops while the timer keeps running toward a phantom
+    // end. Verify covering this change found `ended` had no test at all, even
+    // though the wiring is one line, so a future refactor could silently drop the
+    // trigger that matches the real-world symptom.
+    renderProvider();
+    await act(async () => {
+      api.playNow([mismatchTrack], 0);
+    });
+    const audio = audioEl();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 400 });
+
+    clearRecordedFailures();
+    act(() => fireEvent.ended(audio));
+
+    const reports = recordedFailures().filter(
+      (f) => f.scope === 'music.player.durationMismatch',
+    );
+    expect(reports.length).toBe(1);
+    expect(JSON.stringify(reports[0]?.detail)).not.toContain('api_key');
   });
 
   it('does NOT alter playback state as a side effect of reporting (no corrective behavior)', async () => {
