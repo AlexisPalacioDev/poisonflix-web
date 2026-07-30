@@ -36,8 +36,13 @@ export function validatePassword(password) {
   return null;
 }
 
+// 20s total. Undici has no default request timeout, so a hung Jellyfin would
+// otherwise pin an invite/registration request until Node's 300s requestTimeout.
+const IDENTITY_TIMEOUT_MS = 20_000;
+
 async function jellyfin(path, init = {}) {
   const res = await fetch(`${JELLYFIN_URL}${path}`, {
+    signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
     ...init,
     headers: {
       'X-Emby-Token': JELLYFIN_API_KEY,
@@ -127,6 +132,7 @@ export async function deleteUser(id) {
 
 async function jellyseerr(path, init = {}) {
   return fetch(`${JELLYSEERR_URL}${path}`, {
+    signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
     ...init,
     headers: {
       'X-Api-Key': JELLYSEERR_API_KEY,

@@ -26,20 +26,34 @@ import {
   importToJellyseerr,
 } from './identity.mjs';
 
-const {
-  PORT = '8787',
-  JELLYSEERR_URL = 'http://jellyseerr:5055',
-  RADARR_URL = 'http://radarr:7878',
-  SONARR_URL = 'http://sonarr:8989',
-  PROWLARR_URL = 'http://prowlarr:9696',
-  RADARR_API_KEY = '',
-  SONARR_API_KEY = '',
-  PROWLARR_API_KEY = '',
-  // Internal audio downloader for the "Música" feature (poisonflix-music-worker).
-  // Reachable only from the BFF; every call below is gated on an authenticated
-  // Jellyseerr session, same as the rest of the BFF-fronted backends.
-  MUSIC_WORKER_URL = 'http://music-worker:8790',
-} = process.env;
+// `||`, not destructuring defaults. A default only applies to `undefined`, and
+// docker-compose.override.yml interpolates `${JELLYSEERR_URL}` with no `:-`
+// fallback — so a missing .env substitutes an EMPTY STRING, the default never
+// engages, and `fetch('/api/v1/auth/me')` throws a URL-parse error that
+// resolveUser swallows into `user = null`. Every user would get 401 forever,
+// with no log line and a container that looks perfectly healthy.
+const env = process.env;
+const PORT = env.PORT || '8787';
+const JELLYSEERR_URL = env.JELLYSEERR_URL || 'http://jellyseerr:5055';
+const RADARR_URL = env.RADARR_URL || 'http://radarr:7878';
+const SONARR_URL = env.SONARR_URL || 'http://sonarr:8989';
+const PROWLARR_URL = env.PROWLARR_URL || 'http://prowlarr:9696';
+const RADARR_API_KEY = env.RADARR_API_KEY || '';
+const SONARR_API_KEY = env.SONARR_API_KEY || '';
+const PROWLARR_API_KEY = env.PROWLARR_API_KEY || '';
+// Internal audio downloader for the "Música" feature (poisonflix-music-worker).
+// Reachable only from the BFF; every call below is gated on an authenticated
+// Jellyseerr session, same as the rest of the BFF-fronted backends.
+const MUSIC_WORKER_URL = env.MUSIC_WORKER_URL || 'http://music-worker:8790';
+
+// ---- Upstream timeouts ----
+// Undici has NO total-request timeout by default, so a HUNG upstream (as opposed
+// to a dead one, which is already handled) pinned the BFF until Node's 300s
+// requestTimeout. The worst case is AUTH_TIMEOUT_MS: resolveUser sits on the
+// critical path of every route, so one hung Jellyseerr hung the entire BFF —
+// including routes that never touch Jellyseerr.
+const AUTH_TIMEOUT_MS = 5_000;
+const UPSTREAM_TIMEOUT_MS = 20_000;
 
 // Jellyseerr permission bitfield: ADMIN grants everything and is bit 2.
 const PERMISSION_ADMIN = 2;
@@ -72,6 +86,7 @@ async function resolveUser(cookie) {
   try {
     const res = await fetch(`${JELLYSEERR_URL}/api/v1/auth/me`, {
       headers: { cookie, accept: 'application/json' },
+      signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
     });
     if (res.ok) {
       const body = await res.json();
@@ -128,6 +143,7 @@ function readBody(req) {
 async function arrFetch(backendKey, path, init = {}) {
   const backend = BACKENDS[backendKey];
   const res = await fetch(`${backend.base}${path}`, {
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     ...init,
     headers: { 'X-Api-Key': backend.key, accept: 'application/json', ...(init.headers || {}) },
   });
@@ -157,6 +173,19 @@ const GET_ALLOW = {
   prowlarr: [/^\/api\/v1\/search$/],
 };
 
+// The exact mutating paths the SPA needs — nothing else. Derived from src/api/arr.ts:
+// delete movie/series, cancel a queue item, unmonitor a movie (full-object PUT) and
+// batch-unmonitor episodes.
+const MUTATE_ALLOW = {
+  radarr: [/^\/api\/v3\/movie\/\d+$/, /^\/api\/v3\/queue\/\d+$/],
+  sonarr: [
+    /^\/api\/v3\/series\/\d+$/,
+    /^\/api\/v3\/queue\/\d+$/,
+    /^\/api\/v3\/episode\/monitor$/,
+  ],
+  prowlarr: [],
+};
+
 function isAllowedPassthrough(method, prefix, restPath, user) {
   const pathname = restPath.split('?')[0];
   if (method === 'GET') {
@@ -165,8 +194,15 @@ function isAllowedPassthrough(method, prefix, restPath, user) {
   if (method === 'POST' && prefix === 'prowlarr' && pathname === '/api/v1/search') {
     return true; // grab / "Pedir"
   }
-  if ((method === 'DELETE' || method === 'PUT') && (prefix === 'radarr' || prefix === 'sonarr')) {
-    return user.isAdmin; // library delete / monitor toggles
+  if (method === 'DELETE' || method === 'PUT') {
+    // Admin was necessary but NOT sufficient. This used to allow admins ANY path
+    // on radarr/sonarr, while GET is tightly allowlisted precisely because *arr
+    // config endpoints return the API key in their response body — and the
+    // response is relayed verbatim. So `PUT /api/v3/config/host` handed the
+    // Radarr admin key straight to the browser, defeating the whole reason the
+    // key lives only in the BFF. One XSS in an admin session was enough.
+    if (!user.isAdmin) return false;
+    return (MUTATE_ALLOW[prefix] || []).some((re) => re.test(pathname));
   }
   return false;
 }
@@ -184,7 +220,12 @@ async function handlePassthrough(req, res, prefix, restPath, user) {
 
   let upstream;
   try {
-    upstream = await fetch(`${backend.base}${restPath}`, { method: req.method, headers, body });
+    upstream = await fetch(`${backend.base}${restPath}`, {
+      method: req.method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
   } catch {
     return send(res, 502, { error: 'upstream unreachable' });
   }
@@ -211,6 +252,7 @@ async function fetchRequestInfo(requestId, cookie) {
   try {
     const res = await fetch(`${JELLYSEERR_URL}/api/v1/request/${requestId}`, {
       headers: { cookie, accept: 'application/json' },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -297,6 +339,7 @@ async function handleCancel(req, res, user) {
   let del;
   try {
     del = await fetch(`${JELLYSEERR_URL}/api/v1/request/${requestId}`, {
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       method: 'DELETE',
       headers: { cookie },
     });
@@ -327,17 +370,23 @@ function clientIp(req) {
 // is acceptable for this low-stakes, invite-gated endpoint).
 const REGISTER_WINDOW_MS = 10 * 60_000;
 const REGISTER_MAX = 5;
+// Per-IP is effectively per-ORIGIN behind the Funnel (every public visitor shares
+// the sidecar's IP), so it has to be loose enough not to lock out a household.
+const REGISTER_MAX_PER_IP = 40;
+// A specific invite code, though, is only ever typed by one person: a handful of
+// attempts is generous and it is what makes guessing expensive.
+const REGISTER_MAX_PER_CODE = 5;
 /** @type {Map<string, number[]>} */
 const registerHits = new Map();
 
-function rateLimited(ip, now) {
-  const hits = (registerHits.get(ip) || []).filter((t) => now - t < REGISTER_WINDOW_MS);
-  if (hits.length >= REGISTER_MAX) {
-    registerHits.set(ip, hits);
+function rateLimited(key, now, max = REGISTER_MAX) {
+  const hits = (registerHits.get(key) || []).filter((t) => now - t < REGISTER_WINDOW_MS);
+  if (hits.length >= max) {
+    registerHits.set(key, hits);
     return true;
   }
   hits.push(now);
-  registerHits.set(ip, hits);
+  registerHits.set(key, hits);
   if (registerHits.size > 1024) {
     for (const [k, v] of registerHits) {
       if (v.every((t) => now - t >= REGISTER_WINDOW_MS)) registerHits.delete(k);
@@ -356,7 +405,16 @@ async function parseJson(req) {
 
 async function handleRegister(req, res) {
   const now = Date.now();
-  if (rateLimited(clientIp(req), now)) {
+
+  // The per-IP bucket cannot carry this alone. All public traffic arrives through
+  // the Tailscale Funnel sidecar, so Caddy stamps EVERY visitor with that one
+  // container IP — five signups in ten minutes locked out the whole internet, and
+  // one abusive client locked out the family. Per-IP is still checked (it is real
+  // when reached over the LAN) but with a much higher ceiling, and the bucket that
+  // actually stops brute force is keyed on the CODE being attempted: guessing is
+  // per-code work, so that is where the limit belongs.
+  if (rateLimited(`ip:${clientIp(req)}`, now, REGISTER_MAX_PER_IP)) {
+    logError('register.rateLimit', 'per-ip limit hit', { ip: clientIp(req) });
     return send(res, 429, { error: 'too_many_requests' });
   }
 
@@ -364,6 +422,10 @@ async function handleRegister(req, res) {
   if (!body) return send(res, 400, { error: 'invalid_json' });
 
   const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : '';
+  if (code && rateLimited(`code:${code}`, now, REGISTER_MAX_PER_CODE)) {
+    logError('register.rateLimit', 'per-code limit hit', { code });
+    return send(res, 429, { error: 'too_many_requests' });
+  }
   const username = typeof body.username === 'string' ? body.username.trim() : '';
   const { password } = body;
   if (!code) return send(res, 400, { error: 'invalid_code' });
@@ -557,6 +619,11 @@ async function handleMusic(req, res, subPath, search, user) {
       method,
       headers,
       body,
+      // NOT on the stream. AbortSignal.timeout covers the whole operation
+      // INCLUDING reading the body, so a total timeout would cut playback off
+      // mid-track — a track outlasts any sane request budget. The stream path is
+      // protected instead by the pipeline error handling below.
+      signal: isStream ? undefined : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
   } catch {
     return send(res, 502, { error: 'music_worker_unreachable' });
