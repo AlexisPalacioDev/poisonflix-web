@@ -94,6 +94,41 @@ LIB_INDEX_TTL = 30.0
 _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 
 
+# --- iOS fMP4 duration fix -------------------------------------------------
+# YouTube only serves DASH-fragmented audio (every format is `*_dash`), and those
+# files carry the total duration TWICE: once in `moov/mvhd` and again as the sum
+# of the `sidx` segment durations. iOS WebKit ADDS them, so a 3:14 track reports
+# as 6:26 — the audio ends on time while the timer runs on through phantom
+# silence. Measured exactly: mvhd 193.18s + sidx 193.18s = 386.36s, against 386s
+# observed on the device.
+#
+# Renaming `sidx` to `free` is the surgical repair. `free` is padding every
+# demuxer skips, the box KEEPS ITS LENGTH, so no byte offset moves and Range
+# requests stay valid — the patch is four bytes. Verified locally: the patched
+# file is byte-identical in size, still parses, and a real browser still reports
+# the correct duration.
+_SIDX_SCAN_LIMIT = 1 << 20  # sidx sits right after moov; never megabytes in.
+
+
+def _neutralize_sidx(chunk, stream_offset):
+    """Rewrite any `sidx` box type to `free` within this chunk.
+
+    `stream_offset` is where the chunk starts in the response body. A box header
+    straddling a chunk boundary is deliberately left alone: chunks are 64 KiB and
+    sidx lands within the first few KiB, so the split case does not arise in
+    practice and half-patching a header would corrupt the stream.
+    """
+    if stream_offset > _SIDX_SCAN_LIMIT:
+        return chunk
+    idx = chunk.find(b"sidx")
+    if idx < 4:  # not found, or no room for the preceding 4-byte size field
+        return chunk
+    patched = bytearray(chunk)
+    while idx >= 4:
+        patched[idx:idx + 4] = b"free"
+        idx = patched.find(b"sidx", idx + 4)
+    return bytes(patched)
+
 def _load_state():
     os.makedirs(DATA_DIR, exist_ok=True)
     _load_ratings()
@@ -1510,10 +1545,20 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_header(header, value)
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            # Only patch when serving from the start of the resource. A ranged
+            # request that begins mid-file cannot contain the sidx header, and
+            # rewriting bytes at an unknown offset would corrupt the stream.
+            sent = 0
+            patch = not upstream.headers.get("Content-Range") or str(
+                upstream.headers.get("Content-Range", "")
+            ).startswith("bytes 0-")
             while True:
                 chunk = upstream.read(65536)
                 if not chunk:
                     break
+                if patch:
+                    chunk = _neutralize_sidx(chunk, sent)
+                sent += len(chunk)
                 self.wfile.write(chunk)
         except (BrokenPipeError, ConnectionResetError):
             pass  # client seeked or closed the tab — normal for audio playback
