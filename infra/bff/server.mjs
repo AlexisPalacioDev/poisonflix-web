@@ -806,6 +806,24 @@ const server = createServer(async (req, res) => {
       return await handleRegister(req, res);
     }
 
+    // Client diagnostics. The duration defect only reproduces on the reporter's
+    // iPhone — never in headless Chromium, with or without Range — so the numbers
+    // that would identify it live in a browser nobody can attach a debugger to.
+    // window.__pfErrors is unreachable on a phone in practice, so the same payload
+    // is posted here and lands in `docker compose logs bff`. Public on purpose: it
+    // has to work before the session is established, it writes nothing, and the
+    // body is capped by readBody's 1 MB limit like every other route.
+    if (path === '/bff/client-log' && req.method === 'POST') {
+      const body = await parseJson(req);
+      if (body === 'too_large') return sendTooLarge(res);
+      logError('client', body?.scope || 'unknown', {
+        message: body?.message ?? null,
+        detail: body?.detail ?? null,
+        ua: String(req.headers['user-agent'] || '').slice(0, 120),
+      });
+      return send(res, 204, '');
+    }
+
     const user = await resolveUser(req.headers.cookie || '');
     if (!user) return send(res, 401, { error: 'unauthenticated' });
 

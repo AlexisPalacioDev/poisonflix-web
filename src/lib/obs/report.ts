@@ -47,6 +47,20 @@ export function reportFailure(scope: string, cause: unknown, detail?: unknown): 
 
     // eslint-disable-next-line no-console -- this IS the observability channel
     console.warn(`[poisonflix] ${scope}: ${message}`, detail ?? '');
+
+    // Also ship it to the server. `window.__pfErrors` is unreachable in practice
+    // on a phone, and the defect that matters most right now only reproduces on
+    // one — so the payload has to land somewhere readable without a debugger.
+    // keepalive so a report during teardown still leaves; failures are ignored,
+    // because a diagnostic that breaks the app is worse than no diagnostic.
+    if (typeof fetch === 'function') {
+      void fetch('/bff/client-log', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scope, message, detail }),
+        keepalive: true,
+      }).catch(() => {});
+    }
   } catch {
     // Reporting a failure must never itself become one.
   }
