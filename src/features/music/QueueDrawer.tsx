@@ -1,3 +1,4 @@
+import { CoverImage } from './CoverImage';
 import { useMusicPlayer } from './musicPlayerCore';
 import './QueueDrawer.css';
 
@@ -75,7 +76,7 @@ export function QueueDrawer({ onClose }: { onClose: () => void }) {
                   aria-current={active ? 'true' : undefined}
                 >
                   <span className="pf-queue__art" aria-hidden="true">
-                    {track.coverUrl ? <img src={track.coverUrl} alt="" /> : <span>♪</span>}
+                    <CoverImage src={track.coverUrl} />
                   </span>
                   <span className="pf-queue__info">
                     <span className="pf-queue__title">{track.title}</span>

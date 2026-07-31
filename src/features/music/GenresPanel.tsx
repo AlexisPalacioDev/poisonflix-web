@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useMusicGenres } from '../../hooks/useMusicGenres';
 import { useGenreSongs } from '../../hooks/useGenreSongs';
 import { audioItemToTrack } from '../../lib/domain/musicTrack';
+import { CoverImage } from './CoverImage';
 import { PlayButton } from './PlayButton';
 import { MusicRowMenu } from './MusicRowMenu';
 import { useMusicPlayer } from './musicPlayerCore';
@@ -71,11 +72,7 @@ export function GenresPanel({ active }: { active: boolean }) {
                     className={`pf-music__row${isCurrent ? ' pf-music__row--active' : ''}`}
                   >
                     <div className="pf-music__art">
-                      {track.coverUrl ? (
-                        <img src={track.coverUrl} alt="" loading="lazy" />
-                      ) : (
-                        <span aria-hidden="true">♪</span>
-                      )}
+                      <CoverImage src={track.coverUrl} loading="lazy" />
                     </div>
                     <div className="pf-music__info">
                       <span className="pf-music__title">{track.title}</span>
