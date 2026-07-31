@@ -80,6 +80,7 @@ export function MusicScreen() {
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<MusicSource>('auto');
   const [tab, setTab] = useState<BrowseTab>('canciones');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const { debouncedQuery, enabled, isLoading, isError, results } = useMusicSearch(query, source);
   const { download, stateByVideoId, itemByVideoId } = useMusicDownload();
@@ -199,6 +200,14 @@ export function MusicScreen() {
   // query actually fires.
   const searching = query.trim().length > 0;
 
+  // Emptying the query is what takes the user back to the landing — there is no
+  // navigation to undo. Focus goes back to the field on purpose: dropping it
+  // closes the mobile keyboard, which reads as "the search closed on me".
+  const handleClearQuery = () => {
+    setQuery('');
+    searchInputRef.current?.focus();
+  };
+
   const searchEmpty = enabled
     ? `Sin resultados para "${debouncedQuery}"`
     : 'Escribí al menos 2 caracteres para buscar música.';
@@ -224,6 +233,7 @@ export function MusicScreen() {
             </svg>
           </span>
           <input
+            ref={searchInputRef}
             type="search"
             className="pf-music__input pf-music__input--search"
             placeholder="Buscar en YouTube Music…"
@@ -232,6 +242,37 @@ export function MusicScreen() {
             aria-label="Buscar música"
             autoFocus
           />
+          {/* Only while there is something to clear: a permanent X on an empty
+              field is noise. */}
+          {query !== '' && (
+            <button
+              type="button"
+              className="pf-music__query-clear"
+              onClick={handleClearQuery}
+              aria-label="Limpiar búsqueda"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <line
+                  x1="6"
+                  y1="6"
+                  x2="18"
+                  y2="18"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+                <line
+                  x1="18"
+                  y1="6"
+                  x2="6"
+                  y2="18"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          )}
         </div>
         <SourceToggle value={source} onChange={setSource} />
       </div>

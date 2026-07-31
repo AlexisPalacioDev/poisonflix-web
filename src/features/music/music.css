@@ -60,6 +60,40 @@
 
 .pf-music__input--search {
   padding-left: 2.85rem;
+  /* Mirror of the icon inset on the right, so a long query never slides under
+     the clear button. */
+  padding-right: 2.85rem;
+}
+
+/* WebKit draws its own cancel button on type="search" (iOS/Safari); ours is the
+   only one that keeps focus in the field, so hide the native one rather than
+   show two X's. */
+.pf-music__input--search::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* Same absolute placement as .pf-music__query-icon, flipped to the right edge —
+   but clickable, and sized as a comfortable tap target. */
+.pf-music__query-clear {
+  position: absolute;
+  right: 0.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--pf-radius-pill, 999px);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast, 0.16s) ease, background var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-music__query-clear:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .pf-music__input::placeholder {

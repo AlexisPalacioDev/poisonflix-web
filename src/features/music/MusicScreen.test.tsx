@@ -192,6 +192,61 @@ describe('MusicScreen (Música — Slice 1)', () => {
     await waitFor(() => expect(mockedGetRecommendations).toHaveBeenCalledWith('vid-1', 15));
   });
 
+  it('clears the query and returns to the landing when the clear button is pressed', async () => {
+    mockedGetItems.mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 } as never);
+    mockedSearchMusic.mockResolvedValue([
+      {
+        type: 'song',
+        videoId: 'vid-1',
+        title: 'Song One',
+        artist: 'The Artist',
+        artists: ['The Artist'],
+        album: 'The Album',
+        durationSeconds: 200,
+        thumbnailUrl: null,
+        source: 'ytmusic',
+      },
+    ] as never);
+    // A non-empty feed gives the landing a marker that disappears while the
+    // search view is up — that is what proves we actually came back.
+    mockedGetRecommendations.mockResolvedValue([
+      {
+        type: 'song',
+        videoId: 'rec-1',
+        title: 'Recommended Jam',
+        artist: 'Rec Artist',
+        artists: ['Rec Artist'],
+        album: null,
+        durationSeconds: 180,
+        thumbnailUrl: null,
+        source: 'ytmusic',
+      },
+    ] as never);
+
+    renderMusic();
+
+    expect(await screen.findByText('Populares en YouTube Music')).toBeInTheDocument();
+    // Nothing to clear yet, so the button must not be there.
+    expect(screen.queryByRole('button', { name: 'Limpiar búsqueda' })).not.toBeInTheDocument();
+
+    const input = screen.getByRole('searchbox', { name: /buscar música/i }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'song' } });
+
+    // Search view has taken over the landing.
+    expect(await screen.findByText('Song One')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Resultados' })).toBeInTheDocument();
+    expect(screen.queryByText('Populares en YouTube Music')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Limpiar búsqueda' }));
+
+    expect(input).toHaveValue('');
+    expect(screen.queryByRole('heading', { name: 'Resultados' })).not.toBeInTheDocument();
+    expect(await screen.findByText('Populares en YouTube Music')).toBeInTheDocument();
+    // Focus stays in the field so the mobile keyboard does not collapse.
+    expect(input).toHaveFocus();
+    expect(screen.queryByRole('button', { name: 'Limpiar búsqueda' })).not.toBeInTheDocument();
+  });
+
   it('renders the Jellyfin Audio library under the Canciones tab, newest first', async () => {
     mockedGetItems.mockResolvedValue({
       Items: [
