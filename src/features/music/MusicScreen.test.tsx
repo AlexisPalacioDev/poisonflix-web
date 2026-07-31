@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MusicScreen } from './MusicScreen';
@@ -237,12 +238,21 @@ describe('MusicScreen (Música — Slice 1)', () => {
     expect(screen.getByRole('heading', { name: 'Resultados' })).toBeInTheDocument();
     expect(screen.queryByText('Populares en YouTube Music')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Limpiar búsqueda' }));
+    // userEvent, NOT fireEvent, and the reason is the focus assertion below.
+    // `fireEvent.click` dispatches a bare click MouseEvent; it never performs
+    // the mousedown-driven focus transfer a real browser does. Since the input
+    // is autoFocus'd at mount and nothing here moves focus off it, a fireEvent
+    // click would leave focus on the input no matter what the handler did, and
+    // `toHaveFocus()` would pass even with the `.focus()` call deleted.
+    // userEvent moves focus to the button first, so the assertion can fail.
+    const user = userEvent.setup();
+    const clearButton = screen.getByRole('button', { name: 'Limpiar búsqueda' });
+    await user.click(clearButton);
 
     expect(input).toHaveValue('');
     expect(screen.queryByRole('heading', { name: 'Resultados' })).not.toBeInTheDocument();
     expect(await screen.findByText('Populares en YouTube Music')).toBeInTheDocument();
-    // Focus stays in the field so the mobile keyboard does not collapse.
+    // Focus is restored to the field so the mobile keyboard does not collapse.
     expect(input).toHaveFocus();
     expect(screen.queryByRole('button', { name: 'Limpiar búsqueda' })).not.toBeInTheDocument();
   });
