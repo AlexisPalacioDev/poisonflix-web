@@ -12,6 +12,8 @@ Zero web framework: Python stdlib http.server, mirroring the BFF's zero-dep
 Node style. Download queue is FIFO, concurrency 1.
 """
 
+import concurrent.futures
+import http.client
 import json
 import os
 import queue
@@ -73,12 +75,15 @@ _ytmusic = None  # lazily constructed YTMusic client
 _stream_lock = threading.Lock()
 _stream_cache = {}
 # 1h. Scoped to S1 (slow-start / repeat-play latency) ONLY: googlevideo URLs
-# live hours (see the yt-dlp call above), and at the old 5 min TTL the second
+# live hours (see the yt-dlp call in _resolve_stream_url below), and at the old
+# 5 min TTL the second
 # play of any 3-4 min track missed the cache and paid the ~2.1-2.3s yt-dlp
-# resolve again. Explicitly NOT a fix for the unidentified 2x-duration
+# resolve again. Explicitly NOT a fix for the 2x-duration
 # defect — that theory (a stale/spliced URL) was refuted by a controlled
 # experiment serving the worker's exact bytes to headless Chromium, which
-# reported the correct duration both with and without Range support. Not
+# reported the correct duration both with and without Range support. That
+# defect is no longer unidentified: it is the DASH fragmentation itself, and
+# the progressive remux cache further down is what fixes it. Not
 # raised further than this: _stream_cache is an unbounded dict with no
 # eviction, and a longer TTL widens the staleness window a re-resolve has to
 # cover; that staleness is already absorbed by the force=True re-resolve path
@@ -94,19 +99,24 @@ LIB_INDEX_TTL = 30.0
 _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 
 
-# --- iOS fMP4 duration fix -------------------------------------------------
-# YouTube only serves DASH-fragmented audio (every format is `*_dash`), and those
-# files carry the total duration TWICE: once in `moov/mvhd` and again as the sum
-# of the `sidx` segment durations. iOS WebKit ADDS them, so a 3:14 track reports
-# as 6:26 — the audio ends on time while the timer runs on through phantom
-# silence. Measured exactly: mvhd 193.18s + sidx 193.18s = 386.36s, against 386s
-# observed on the device.
+# --- iOS fMP4 duration patch (SUPERSEDED — fallback path only) --------------
+# HISTORY, kept because the fallback proxy still calls this and a maintainer
+# needs to know it does NOT fix what its name suggests.
 #
-# Renaming `sidx` to `free` is the surgical repair. `free` is padding every
-# demuxer skips, the box KEEPS ITS LENGTH, so no byte offset moves and Range
-# requests stay valid — the patch is four bytes. Verified locally: the patched
-# file is byte-identical in size, still parses, and a real browser still reports
-# the correct duration.
+# YouTube only serves DASH-fragmented audio (every format is `*_dash`), and those
+# files carry the total duration TWICE: once in `moov/mvhd` and again in the
+# fragment timeline. iOS WebKit ADDS them, so a 3:14 track reports as 6:26 — the
+# audio ends on time while the timer runs on through phantom silence.
+#
+# Renaming the redundant box to `free` looked like the surgical repair: `free` is
+# padding every demuxer skips, the box KEEPS ITS LENGTH, so no byte offset moves
+# and Range requests stay valid. It was shipped twice, for `sidx` and then for
+# `edts`, and the DEVICE refuted both — with neither box in the delivered bytes
+# an iPhone still reported exactly 2x (322.926s for a 162s track).
+#
+# The real fix is to stop serving a fragmented file at all: see the progressive
+# remux cache below. This patch survives only on the fallback path, where it is
+# free and harmless but is not what makes the duration right.
 _SIDX_SCAN_LIMIT = 1 << 20  # both boxes sit right after moov; never megabytes in.
 
 # Boxes that redundantly restate the total duration. The device log settled which
@@ -834,6 +844,301 @@ def _open_stream_upstream(url, range_header):
     return urllib.request.urlopen(req, timeout=20)
 
 
+# --- Progressive remux cache ------------------------------------------------
+# THE fix for "a 3 minute track plays for 5, the last 2 silent".
+#
+# YouTube serves audio only as DASH-fragmented MP4. Such a file states its total
+# length in `moov` AND again in the fragment timeline, and iOS WebKit adds the
+# two together. Two surgical attempts at deleting the redundant statement — the
+# segment index (`sidx`), then the edit list (`edts`) — were each shipped and
+# each refuted by the device itself, which kept reporting EXACTLY twice the real
+# length afterwards:
+#
+#     22:34:46  elementDuration 322.926  trackDuration 162   (both boxes gone)
+#     22:35:06  elementDuration 552.628  trackDuration 277   (both boxes gone)
+#
+# Those bytes carry no sidx and no edts — verified on the delivered response —
+# so the remaining source of the second copy is the fragment timeline itself,
+# which cannot be deleted from a fragmented file: it IS the file.
+#
+# So stop repairing a fragmented file and stop serving one. ffmpeg remuxes the
+# same AAC bytes into a plain progressive MP4 — `-c copy`, no re-encode, ~90ms
+# for a 2.6 MB track — which has no fragments, no sidx and one single duration
+# for any demuxer to find. This is what every music service on the planet hands
+# an iPhone, and it removes the whole class of defect rather than one instance
+# of it.
+#
+# The price is that the first play of a track must fetch the whole file before
+# the first byte goes out — about a second for a typical track, once the fetch
+# sidesteps googlevideo's throttle (see _download_chunked). The remuxed result
+# is cached on disk, so every later play —
+# and every Range request, which is where seeking lives — is served locally from
+# a file whose length is known, which is strictly faster and more correct than
+# re-proxying googlevideo.
+STREAM_CACHE_DIR = os.path.join(DATA_DIR, "streamcache")
+STREAM_CACHE_MAX_BYTES = 4 * 1024 * 1024 * 1024  # LRU-pruned by mtime
+STREAM_FETCH_MAX_BYTES = 200 * 1024 * 1024  # refuse to buffer an absurd upstream
+REMUX_TIMEOUT_S = 120
+# A videoId reaches the filesystem as a path component, so it is constrained to
+# the alphabet YouTube actually uses. Without this a crafted id is a traversal.
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{5,32}$")
+
+_remux_guard = threading.Lock()
+_remux_locks = {}  # videoId -> lock, so a burst of plays builds the cache once
+
+
+def _remux_lock_for(video_id):
+    with _remux_guard:
+        if len(_remux_locks) > 500:
+            # Cheap bound: drop the ones nobody is holding. A lock recreated
+            # while a build runs would only cost a duplicate build, never
+            # corruption — the build itself lands with os.replace.
+            for key, lock in list(_remux_locks.items()):
+                if not lock.locked():
+                    del _remux_locks[key]
+        return _remux_locks.setdefault(video_id, threading.Lock())
+
+
+def _stream_cache_path(video_id):
+    return os.path.join(STREAM_CACHE_DIR, f"{video_id}.m4a")
+
+
+def _prune_stream_cache():
+    """Keep the cache under STREAM_CACHE_MAX_BYTES, oldest-touched first."""
+    try:
+        entries = []
+        for name in os.listdir(STREAM_CACHE_DIR):
+            if not name.endswith(".m4a"):
+                # A concurrent build's working files live in this same
+                # directory as `<id>.m4a.raw.<hex>` / `<id>.m4a.out.<hex>`.
+                # Pruning by mtime alone would unlink one while ffmpeg still
+                # has to open it BY PATH, failing an unrelated request for a
+                # reason that has nothing to do with its own upstream.
+                continue
+            path = os.path.join(STREAM_CACHE_DIR, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            entries.append((stat.st_mtime, stat.st_size, path))
+    except OSError:
+        return
+    total = sum(size for _, size, _ in entries)
+    if total <= STREAM_CACHE_MAX_BYTES:
+        return
+    for _, size, path in sorted(entries):
+        try:
+            os.remove(path)
+        except OSError:
+            continue
+        total -= size
+        if total <= STREAM_CACHE_MAX_BYTES:
+            return
+
+
+# googlevideo THROTTLES an open-ended GET to roughly playback speed, and that is
+# what made "download the whole track first" look impossible. Measured on the
+# worker against one 4.5 MB track:
+#
+#     open-ended GET      117.9s   (38 KB/s)
+#     1 MiB Range chunk     0.67s  (1.6 MB/s)
+#     4 x 1 MiB, serial     2.4s
+#
+# Same URL, same host, same second. The throttle is applied to the long-lived
+# connection, not to the file — so the fetch is issued as bounded Range chunks,
+# four at a time, and a normal track lands in about a second.
+_CHUNK_BYTES = 1 << 20
+_CHUNK_PARALLEL = 4
+_CONTENT_RANGE_TOTAL = re.compile(r"/(\d+)\s*$")
+# ONE pool for the whole process, not one per request. ThreadingHTTPServer has
+# no connection cap, so a per-request executor would let N concurrent cold plays
+# open 4N sockets to googlevideo with no backpressure. A shared bounded pool
+# makes the surplus queue instead — the download queue next door is serialized
+# to 1 for the same reason.
+_CHUNK_POOL_WORKERS = 8
+_chunk_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_CHUNK_POOL_WORKERS, thread_name_prefix="chunkfetch"
+)
+
+
+def _range_get(url, start, end, cap=None):
+    """One bounded Range read. Returns (body, total).
+
+    `total` is tri-state, and callers must handle all three:
+      int  — the resource's full size, parsed from Content-Range.
+      None — the upstream sent a 206 with no parseable Content-Range.
+      -1   — the upstream IGNORED Range and answered 200, so `body` already
+             holds the whole file and there is nothing left to fetch.
+
+    `cap` bounds the bytes actually buffered. It matters on that same -1 branch:
+    without a cap that read is unbounded no matter how small a range was asked
+    for.
+    """
+    limit = cap if cap is not None else (end - start + 1)
+    headers = {"User-Agent": _STREAM_UA, "Range": f"bytes={start}-{end}"}
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = bytearray()
+        while len(body) <= limit:
+            piece = resp.read(65536)
+            if not piece:
+                break
+            body.extend(piece)
+        if len(body) > limit:
+            raise ValueError("upstream body exceeds the fetch cap")
+        match = _CONTENT_RANGE_TOTAL.search(resp.headers.get("Content-Range") or "")
+        total = int(match.group(1)) if match else None
+        if resp.status == 200:
+            total = -1  # Range ignored: this body IS the whole file
+        return bytes(body), total
+
+
+def _fetch_upstream_to(video_id, source, dest):
+    """Download the complete upstream audio to `dest`. Returns True on success."""
+    # Only an EXPIRED URL is worth a second attempt: re-resolving costs another
+    # ~1-2s yt-dlp subprocess, and it cannot repair a deterministic failure (an
+    # oversized track, an unbounded first chunk). Those fall straight through to
+    # the proxy instead of paying the resolve twice on every play.
+    for attempt in range(2):
+        url = _resolve_stream_url(video_id, source, force=(attempt == 1))
+        if not url:
+            return False
+        try:
+            return _download_chunked(url, dest)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (403, 410) and attempt == 0:
+                continue  # expired signed URL — re-resolve and retry
+            return False
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+            # http.client.HTTPException covers IncompleteRead, which a truncated
+            # upstream raises and which is NOT an OSError — uncaught, it would
+            # kill the request thread instead of falling back to the proxy.
+            return False
+    return False
+
+
+def _download_chunked(url, dest):
+    """Write the complete resource at `url` into `dest` via bounded Range chunks.
+
+    Returns True ONLY when every byte landed. Every other outcome — an empty
+    first chunk, a track over STREAM_FETCH_MAX_BYTES, an upstream that answers
+    a chunk short — returns False and leaves `dest` to the caller to discard.
+    A partial file must never be reported as success: it would be remuxed and
+    cached as a truncated track.
+    """
+    first, total = _range_get(url, 0, _CHUNK_BYTES - 1, cap=STREAM_FETCH_MAX_BYTES)
+    if not first:
+        return False
+    with open(dest, "wb") as fh:
+        fh.write(first)
+        if total == -1:
+            # Upstream ignored Range and sent everything. _range_get already
+            # bounded that body at STREAM_FETCH_MAX_BYTES.
+            return fh.tell() > 0
+        if total is None:
+            total = len(first) if len(first) < _CHUNK_BYTES else None
+            if total is None:
+                return False  # a full chunk with no total: cannot bound the fetch
+            return True
+        if total > STREAM_FETCH_MAX_BYTES:
+            return False
+        offset = len(first)
+        while offset < total:
+            starts = []
+            for _ in range(_CHUNK_PARALLEL):
+                start = offset + _CHUNK_BYTES * len(starts)
+                if start >= total:
+                    break
+                starts.append(start)
+            bodies = list(
+                _chunk_pool.map(
+                    lambda s: _range_get(s[0], s[1], min(s[1] + _CHUNK_BYTES, total) - 1)[0],
+                    [(url, start) for start in starts],
+                )
+            )
+            # Every chunk is written AT ITS OWN OFFSET and must be exactly the
+            # length that was asked for. A server is allowed to answer a Range
+            # with fewer bytes than requested; appending such a body in sequence
+            # would splice the audio — the download would still reach `total`
+            # and the corrupt result would be remuxed, cached, and served to
+            # every later play of that track. Refuse instead: the caller falls
+            # back to the proxy, which still plays.
+            for start, body in zip(starts, bodies):
+                if len(body) != min(start + _CHUNK_BYTES, total) - start:
+                    return False
+                fh.seek(start)
+                fh.write(body)
+            offset = min(starts[-1] + _CHUNK_BYTES, total)
+        return offset >= total
+
+
+def _build_stream_cache(video_id, source):
+    """Fetch + remux to a progressive MP4 at the cache path. Returns the path,
+    or None if any step failed (the caller then falls back to proxying)."""
+    final = _stream_cache_path(video_id)
+    lock = _remux_lock_for(video_id)
+    with lock:
+        if os.path.exists(final) and os.path.getsize(final) > 0:
+            return final  # another thread built it while we waited
+        os.makedirs(STREAM_CACHE_DIR, exist_ok=True)
+        raw = f"{final}.raw.{uuid.uuid4().hex}"
+        out = f"{final}.out.{uuid.uuid4().hex}"
+        t0 = time.monotonic()
+        try:
+            if not _fetch_upstream_to(video_id, source, raw):
+                print(f"[stream] fetch failed for {video_id}", flush=True)
+                return None
+            t_fetch = time.monotonic()
+            try:
+                proc = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-nostdin",
+                        "-v", "error",
+                        "-y",
+                        "-i", raw,
+                        "-map", "0:a:0",
+                        "-c", "copy",
+                        "-movflags", "+faststart",
+                        "-f", "mp4",
+                        out,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=REMUX_TIMEOUT_S,
+                )
+            except subprocess.SubprocessError:
+                return None
+            if proc.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+                # Loud on purpose: a silent failure here degrades every play on
+                # this track back to the fragmented bytes, invisibly.
+                print(
+                    f"[stream] remux failed for {video_id}: "
+                    f"rc={proc.returncode} {(proc.stderr or '').strip()[:300]}",
+                    flush=True,
+                )
+                return None
+            os.replace(out, final)
+            # Timings on every build: this path has a latency budget the user can
+            # feel (it runs before the first byte of audio), and the throttle it
+            # works around is invisible from anywhere else.
+            print(
+                f"[stream] built {video_id} bytes={os.path.getsize(final)} "
+                f"fetch={t_fetch - t0:.2f}s remux={time.monotonic() - t_fetch:.2f}s",
+                flush=True,
+            )
+        except OSError:
+            return None
+        finally:
+            for tmp in (raw, out):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+    _prune_stream_cache()
+    return final
+
+
 # ---------------------------------------------------------------------------
 # Download queue worker (concurrency 1)
 # ---------------------------------------------------------------------------
@@ -1521,18 +1826,129 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_cached_stream(self, path, range_header):
+        """Serve a locally cached progressive MP4, honouring a single byte Range.
+        Returns False if the file vanished under us (caller falls back).
+
+        The file is OPENED BEFORE anything is sent, and its length is taken from
+        that open descriptor. Both matter: LRU pruning can unlink a cache entry
+        at any moment, and on Linux an open descriptor keeps reading the unlinked
+        inode, so the body can never come up short against the Content-Length
+        already promised on a keep-alive connection.
+        """
+        try:
+            handle = open(path, "rb")  # noqa: SIM115 — closed in the finally below
+        except OSError:
+            return False
+        try:
+            return self._serve_open_stream(handle, range_header)
+        finally:
+            try:
+                handle.close()
+            except OSError:
+                pass
+
+    def _serve_open_stream(self, handle, range_header):
+        try:
+            size = os.fstat(handle.fileno()).st_size
+        except OSError:
+            return False
+        if size <= 0:
+            return False
+        start, end, status = 0, size - 1, 200
+        if range_header:
+            # A Range this does not understand (multi-range, or a malformed one)
+            # is answered with the whole file, which is always a legal response.
+            # It must NEVER fall back to proxying: that would hand this one
+            # request the fragmented bytes and the doubled duration back.
+            # The digit count is BOUNDED on purpose. Python 3.12 refuses to
+            # int() a string of more than sys.int_info.default_max_str_digits
+            # (4300) digits and raises ValueError; with an unbounded \d* a
+            # client sending `bytes=<4301 nines>-0` reached int() below, and
+            # the exception escaped do_GET and killed the connection with a
+            # traceback. 19 digits covers every real file size.
+            match = re.match(r"^bytes=(\d{0,19})-(\d{0,19})$", range_header.strip())
+            if match and (match.group(1) or match.group(2)):
+                first, last = match.group(1), match.group(2)
+                if first:
+                    start = int(first)
+                    end = int(last) if last else size - 1
+                else:  # suffix range: the final N bytes
+                    start = max(0, size - int(last))
+                end = min(end, size - 1)
+                if start >= size or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return True
+                status = 206
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", "audio/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            handle.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = handle.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client seeked or closed the tab — normal for audio playback
+        except OSError:
+            # Headers are already out and the body is short of the promised
+            # Content-Length, so this connection can no longer be trusted for a
+            # following request. Drop it rather than desync the framing.
+            self.close_connection = True
+        return True
+
     def _stream(self, qs):
-        """Instant-play: resolve the videoId's audio URL and range-proxy the
-        bytes so the browser plays it WITHOUT a prior download. Seeking works
-        because the client's Range header is forwarded to googlevideo."""
+        """Instant-play: serve the videoId's audio WITHOUT a prior download.
+
+        Served from the progressive remux cache (see _build_stream_cache) so an
+        iPhone gets a file with exactly one declared duration; only if building
+        that fails does it fall back to range-proxying the fragmented upstream."""
         video_id = (qs.get("videoId", [""])[0]).strip()
         if not video_id:
             return self._send(400, {"error": "videoId required"})
+        if not _VIDEO_ID_RE.match(video_id):
+            return self._send(400, {"error": "invalid videoId"})
         source = (qs.get("source", ["auto"])[0]).strip().lower()
         if source not in ("auto", "ytmusic", "youtube"):
             source = "auto"
         range_header = self.headers.get("Range")
 
+        cached = _stream_cache_path(video_id)
+        try:
+            if not (os.path.exists(cached) and os.path.getsize(cached) > 0):
+                cached = _build_stream_cache(video_id, source)
+        except Exception as exc:  # noqa: BLE001
+            # Nothing raised out of the build is worth killing the request for —
+            # the proxy below still plays the track. Loud, because a build that
+            # always throws would otherwise look like a permanently slow track.
+            print(f"[stream] build raised for {video_id}: {exc!r}", flush=True)
+            cached = None
+        if cached:
+            try:
+                os.utime(cached, None)  # LRU touch
+            except OSError:
+                pass
+            if self._serve_cached_stream(cached, range_header):
+                return
+
+        # Fallback: the remux failed (upstream gone, ffmpeg error). Proxy the
+        # fragmented bytes as before — a doubled duration beats no audio.
+        # The _neutralize_sidx call further down does NOT repair that duration:
+        # it was refuted on-device twice (see the remux comment above). It is
+        # kept only because it is free and harmless, not because it works.
         # Resolve (cached) then proxy. A stale/expired URL comes back 403/410 from
         # googlevideo — force a fresh resolve once before giving up.
         upstream = None
@@ -1577,6 +1993,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
         except (BrokenPipeError, ConnectionResetError):
             pass  # client seeked or closed the tab — normal for audio playback
+        except (http.client.HTTPException, urllib.error.URLError, OSError):
+            # A truncated upstream raises IncompleteRead, which is NOT an
+            # OSError. Uncaught it escapes do_GET and socketserver tears the
+            # socket down with a traceback; the headers are already sent, so the
+            # honest end is to drop this connection and stop.
+            self.close_connection = True
         finally:
             try:
                 upstream.close()
