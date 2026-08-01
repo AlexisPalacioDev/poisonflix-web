@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { trapTabKey } from '../../lib/dom/focusTrap';
 import {
   audioTracksOf,
+  bestAudioPerLanguage,
   bestSubtitlePerLanguage,
   disambiguateLabels,
   isPrimaryLanguage,
@@ -92,7 +93,7 @@ export interface AudioTrackMenuProps {
 }
 
 export function AudioTrackMenu({ tracks, selectedIndex, onSelect, onDismiss }: AudioTrackMenuProps) {
-  const audio = useMemo(() => audioTracksOf(tracks), [tracks]);
+  const audio = useMemo(() => bestAudioPerLanguage(audioTracksOf(tracks)), [tracks]);
   const labels = useMemo(() => disambiguateLabels(audio.map(trackLabel)), [audio]);
 
   return (

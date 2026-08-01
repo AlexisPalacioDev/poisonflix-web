@@ -137,6 +137,37 @@ export function bestSubtitlePerLanguage(tracks: MediaStreamTrack[]): MediaStream
   return Array.from(groups.values());
 }
 
+/**
+ * Collapses AUDIO tracks so each language shows once.
+ *
+ * A Blu-ray remux carries the same language several times at different
+ * qualities — El Drama has four English tracks (TrueHD 7.1, AC3 5.1, AC3
+ * stereo, AC3 5.1) — and the menu was listing all four as "Inglés", "Inglés 2",
+ * "Inglés 3", "Inglés 4". Nobody is choosing between those by number.
+ *
+ * Within a language the file's own DEFAULT wins, then the lowest stream index.
+ * Preferring the default is the load-bearing part: it is the track that plays
+ * today, so collapsing the menu cannot quietly change what you hear — this is a
+ * UI simplification, not a re-pick of the audio.
+ */
+export function bestAudioPerLanguage(tracks: MediaStreamTrack[]): MediaStreamTrack[] {
+  const groups = new Map<string, MediaStreamTrack>();
+  for (const track of tracks) {
+    const key = trackLabel(track);
+    const current = groups.get(key);
+    if (!current) {
+      groups.set(key, track);
+      continue;
+    }
+    if (track.isDefault !== current.isDefault) {
+      if (track.isDefault) groups.set(key, track);
+      continue;
+    }
+    if (track.index < current.index) groups.set(key, track);
+  }
+  return Array.from(groups.values());
+}
+
 /** Appends "2", "3"... to labels that repeat (e.g. three embedded English
  * audio tracks) so every menu row stays distinguishable. Ported from
  * `TrackMenu.kt`'s `disambiguate`. */
