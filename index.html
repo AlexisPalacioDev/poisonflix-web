@@ -153,22 +153,46 @@
           panel = null;
         }
 
-        // Resource failures (a <script> or <link> that 404s) only surface in the
-        // CAPTURE phase and carry no message — they fire on the element, not on
-        // window. That is the exact shape of a deploy that deleted the assets a
-        // cached document still asks for.
+        // Resource failures only surface in the CAPTURE phase and fire on the
+        // element, not on window.
+        //
+        // ONLY the app's own code and stylesheet count. An earlier version
+        // matched anything with a `src` — which `<img>` has — so a single
+        // poster image that failed to load blanked the entire working app
+        // behind this panel. A missing image is ordinary and harmless; a
+        // missing script is not.
+        function isAppAsset(target) {
+          if (!target || !target.tagName) return false;
+          var tag = String(target.tagName).toUpperCase();
+          if (tag === 'SCRIPT') return true;
+          return tag === 'LINK' && String(target.rel || '').indexOf('stylesheet') !== -1;
+        }
+
+        // URLs here carry the Jellyfin token as a query param, and this panel
+        // is on screen and in the server log. Everything after "?" goes.
+        function redact(url) {
+          var text = String(url || '');
+          var q = text.indexOf('?');
+          return q === -1 ? text : text.slice(0, q) + '?…';
+        }
+
         window.addEventListener(
           'error',
           function (event) {
             var target = event && event.target;
             if (target && target !== window && (target.src || target.href)) {
-              var url = target.src || target.href;
+              if (!isAppAsset(target)) return; // an image, a font, a poster: not fatal
+              var url = redact(target.src || target.href);
               report('boot.resource', 'no cargo ' + url, '');
-              show('No se pudo cargar un archivo de la app', 'Fallo: ' + url);
+              // Even a missing app file only takes the screen when there is
+              // nothing to take: if the app already mounted, it keeps working.
+              if (rootIsEmpty()) {
+                show('No se pudo cargar un archivo de la app', 'Fallo: ' + url);
+              }
               return;
             }
             var message = (event && event.message) || 'error desconocido';
-            report('boot.error', message, event && event.error && event.error.stack);
+            report('boot.error', redact(message), event && event.error && event.error.stack);
             // Only take over the screen when there is nothing to take over: an
             // error thrown by one feature of an otherwise working app must not
             // replace the whole UI with a panel.
