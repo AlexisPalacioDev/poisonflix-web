@@ -1,6 +1,6 @@
 {
-  "versionCode": 9,
-  "versionName": "1.9",
-  "apk": "poisonflix-v9.apk",
-  "notes": "Corrección: el estado 'Pendiente' ya no es un botón inerte — ahora 'Cancelar' es la única acción en pantalla mientras se descarga."
+  "versionCode": 10,
+  "versionName": "1.10",
+  "apk": "poisonflix-v10.apk",
+  "notes": "Nueva sección Música: tu biblioteca, álbumes, recomendados, búsqueda en YouTube Music y reproductor con cola y radio automática."
 }
