@@ -1,6 +1,6 @@
 {
-  "versionCode": 14,
-  "versionName": "1.14",
-  "apk": "poisonflix-v14.apk",
-  "notes": "El menú de audio ahora muestra una sola opción por idioma, en vez de repetir la misma pista en cuatro calidades."
+  "versionCode": 15,
+  "versionName": "1.15",
+  "apk": "poisonflix-v15.apk",
+  "notes": "Arreglado: la fila 'En camino' vuelve a funcionar. Radarr y Sonarr respondian 401 porque la app se compilaba sin sus claves de API."
 }
