@@ -17,6 +17,192 @@
     <meta name="application-name" content="PoisonFlix" />
     <meta name="apple-mobile-web-app-title" content="PoisonFlix" />
     <title>PoisonFlix</title>
+
+    <!--
+      Boot guard.
+
+      WHY THIS IS INLINE, IN ES5, AND NOT IN THE BUNDLE: the failure it exists
+      to catch is the bundle itself failing to load or parse. A handler shipped
+      inside that bundle cannot report its own absence — which is exactly why a
+      bad deploy has always surfaced here as a silent black screen with nothing
+      in any log, on a phone nobody can attach a debugger to. This runs before
+      the module tag below, in syntax every engine we target understands, so it
+      is alive even when nothing else is.
+
+      It does two things: put a readable message ON the screen, and post the
+      same thing to /bff/client-log so it lands in `docker compose logs bff`.
+      That endpoint is public on purpose, precisely so it works before a
+      session exists.
+    -->
+    <script>
+      (function () {
+        'use strict';
+
+        // The app counts as stalled if #root is still empty this long after
+        // the document parsed. Generous: a cold load of the legacy bundle over
+        // a slow link is allowed to be slow, just not silent.
+        var MOUNT_DEADLINE_MS = 10000;
+
+        var reported = {};
+        var panel = null;
+
+        function clip(value, max) {
+          var text = value === null || value === undefined ? '' : String(value);
+          return text.length > max ? text.slice(0, max) : text;
+        }
+
+        function report(scope, message, detail) {
+          // One report per distinct problem: a failing bundle can fire the same
+          // error on every retry, and flooding the log would bury the one line
+          // that matters.
+          var key = scope + '|' + message;
+          if (reported[key]) return;
+          reported[key] = 1;
+
+          var body;
+          try {
+            body = JSON.stringify({
+              scope: scope,
+              message: clip(message, 400),
+              detail: clip(
+                (detail ? detail + '\n' : '') +
+                  'url=' + location.href + '\n' +
+                  'ua=' + navigator.userAgent,
+                1800
+              )
+            });
+          } catch (e) {
+            return;
+          }
+
+          try {
+            // sendBeacon survives the page being closed mid-report, which is
+            // what a frustrated user does to a screen that never loads.
+            if (navigator.sendBeacon) {
+              navigator.sendBeacon('/bff/client-log', new Blob([body], { type: 'application/json' }));
+              return;
+            }
+          } catch (e) {}
+
+          try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/bff/client-log', true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.send(body);
+          } catch (e) {}
+        }
+
+        function rootIsEmpty() {
+          var root = document.getElementById('root');
+          return !root || root.childElementCount === 0;
+        }
+
+        function show(title, detail) {
+          if (panel) return;
+          try {
+            panel = document.createElement('div');
+            // Everything inline: the app's stylesheet is one of the things that
+            // may have failed to load.
+            panel.setAttribute(
+              'style',
+              'position:fixed;inset:0;z-index:2147483647;overflow:auto;' +
+                'background:#0a0c10;color:#f4f6fb;padding:24px;' +
+                'font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+            );
+
+            var head = document.createElement('h1');
+            head.setAttribute('style', 'margin:0 0 8px;font-size:18px;color:#f2c14e;');
+            head.appendChild(document.createTextNode(title));
+
+            var body = document.createElement('pre');
+            body.setAttribute(
+              'style',
+              'white-space:pre-wrap;word-break:break-word;margin:0 0 20px;' +
+                'color:#98a1b3;font-size:12px;'
+            );
+            body.appendChild(document.createTextNode(detail || ''));
+
+            var retry = document.createElement('button');
+            retry.setAttribute(
+              'style',
+              'min-height:48px;padding:0 20px;border:0;border-radius:10px;' +
+                'background:#f2c14e;color:#0a0c10;font-size:16px;font-weight:600;'
+            );
+            retry.appendChild(document.createTextNode('Reintentar'));
+            retry.onclick = function () {
+              // Cache-busted: the usual cause is a stale index.html asking for
+              // asset files a deploy has already removed, and a plain reload
+              // can hand back the very same cached document.
+              location.replace(location.pathname + '?r=' + new Date().getTime());
+            };
+
+            panel.appendChild(head);
+            panel.appendChild(body);
+            panel.appendChild(retry);
+            document.body.appendChild(panel);
+          } catch (e) {
+            panel = null;
+          }
+        }
+
+        function hide() {
+          if (!panel) return;
+          try {
+            panel.parentNode.removeChild(panel);
+          } catch (e) {}
+          panel = null;
+        }
+
+        // Resource failures (a <script> or <link> that 404s) only surface in the
+        // CAPTURE phase and carry no message — they fire on the element, not on
+        // window. That is the exact shape of a deploy that deleted the assets a
+        // cached document still asks for.
+        window.addEventListener(
+          'error',
+          function (event) {
+            var target = event && event.target;
+            if (target && target !== window && (target.src || target.href)) {
+              var url = target.src || target.href;
+              report('boot.resource', 'no cargo ' + url, '');
+              show('No se pudo cargar un archivo de la app', 'Fallo: ' + url);
+              return;
+            }
+            var message = (event && event.message) || 'error desconocido';
+            report('boot.error', message, event && event.error && event.error.stack);
+            // Only take over the screen when there is nothing to take over: an
+            // error thrown by one feature of an otherwise working app must not
+            // replace the whole UI with a panel.
+            if (rootIsEmpty()) show('La app fallo al arrancar', message);
+          },
+          true
+        );
+
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event && event.reason;
+          var message = (reason && (reason.message || reason)) || 'promesa rechazada';
+          report('boot.rejection', message, reason && reason.stack);
+          if (rootIsEmpty()) show('La app fallo al arrancar', String(message));
+        });
+
+        window.setTimeout(function () {
+          if (!rootIsEmpty()) return;
+          report('boot.blank', 'la app no monto en ' + MOUNT_DEADLINE_MS + 'ms', '');
+          show(
+            'La app no arranco',
+            'La pagina cargo pero la aplicacion nunca se dibujo. ' +
+              'El detalle ya se envio al servidor.'
+          );
+
+          // A slow engine that finally mounts should get its app back rather
+          // than be left staring at the panel we raised while it was working.
+          var watch = window.setInterval(function () {
+            if (rootIsEmpty()) return;
+            window.clearInterval(watch);
+            hide();
+          }, 1000);
+        }, MOUNT_DEADLINE_MS);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

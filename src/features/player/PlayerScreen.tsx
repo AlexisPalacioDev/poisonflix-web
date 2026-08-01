@@ -6,7 +6,14 @@ import { usePlaybackHeartbeat } from '../../hooks/usePlaybackHeartbeat';
 import { usePlaybackInfo } from '../../hooks/usePlaybackInfo';
 import { createBrowserDeviceProfile } from '../../lib/domain/deviceProfile';
 import { isApiError } from '../../lib/http/errors';
-import { resolveInitialSubtitle, setSubtitlePreference, subtitlePreferenceKeyFor } from '../../lib/domain/playerPrefs';
+import {
+  audioPreferenceKeyFor,
+  resolveInitialAudio,
+  resolveInitialSubtitle,
+  setAudioPreference,
+  setSubtitlePreference,
+  subtitlePreferenceKeyFor,
+} from '../../lib/domain/playerPrefs';
 import { resolvePlayback, secondsToTicks, type PlaybackSource } from '../../lib/domain/streamResolver';
 import { audioTracksOf, buildSubtitleDeliveryUrl, subtitleTracksOf, useItemMediaStreams, type MediaStreamTrack } from './mediaStreamTracks';
 import { VideoSurface } from './VideoSurface';
@@ -89,10 +96,19 @@ export function PlayerScreen() {
   // match -> AUTO rule, player spec §8).
   useEffect(() => {
     if (!mediaStreams.data) return;
-    const defaultAudio = audioTracks.find((t) => t.isDefault) ?? audioTracks[0] ?? null;
-    if (selectedAudioIndex == null && defaultAudio) {
-      setSelectedAudioIndex(defaultAudio.index);
+    const serverDefault = audioTracks.find((t) => t.isDefault) ?? audioTracks[0] ?? null;
+    // The remembered LANGUAGE wins over the file's own default. Restoring it is
+    // not just display state: the server is already serving its default track,
+    // so a different choice has to go through the same re-resolve the manual
+    // switch uses, otherwise the menu would show Spanish while English played.
+    const preferredAudio = resolveInitialAudio(audioTracks);
+    if (selectedAudioIndex == null && preferredAudio) {
+      setSelectedAudioIndex(preferredAudio.index);
+      if (serverDefault && preferredAudio.index !== serverDefault.index) {
+        void handleAudioSwitchUnavailable(preferredAudio);
+      }
     }
+    const defaultAudio = preferredAudio;
     if (!subtitleResolved) {
       const initial = resolveInitialSubtitle(subtitleTracks, defaultAudio?.language ?? null, APP_LANGUAGE);
       setSelectedSubtitleIndex(initial?.index ?? null);
@@ -111,6 +127,7 @@ export function PlayerScreen() {
 
   const handleAudioApplied = (track: MediaStreamTrack) => {
     setSelectedAudioIndex(track.index);
+    setAudioPreference(audioPreferenceKeyFor(track));
   };
 
   /**
@@ -144,6 +161,7 @@ export function PlayerScreen() {
         playSessionId: resolved.playSessionId,
       });
       setSelectedAudioIndex(track.index);
+      setAudioPreference(audioPreferenceKeyFor(track));
     } catch {
       // Best-effort: leave current playback untouched if the re-resolve fails.
     }

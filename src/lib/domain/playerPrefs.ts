@@ -110,3 +110,71 @@ export function resolveInitialSubtitle<T extends SubtitleCandidate>(
   const audioFamily = languageFamily(defaultAudioLanguage);
   return audioFamily !== appFamily ? bestFor(appFamily) : null;
 }
+
+// ---------------------------------------------------------------------------
+// Audio preference
+// ---------------------------------------------------------------------------
+
+const AUDIO_STORAGE_KEY = 'poisonflix:audioPreference';
+
+/**
+ * The remembered audio LANGUAGE, or null if never chosen.
+ *
+ * A language, not a stream index, for the same reason the subtitle preference
+ * is: track 2 is Spanish in one release and a director's commentary in the
+ * next, so an index remembered from one file is meaningless in another.
+ */
+export function getAudioPreference(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem(AUDIO_STORAGE_KEY);
+}
+
+export function setAudioPreference(value: string): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(AUDIO_STORAGE_KEY, value);
+}
+
+export function audioPreferenceKeyFor(
+  track: { language: string | null; displayTitle: string },
+): string {
+  return languageFamily(track.language) ?? track.displayTitle;
+}
+
+export interface AudioCandidate {
+  index: number;
+  language: string | null;
+  isDefault: boolean;
+}
+
+/**
+ * Picks the audio track to open with: the saved language if this file has it,
+ * otherwise the file's own default, otherwise the first track.
+ *
+ * Within the chosen language the file's `isDefault` decides, then stream
+ * order. That matters on remuxes, which carry the SAME language several times
+ * at different qualities (TrueHD 7.1, AC3 5.1, AC3 stereo) — picking merely
+ * the first match there would quietly demote the good mix.
+ */
+export function resolveInitialAudio<T extends AudioCandidate>(tracks: T[]): T | null {
+  if (tracks.length === 0) return null;
+
+  const pref = getAudioPreference();
+  if (pref !== null) {
+    let best: T | null = null;
+    for (const track of tracks) {
+      if (languageFamily(track.language) !== pref) continue;
+      if (!best) {
+        best = track;
+        continue;
+      }
+      if (track.isDefault !== best.isDefault) {
+        if (track.isDefault) best = track;
+        continue;
+      }
+      if (track.index < best.index) best = track;
+    }
+    if (best) return best;
+  }
+
+  return tracks.find((track) => track.isDefault) ?? tracks[0] ?? null;
+}

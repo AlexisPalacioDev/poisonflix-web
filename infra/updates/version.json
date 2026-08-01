@@ -1,6 +1,6 @@
 {
-  "versionCode": 12,
-  "versionName": "1.12",
-  "apk": "poisonflix-v12.apk",
-  "notes": "Control desde el celular: abrí /control en el navegador del teléfono para manejar el proyector y escribir búsquedas con el teclado del celular."
+  "versionCode": 13,
+  "versionName": "1.13",
+  "apk": "poisonflix-v13.apk",
+  "notes": "Avance rápido: mantené la flecha y el salto crece (5s, 10s, 30s, 1min...). Además la app ahora recuerda el idioma de audio que elegiste."
 }

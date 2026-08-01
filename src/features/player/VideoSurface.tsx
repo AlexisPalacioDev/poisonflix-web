@@ -2,6 +2,7 @@ import Hls from 'hls.js';
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { PlaybackSource } from '../../lib/domain/streamResolver';
 import { audioTracksOf, subtitleTracksOf, trackLabel, type MediaStreamTrack } from './mediaStreamTracks';
+import { formatSeekStep, newSeekRun, nextSeekStep, RESET_AFTER_MS } from '../../lib/domain/seekAccelerator';
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import './VideoSurface.css';
 
@@ -73,7 +74,6 @@ import './VideoSurface.css';
 //   feature.
 
 const CONTROLS_HIDE_DELAY_MS = 3000;
-const SEEK_STEP_SECONDS = 10;
 const VOLUME_STEP = 0.1;
 
 /** Minimal shape of the experimental `HTMLMediaElement.audioTracks` W3C API
@@ -277,6 +277,25 @@ export function VideoSurface({
   // without re-running every time the parent updates it (e.g. after the user
   // picks a track, which is applied directly by the select handlers instead).
   const initialSubtitleAppliedRef = useRef(false);
+  // Accelerating seek: holding an arrow climbs 5s -> 10s -> 30s -> 1min ...
+  // and snaps back once released. Held in a ref rather than state because it
+  // changes on every keypress and nothing renders from it directly.
+  const seekRunRef = useRef(newSeekRun());
+  const takeSeekStep = (): number => {
+    const { seconds, run } = nextSeekStep(seekRunRef.current, Date.now());
+    seekRunRef.current = run;
+    setSeekStepHint(seconds);
+    return seconds;
+  };
+  const [seekStepHint, setSeekStepHint] = useState<number | null>(null);
+  // Clears itself once seeking stops, so the hint reflects a run in progress
+  // rather than lingering as a stale number over a paused film.
+  useEffect(() => {
+    if (seekStepHint === null) return;
+    const timer = window.setTimeout(() => setSeekStepHint(null), RESET_AFTER_MS + 400);
+    return () => window.clearTimeout(timer);
+  }, [seekStepHint]);
+
   const subtitleTracksRef = useRef(subtitleTracks);
   subtitleTracksRef.current = subtitleTracks;
   const selectedSubtitleIndexRef = useRef(selectedSubtitleIndex);
@@ -515,10 +534,10 @@ export function VideoSurface({
         togglePlay();
         break;
       case 'ArrowRight':
-        seekBy(SEEK_STEP_SECONDS);
+        seekBy(takeSeekStep());
         break;
       case 'ArrowLeft':
-        seekBy(-SEEK_STEP_SECONDS);
+        seekBy(-takeSeekStep());
         break;
       case 'ArrowUp':
         event.preventDefault();
@@ -686,6 +705,13 @@ export function VideoSurface({
               {formatTime(currentTime)}
               <span className="pf-player-surface__time-sep"> / </span>
               {formatTime(duration)}
+              {/* The live jump size while seeking. Without it the acceleration
+                  is something you infer from how far the bar moved. */}
+              {seekStepHint !== null && (
+                <span className="pf-player-surface__seek-step">
+                  {` ± ${formatSeekStep(seekStepHint)}`}
+                </span>
+              )}
             </span>
 
             <div className="pf-player-surface__spacer" />

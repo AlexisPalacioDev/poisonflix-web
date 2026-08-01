@@ -203,6 +203,13 @@
   white-space: nowrap;
 }
 
+/* The accelerating-seek hint, tucked after the clock. Accent-coloured because
+   it is the one number that changes as you hold the key. */
+.pf-player-surface__seek-step {
+  color: var(--pf-accent, #f2c14e);
+  font-weight: 600;
+}
+
 .pf-player-surface__time-sep {
   color: var(--pf-text-dim);
 }
