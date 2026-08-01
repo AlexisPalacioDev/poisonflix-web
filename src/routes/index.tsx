@@ -15,6 +15,7 @@ import { RegisterScreen } from '../features/register/RegisterScreen';
 import { ForgotPasswordScreen } from '../features/register/ForgotPasswordScreen';
 import { AdminScreen } from '../features/admin/AdminScreen';
 import { AppLayout } from '../features/music/AppLayout';
+import { RemoteScreen } from '../features/remote/RemoteScreen';
 import { MusicScreen } from '../features/music/MusicScreen';
 import { AlbumScreen } from '../features/music/AlbumScreen';
 import { ArtistScreen } from '../features/music/ArtistScreen';
@@ -153,6 +154,17 @@ export const routes: RouteObject[] = [
     element: (
       <RouteGuard>
         <DownloadsScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Phone-as-remote: a D-pad plus, crucially, a text field, because typing a
+    // music search on the projector's on-screen keyboard is miserable. Relayed
+    // through the BFF to a listener inside the app on the projector.
+    path: '/control',
+    element: (
+      <RouteGuard>
+        <RemoteScreen />
       </RouteGuard>
     ),
   },

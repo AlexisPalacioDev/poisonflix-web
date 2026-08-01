@@ -627,6 +627,45 @@ async function handleAdminStorage(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// /bff/remote/* — relays the phone-as-remote keys to the projector.
+//
+// The projector runs a tiny listener inside the PoisonFlix app itself (see
+// RemoteControlServer.kt), NOT adb: adb would hand a shell on the whole device
+// to anything that can reach this relay, whereas the app listener can only
+// press buttons inside that one app.
+//
+// Why the phone does not call the projector directly: the web app is also
+// served over HTTPS through the Tailscale funnel, and an HTTPS page cannot
+// call a plain-HTTP LAN address (mixed content). Going through here keeps one
+// origin, reuses the session the caller already has, and means the projector's
+// listener never has to be reachable from outside the LAN.
+const PROJECTOR_URL = env.PROJECTOR_URL || 'http://192.168.1.63:8099';
+
+async function handleRemote(req, res, subPath, search) {
+  // Explicit allowlist rather than blind forwarding: this endpoint drives the
+  // living-room screen, so the set of things it can do stays enumerable.
+  const allowed = subPath === '/key' || subPath === '/text' || subPath === '/ping';
+  if (!allowed) return send(res, 404, { error: 'not_found' });
+
+  const target = `${PROJECTOR_URL}${subPath}${search || ''}`;
+  try {
+    const upstream = await fetch(target, {
+      method: 'GET',
+      signal: AbortSignal.timeout(REMOTE_TIMEOUT_MS),
+    });
+    const body = await upstream.text();
+    return send(res, upstream.status, body ? JSON.parse(body) : {});
+  } catch (err) {
+    // The projector being asleep or the app being closed is the ordinary case,
+    // not an incident: answer something the UI can show rather than a 500.
+    logError('remote', err, { path: subPath });
+    return send(res, 502, { error: 'projector_unreachable' });
+  }
+}
+
+/** Short: the projector is on the LAN, and a remote that lags is worse than one that fails. */
+const REMOTE_TIMEOUT_MS = 4_000;
+
 // /bff/music/* — thin proxy to the internal music worker. Any authenticated
 // user may search/download; the worker itself never faces the public and holds
 // its own Jellyfin key. The worker returns clean JSON envelopes we pass through
@@ -850,6 +889,10 @@ const server = createServer(async (req, res) => {
     }
 
     // Música: any authenticated user may search + enqueue downloads.
+    if (path.startsWith('/bff/remote/')) {
+      return await handleRemote(req, res, path.slice('/bff/remote'.length), url.search);
+    }
+
     if (path.startsWith('/bff/music/')) {
       return await handleMusic(req, res, path.slice('/bff/music'.length), url.search, user);
     }

@@ -1,6 +1,6 @@
 {
-  "versionCode": 11,
-  "versionName": "1.11",
-  "apk": "poisonflix-v11.apk",
-  "notes": "Protector de pantalla: cuando el control queda quieto con música sonando, aparecen mandalas que mutan y reaccionan al audio. Cualquier tecla lo cierra."
+  "versionCode": 12,
+  "versionName": "1.12",
+  "apk": "poisonflix-v12.apk",
+  "notes": "Control desde el celular: abrí /control en el navegador del teléfono para manejar el proyector y escribir búsquedas con el teclado del celular."
 }

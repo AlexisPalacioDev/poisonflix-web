@@ -1,0 +1,113 @@
+/*
+ * Phone remote. Sized for a thumb, not a cursor: every target clears 48px, the
+ * D-pad sits low enough to reach one-handed, and the text field is at the top
+ * so the phone keyboard never covers it when it opens.
+ */
+
+.remote {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 16px 40px;
+  max-width: 420px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
+.remote__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote__header h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: var(--pf-accent, #f2c14e);
+}
+
+.remote__status {
+  font-size: 0.8rem;
+}
+.remote__status--on { color: #8cff5a; }
+.remote__status--off { color: #ff6b6b; }
+.remote__status--unknown { color: #98a1b3; }
+
+.remote__type {
+  display: flex;
+  gap: 8px;
+}
+
+.remote__input {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 12px;
+  border-radius: 10px;
+  border: 1px solid #2a303c;
+  background: #1b1f29;
+  color: #f4f6fb;
+  /* 16px minimum: anything smaller makes iOS Safari zoom the page on focus. */
+  font-size: 16px;
+}
+
+.remote__send,
+.remote__aux,
+.remote__key {
+  border: 1px solid #2a303c;
+  background: #1b1f29;
+  color: #f4f6fb;
+  border-radius: 10px;
+  font-size: 1rem;
+  min-height: 48px;
+  padding: 0 14px;
+  cursor: pointer;
+  /* Kills the 300ms tap delay and the grey flash on mobile Safari/Chrome. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.remote__send { background: var(--pf-accent, #f2c14e); color: #0a0c10; font-weight: 600; border: none; }
+.remote__send:disabled { opacity: 0.45; }
+
+.remote__send:active,
+.remote__aux:active,
+.remote__key:active {
+  transform: scale(0.96);
+  background: #2a303c;
+}
+
+/* Cross layout: the arrows keep their real spatial relationship, so pressing
+   "up" is a spatial act rather than reading a label. */
+.remote__pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 10px;
+  aspect-ratio: 1;
+  max-height: 260px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.remote__key { font-size: 1.3rem; }
+.remote__key--up { grid-area: 1 / 2; }
+.remote__key--left { grid-area: 2 / 1; }
+.remote__key--ok { grid-area: 2 / 2; font-size: 1rem; font-weight: 700; background: #2a303c; }
+.remote__key--right { grid-area: 2 / 3; }
+.remote__key--down { grid-area: 3 / 2; }
+
+.remote__row {
+  display: flex;
+  gap: 10px;
+}
+
+.remote__row .remote__aux { flex: 1; }
+
+.remote__notice {
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #98a1b3;
+}
