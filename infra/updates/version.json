@@ -1,6 +1,6 @@
 {
-  "versionCode": 15,
-  "versionName": "1.15",
-  "apk": "poisonflix-v15.apk",
-  "notes": "Arreglado: la fila 'En camino' vuelve a funcionar. Radarr y Sonarr respondian 401 porque la app se compilaba sin sus claves de API."
+  "versionCode": 16,
+  "versionName": "1.16",
+  "apk": "poisonflix-v16.apk",
+  "notes": "Protector de pantalla psicodélico: mandalas que mutan, panal hexagonal, túnel, estelas de color y un anillo de hongos que crece con la música."
 }
