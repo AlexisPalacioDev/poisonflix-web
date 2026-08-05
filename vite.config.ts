@@ -133,6 +133,22 @@ export default defineConfig({
           }
         },
       },
+      // Escape hatch for a dev box whose backends all live behind the deployed
+      // Caddy (e.g. the media server on the tailnet). Caddy already owns every
+      // `/jellyfin|/sonarr|/bff|...` prefix AND injects the X-Api-Key headers,
+      // so this needs no per-service target and no API keys locally - but it
+      // also must NOT strip the prefix, which is why it can't just be another
+      // *_TARGET value. Spread LAST so it overrides the per-service entries
+      // above (later keys win in an object literal). `/bff` only exists here:
+      // in production Caddy serves it, and there is no local BFF to point at.
+      //   PF_PROXY_ORIGIN=http://100.115.40.52:8600 npm run dev
+      ...(process.env.PF_PROXY_ORIGIN
+        ? Object.fromEntries(
+            ['/jellyfin', '/jellyseerr', '/prowlarr', '/radarr', '/sonarr', '/bff'].map(
+              (prefix) => [prefix, { target: process.env.PF_PROXY_ORIGIN, changeOrigin: true }],
+            ),
+          )
+        : {}),
     },
   },
   test: {
