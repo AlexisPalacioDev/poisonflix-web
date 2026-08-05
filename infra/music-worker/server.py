@@ -1846,13 +1846,13 @@ def _radio_cached(key):
     return None
 
 
-def _radio_store(key, value):
+def _radio_store(key, value, ttl=None):
     with _radio_cache_lock:
         # Bounded so a long-lived worker cannot grow this without limit; radios
         # are cheap to rebuild and stale ones are worth less than memory.
         if len(_radio_cache) > 256:
             _radio_cache.clear()
-        _radio_cache[key] = (value, time.time() + RADIO_CACHE_TTL_S)
+        _radio_cache[key] = (value, time.time() + (RADIO_CACHE_TTL_S if ttl is None else ttl))
 
 
 def _src_seed(yt, seed, want):
@@ -2089,11 +2089,23 @@ def recommendations(seed, limit, user_id=None):
         except Exception:  # noqa: BLE001
             results = []
 
-    # Never cache an empty radio. Every source here is best-effort, so "empty"
-    # usually means a transient failure — and pinning that for the cache TTL
-    # would turn a five-second blip into ten minutes of a dead rail.
+    # Cache only a radio worth keeping. Every source is best-effort, so a thin
+    # or empty result usually means a transient failure — and the full TTL would
+    # turn a blip into ten minutes of a bad rail. Observed on a cold container:
+    # get_song_related lost the race, _interleave relaxed the cap to fill the
+    # window, and 5-of-12 by one artist was then served identically for the next
+    # three requests. A degraded radio still beats no radio, so it is returned;
+    # it just is not remembered for long.
     if results:
-        _radio_store(cache_key, results)
+        worst = 0
+        tally = {}
+        for row in results:
+            artist = (row.get("artist") or "").strip().lower()
+            if artist:
+                tally[artist] = tally.get(artist, 0) + 1
+                worst = max(worst, tally[artist])
+        degraded = worst > max(1, int(limit * ARTIST_MAX_SHARE))
+        _radio_store(cache_key, results, ttl=60 if degraded else RADIO_CACHE_TTL_S)
     return results
 
 
