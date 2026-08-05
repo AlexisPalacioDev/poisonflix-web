@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Header } from '../../components/Header';
 import { ConfirmOverlay } from '../../components/ConfirmOverlay';
-import { AvailabilityPanel } from './AvailabilityPanel';
 import { SeriesTwoPane } from './SeriesTwoPane';
-import { audioLanguagesOf } from './audioLanguages';
+import { MediaLanguagesPanel } from './MediaLanguagesPanel';
 import { useTitleDetail, type MediaType } from '../../hooks/useTitleDetail';
 import { useRequestMedia } from '../../hooks/useRequestMedia';
 import { useLibraryItem } from '../../hooks/useLibraryItem';
@@ -168,13 +167,26 @@ export function DetailScreen() {
     mediaType === 'tv',
   );
   const seriesEpisodes = useSeriesEpisodes(tmdbId, seriesJellyfinItemId, tvdbId);
+  // Computed here (ahead of the loading/error early-returns below, and reused
+  // there) purely so `mediaLanguagesItemId` can feed it into `useLibraryItem`
+  // - hooks can't be called after an early return.
+  const firstAvailableEpisode = seriesEpisodes.episodes.find((episode) => episode.status.kind === 'Available');
 
-  // Audio disponible line (movie-only per the walkthrough - a Jellyfin
-  // Series item carries no MediaStreams of its own, only its episodes do).
-  const libraryItemId =
+  // Source item for the poster-side language card (owner asks #2/#4):
+  // - Movie: its own Jellyfin item, once InLibrary.
+  // - Series: diagnosed live against the real server - a Jellyfin `Series`
+  //   item carries no `MediaStreams` of its own (only its episodes do), so
+  //   this reads the first PLAYABLE episode's item instead. No playable
+  //   episode yet (still downloading/requested) means no item to read, same
+  //   as a movie that isn't in the library.
+  const movieLibraryItemId =
     mediaType === 'movie' && displayStatus?.kind === 'InLibrary' ? displayStatus.jellyfinItemId : null;
-  const { item: libraryItem } = useLibraryItem(libraryItemId);
-  const audioLanguages = useMemo(() => audioLanguagesOf(libraryItem), [libraryItem]);
+  const seriesLibraryItemId =
+    mediaType === 'tv' && firstAvailableEpisode?.status.kind === 'Available'
+      ? firstAvailableEpisode.status.jellyfinItemId
+      : null;
+  const mediaLanguagesItemId = movieLibraryItemId ?? seriesLibraryItemId;
+  const { item: libraryItem, isLoading: isLibraryItemLoading } = useLibraryItem(mediaLanguagesItemId);
 
   // Live download-% polling (feature-map §7): movie/not-yet-in-library-series
   // hero shows it on the primary action; the two-pane's own seriesProgress
@@ -302,7 +314,6 @@ export function DetailScreen() {
   // never resolve one (the resolver is gated on `mediaType === 'tv'`), so
   // they always keep the single-pane hero.
   const isSeriesTwoPane = mediaType === 'tv' && seriesJellyfinItemId != null;
-  const firstAvailableEpisode = seriesEpisodes.episodes.find((episode) => episode.status.kind === 'Available');
   const canPlaySeries = firstAvailableEpisode != null;
 
   const deleteErrorMessage = deleteMutation.isError ? 'No se pudo eliminar el título. Intentá de nuevo.' : null;
@@ -346,8 +357,8 @@ export function DetailScreen() {
               }
             }}
             seriesProgress={seriesEpisodes.seriesProgress}
-            availabilityTitle={detail.title}
-            availabilityTmdbId={detail.id}
+            mediaLanguagesItem={libraryItem}
+            isMediaLanguagesLoading={isLibraryItemLoading}
             secondaryLabel={seriesSecondaryLabel}
             secondaryDisabled={seriesSecondaryDisabled}
             secondaryError={seriesSecondaryError}
@@ -362,17 +373,21 @@ export function DetailScreen() {
         </div>
       ) : (
         <div className="pf-detail__content">
-          <div className="pf-detail__poster">
-            {posterUrl ? (
-              <img src={posterUrl} alt="" />
-            ) : (
-              <span className="pf-detail__poster-placeholder" aria-hidden="true">
-                {detail.title.charAt(0).toUpperCase()}
-              </span>
-            )}
+          <div className="pf-detail__left">
+            <div className="pf-detail__poster">
+              {posterUrl ? (
+                <img src={posterUrl} alt="" />
+              ) : (
+                <span className="pf-detail__poster-placeholder" aria-hidden="true">
+                  {detail.title.charAt(0).toUpperCase()}
+                </span>
+              )}
+            </div>
+
+            <MediaLanguagesPanel item={libraryItem} isLoading={isLibraryItemLoading} />
           </div>
 
-          <div className="pf-detail__info">
+          <div className="pf-detail__info pf-glass">
             <h1 className="pf-detail__title">{detail.title}</h1>
 
             <div className="pf-detail__meta">
@@ -385,68 +400,52 @@ export function DetailScreen() {
 
             {detail.overview && <p className="pf-detail__overview">{detail.overview}</p>}
 
-            {audioLanguages.length > 0 && (
-              <p className="pf-detail__audio" role="status">
-                Audio disponible: {audioLanguages.join(' · ')}
-              </p>
-            )}
+            <div className="pf-detail__actions">
+              {displayStatus && (
+                <DetailAction
+                  status={displayStatus}
+                  isRequesting={requestMutation.isPending}
+                  onRequest={handleRequest}
+                  onPlay={goToPlayer}
+                />
+              )}
 
-            <AvailabilityPanel title={detail.title} tmdbId={detail.id} />
+              {displayStatus?.kind === 'InLibrary' && isAdmin && (
+                <button
+                  type="button"
+                  className="pf-detail__secondary"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending ? 'Eliminando…' : 'Eliminar'}
+                </button>
+              )}
 
-            {displayStatus && (
-              <DetailAction
-                status={displayStatus}
-                isRequesting={requestMutation.isPending}
-                onRequest={handleRequest}
-                onPlay={goToPlayer}
-              />
-            )}
+              {displayStatus?.kind === 'Requesting' && (
+                <button
+                  type="button"
+                  // Promoted to `--primary` sizing: while requesting this is the
+                  // only action on screen, so it should not keep the smaller
+                  // secondary treatment it had when it sat under a bigger
+                  // (inert) "Pendiente" button.
+                  className="pf-detail__secondary pf-detail__secondary--primary"
+                  onClick={() => setShowCancelConfirm(true)}
+                  disabled={cancelDownload.isPending}
+                >
+                  {cancelDownload.isPending ? 'Cancelando…' : 'Cancelar'}
+                </button>
+              )}
+            </div>
 
             {displayStatus?.kind === 'Requesting' && moviePercent != null && (
               <ProgressHint percent={moviePercent} />
             )}
 
-            {requestMutation.isError && (
+            {(requestMutation.isError || deleteErrorMessage || cancelErrorMessage) && (
               <p className="pf-detail__error" role="alert">
-                No se pudo enviar el pedido. Intentá de nuevo.
-              </p>
-            )}
-
-            {displayStatus?.kind === 'InLibrary' && isAdmin && (
-              <button
-                type="button"
-                className="pf-detail__secondary"
-                onClick={() => setShowDeleteConfirm(true)}
-                disabled={deleteMutation.isPending}
-              >
-                {deleteMutation.isPending ? 'Eliminando…' : 'Eliminar'}
-              </button>
-            )}
-
-            {displayStatus?.kind === 'Requesting' && (
-              <button
-                type="button"
-                // Promoted to `--primary` sizing: while requesting this is the
-                // only action on screen, so it should not keep the smaller
-                // secondary treatment it had when it sat under a bigger
-                // (inert) "Pendiente" button.
-                className="pf-detail__secondary pf-detail__secondary--primary"
-                onClick={() => setShowCancelConfirm(true)}
-                disabled={cancelDownload.isPending}
-              >
-                {cancelDownload.isPending ? 'Cancelando…' : 'Cancelar'}
-              </button>
-            )}
-
-            {deleteErrorMessage && (
-              <p className="pf-detail__error" role="alert">
-                {deleteErrorMessage}
-              </p>
-            )}
-
-            {cancelErrorMessage && (
-              <p className="pf-detail__error" role="alert">
-                {cancelErrorMessage}
+                {requestMutation.isError
+                  ? 'No se pudo enviar el pedido. Intentá de nuevo.'
+                  : (deleteErrorMessage ?? cancelErrorMessage)}
               </p>
             )}
           </div>

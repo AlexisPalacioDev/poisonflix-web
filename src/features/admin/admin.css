@@ -447,3 +447,77 @@
     align-items: flex-start;
   }
 }
+
+/* Torrent availability lookup (moved off Detail - owner decision). Reuses
+   the same chip/card look the old Detail block had, just under the admin
+   section shell instead of Detail's glass card. */
+.pf-availability {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--pf-radius-lg);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  max-width: 65ch;
+}
+
+.pf-availability__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.pf-availability__label {
+  color: var(--pf-text);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.pf-availability__label--none {
+  color: var(--pf-danger);
+}
+
+.pf-availability--loading .pf-availability__label,
+.pf-availability--muted .pf-availability__label {
+  color: var(--pf-text-dim);
+  font-weight: 600;
+}
+
+.pf-availability__meta {
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-availability__langs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pf-availability__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.82rem;
+}
+
+.pf-availability__chip-name {
+  color: var(--pf-text);
+  font-weight: 600;
+}
+
+.pf-availability__chip-count {
+  color: var(--pf-text-dim);
+  font-variant-numeric: tabular-nums;
+}

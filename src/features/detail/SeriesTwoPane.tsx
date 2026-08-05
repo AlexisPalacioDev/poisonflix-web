@@ -1,4 +1,5 @@
-import { AvailabilityPanel } from './AvailabilityPanel';
+import type { JellyfinItem } from '../../api/schemas/jellyfin';
+import { MediaLanguagesPanel } from './MediaLanguagesPanel';
 import type { SeriesEpisode } from '../../hooks/useSeriesEpisodes';
 
 // TV series two-pane detail (projector-feature-map.md §7 "TV SERIES layout",
@@ -22,8 +23,11 @@ interface SeriesTwoPaneProps {
   canPlay: boolean;
   onPlayFirstEpisode: () => void;
   seriesProgress: number | null;
-  availabilityTitle: string;
-  availabilityTmdbId: number | null;
+  // Poster-side language card source (owner asks #2/#4): the first playable
+  // episode's raw Jellyfin item (a Series item itself carries no
+  // MediaStreams - see DetailScreen's `mediaLanguagesItemId`).
+  mediaLanguagesItem: JellyfinItem | null | undefined;
+  isMediaLanguagesLoading: boolean;
   // Status-aware secondary action (feature-map §7): "Cancelar" while
   // `Requesting` (still downloading/partially available), "Eliminar" once
   // fully `InLibrary` - the label/handler/disabled/error are pre-resolved by
@@ -104,8 +108,8 @@ export function SeriesTwoPane({
   canPlay,
   onPlayFirstEpisode,
   seriesProgress,
-  availabilityTitle,
-  availabilityTmdbId,
+  mediaLanguagesItem,
+  isMediaLanguagesLoading,
   secondaryLabel,
   secondaryDisabled,
   secondaryError,
@@ -122,7 +126,7 @@ export function SeriesTwoPane({
 
   return (
     <div className="pf-series-detail">
-      <div className="pf-series-detail__left">
+      <div className="pf-glass pf-series-detail__left">
         <div className="pf-series-detail__poster">
           {posterUrl ? (
             <img src={posterUrl} alt="" />
@@ -154,7 +158,7 @@ export function SeriesTwoPane({
           </div>
         )}
 
-        <AvailabilityPanel title={availabilityTitle} tmdbId={availabilityTmdbId} />
+        <MediaLanguagesPanel item={mediaLanguagesItem} isLoading={isMediaLanguagesLoading} />
 
         {secondaryLabel != null && (
           <button

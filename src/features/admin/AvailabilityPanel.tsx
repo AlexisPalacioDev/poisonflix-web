@@ -1,10 +1,11 @@
 import { useAvailability } from '../../hooks/useAvailability';
 import { RELEASE_LANGUAGE_LABELS } from '../../lib/domain/releaseLanguage';
 
-// Pre-download availability panel (feature B): before the user hits "Pedir",
-// show whether the title exists on the torrent indexers and in which languages,
-// so a title that simply isn't out there — or is English-only — is visible up
-// front instead of silently stalling in the download queue for days.
+// Torrent-indexer availability lookup (feature B) - shows whether a title
+// exists on the configured indexers and in which languages. Used to live on
+// every user's Detail page; moved here (admin-only, owner decision) so
+// regular users no longer see torrent internals on a title's ficha.
+// `AdminScreen` drives it with its own title search instead of a route param.
 
 interface AvailabilityPanelProps {
   title: string;

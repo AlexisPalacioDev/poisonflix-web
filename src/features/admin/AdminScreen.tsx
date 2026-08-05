@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { UsageSection } from './UsageSection';
+import { AvailabilityPanel } from './AvailabilityPanel';
 import { Navigate } from 'react-router-dom';
 import { ConfirmOverlay } from '../../components/ConfirmOverlay';
 import { Header } from '../../components/Header';
@@ -19,6 +20,11 @@ import './admin.css';
 // convenience, not the real authorization boundary (the BFF re-enforces
 // admin-only on every write regardless, same rationale as Downloads' +18
 // delete flow).
+//
+// The torrent-availability lookup (below) used to live on every user's
+// Detail page. Moved here (owner decision, out of scope to re-litigate):
+// Detail no longer has a "current title" torrents block to show, so this
+// section is search-driven instead of tied to a specific title's route.
 
 const INVITE_STATUS_LABEL: Record<Invite['status'], string> = {
   active: 'ACTIVO',
@@ -74,6 +80,13 @@ export function AdminScreen() {
   const [resetPasswordValue, setResetPasswordValue] = useState('');
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetSuccessId, setResetSuccessId] = useState<string | null>(null);
+
+  // Torrent availability lookup: a plain search, not tied to any Detail
+  // route - `submittedTitle` only updates on submit so `AvailabilityPanel`
+  // (which fires a Prowlarr search per title) doesn't re-query on every
+  // keystroke.
+  const [torrentTitleInput, setTorrentTitleInput] = useState('');
+  const [submittedTorrentTitle, setSubmittedTorrentTitle] = useState<string | null>(null);
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -153,6 +166,12 @@ export function AdminScreen() {
     );
   }
 
+  function handleTorrentSearch(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = torrentTitleInput.trim();
+    setSubmittedTorrentTitle(trimmed.length > 0 ? trimmed : null);
+  }
+
   return (
     <main className="pf-admin">
       <Header />
@@ -197,6 +216,34 @@ export function AdminScreen() {
         </section>
 
         <UsageSection />
+
+        <section className="pf-admin__section">
+          <h2 className="pf-admin__section-title">Disponibilidad en torrents</h2>
+          <p className="pf-admin__status">
+            Antes visible en la ficha de cada título; movida acá para que no la vea todo el mundo.
+          </p>
+
+          <form className="pf-admin__generate" onSubmit={handleTorrentSearch}>
+            <div className="pf-admin__generate-field">
+              <label className="pf-admin__label" htmlFor="admin-torrent-title">
+                Título
+              </label>
+              <input
+                id="admin-torrent-title"
+                className="pf-admin__input"
+                type="text"
+                placeholder="Ej: Inception"
+                value={torrentTitleInput}
+                onChange={(e) => setTorrentTitleInput(e.target.value)}
+              />
+            </div>
+            <button type="submit" className="pf-admin__button pf-admin__button--primary">
+              Buscar
+            </button>
+          </form>
+
+          {submittedTorrentTitle && <AvailabilityPanel title={submittedTorrentTitle} tmdbId={null} />}
+        </section>
 
         <section className="pf-admin__section">
           <h2 className="pf-admin__section-title">Invitaciones</h2>

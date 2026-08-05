@@ -1,5 +1,18 @@
-/* Detail screen (detail-request spec) - full-bleed backdrop hero + poster +
-   metadata + context-aware action, consistent with Home's premium treatment. */
+/* Detail screen (detail-request spec + the "vidrio y profundidad" redesign):
+   a blurred, oversized poster backdrop with translucent glass cards floating
+   on top - iOS/Apple TV direction, scoped to THIS screen only (the rest of
+   the app keeps its existing look; see `.pf-glass` below for the shared card
+   treatment reused across the movie hero, the series two-pane and the
+   media-languages panel).
+
+   TV note: this screen also renders on a TV browser with d-pad spatial nav
+   (`src/lib/tv/spatialNavigation.ts`), which walks real focusable DOM
+   elements by geometry - none of the glass treatment below changes which
+   elements are focusable or their layout order, so it doesn't affect focus
+   movement. `backdrop-filter` is real GPU cost though, so it's applied to a
+   small, fixed number of large cards (poster info, media-languages, the
+   series left rail) - never per-row (episode/season rows keep their opaque
+   `var(--pf-surface)` background, same as before). */
 
 .pf-detail {
   position: relative;
@@ -8,15 +21,20 @@
   padding-bottom: var(--pf-space-2xl);
 }
 
+/* Blurred, oversized backdrop (owner ask: "fondo con el póster desenfocado").
+   Scaled up so the blur's soft edge never shows the container boundary. */
 .pf-detail__backdrop {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: clamp(360px, 60vh, 620px);
+  height: clamp(420px, 68vh, 720px);
   background-size: cover;
   background-position: center 18%;
   z-index: 0;
+  filter: blur(48px) saturate(120%) brightness(0.62);
+  transform: scale(1.15);
+  transform-origin: center top;
 }
 
 .pf-detail__backdrop::after {
@@ -55,20 +73,51 @@
   cursor: pointer;
 }
 
+/* --- Shared "glass" card treatment ------------------------------------ */
+/* Translucent, blurred surface floating over the blurred backdrop. Falls
+   back to a near-opaque surface when `backdrop-filter` isn't supported (some
+   embedded/TV WebViews) so cards stay legible instead of turning see-through
+   with no blur to soften what's behind them. */
+.pf-glass {
+  background: rgba(18, 21, 27, 0.5);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--pf-radius-xl);
+  box-shadow: var(--pf-shadow-hero);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pf-glass {
+    background: rgba(15, 18, 23, 0.92);
+  }
+}
+
 .pf-detail__content {
   position: relative;
   z-index: 1;
   display: flex;
+  align-items: flex-start;
   gap: clamp(24px, 4vw, 48px);
-  padding: clamp(220px, 34vh, 380px) var(--pf-gutter) var(--pf-space-lg);
+  padding: clamp(240px, 38vh, 420px) var(--pf-gutter) var(--pf-space-lg);
   max-width: 1100px;
 }
 
-.pf-detail__poster {
+/* Left column (owner ask #1: cover on the LEFT): poster + the
+   media-languages glass card sit together, right above the actions/overview
+   column - reused as-is for the series two-pane's own left rail. */
+.pf-detail__left {
   flex: 0 0 auto;
-  width: clamp(180px, 20vw, 260px);
+  width: clamp(200px, 22vw, 280px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+
+.pf-detail__poster {
+  width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: var(--pf-radius-lg);
+  border-radius: var(--pf-radius-xl);
   overflow: hidden;
   background: var(--pf-surface);
   box-shadow: var(--pf-shadow-hero);
@@ -95,14 +144,15 @@
   flex-direction: column;
   gap: var(--pf-space-md);
   min-width: 0;
-  padding-top: var(--pf-space-xs);
+  padding: clamp(20px, 2.6vw, 32px);
 }
 
 .pf-detail__title {
   margin: 0;
   color: var(--pf-text);
   font-size: clamp(2rem, 3.6vw, 3rem);
-  font-weight: 800;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   text-shadow: 0 3px 18px rgba(0, 0, 0, 0.5);
 }
 
@@ -110,8 +160,9 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  color: var(--pf-text);
-  font-size: 0.98rem;
+  color: var(--pf-text-dim);
+  font-size: 0.95rem;
+  font-weight: 300;
 }
 
 .pf-detail__rating {
@@ -123,7 +174,16 @@
   margin: 0;
   color: rgba(237, 239, 242, 0.86);
   max-width: 65ch;
-  line-height: 1.65;
+  line-height: 1.7;
+  font-weight: 300;
+}
+
+.pf-detail__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex-wrap: wrap;
+  margin-top: var(--pf-space-xs);
 }
 
 .pf-detail__action {
@@ -137,7 +197,6 @@
   font-weight: 700;
   cursor: pointer;
   border: 2px solid transparent;
-  margin-top: var(--pf-space-xs);
   transition:
     transform var(--pf-dur-fast) var(--pf-ease),
     background var(--pf-dur-fast) var(--pf-ease),
@@ -197,88 +256,6 @@
   color: var(--pf-danger);
 }
 
-/* Availability preview (feature B): torrent presence + languages, shown
-   before the "Pedir" action so the user sees what's actually out there. */
-.pf-availability {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: var(--pf-radius-lg);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  max-width: 65ch;
-}
-
-.pf-availability__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.pf-availability__label {
-  color: var(--pf-text);
-  font-weight: 700;
-  font-size: 0.95rem;
-}
-
-.pf-availability__label--none {
-  color: var(--pf-danger);
-}
-
-.pf-availability--loading .pf-availability__label,
-.pf-availability--muted .pf-availability__label {
-  color: var(--pf-text-dim);
-  font-weight: 600;
-}
-
-.pf-availability__meta {
-  color: var(--pf-text-dim);
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.pf-availability__langs {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.pf-availability__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
-  border-radius: var(--pf-radius-pill);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  font-size: 0.82rem;
-}
-
-.pf-availability__chip-name {
-  color: var(--pf-text);
-  font-weight: 600;
-}
-
-.pf-availability__chip-count {
-  color: var(--pf-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-/* "Audio disponible" line (Detail enhancements, feature-map §7, walkthrough
-   §15) - toxic-green, same InLibrary-associated color as the rest of the app. */
-.pf-detail__audio {
-  margin: 0;
-  color: var(--pf-available);
-  font-weight: 600;
-  font-size: 0.92rem;
-}
-
 /* Live download-% hint under the primary action (Detail enhancements,
    feature-map §7 "Live download-% polling on Detail"). */
 .pf-detail__progress {
@@ -328,6 +305,71 @@
   cursor: not-allowed;
 }
 
+/* --- Media-languages card (owner asks #2 + #4) ------------------------- */
+/* "Descargado en X" + the full audio/subtitle breakdown, in one compact
+   glass card next to the poster - replaces the old scattered "Audio
+   disponible" text line (and the torrents block, now admin-only). */
+.pf-media-langs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: 16px 18px;
+}
+
+.pf-media-langs--loading {
+  color: var(--pf-text-dim);
+}
+
+.pf-media-langs__hint {
+  font-size: 0.85rem;
+  color: var(--pf-text-dim);
+}
+
+.pf-media-langs__download {
+  margin: 0;
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+  font-weight: 300;
+}
+
+.pf-media-langs__download strong {
+  color: var(--pf-available);
+  font-weight: 700;
+}
+
+.pf-media-langs__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pf-media-langs__label {
+  color: var(--pf-text-dim);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pf-media-langs__chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pf-media-langs__chip {
+  padding: 4px 11px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--pf-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
 /* ---------------------------------------------------------------------------
    TV series two-pane layout (Detail enhancements, feature-map §7 "TV SERIES
    layout", walkthrough §19/§20), ported from `SeriesDetailContent.kt`.
@@ -345,10 +387,11 @@
 
 .pf-series-detail__left {
   flex: 0 0 auto;
-  width: clamp(200px, 22vw, 280px);
+  width: clamp(220px, 24vw, 300px);
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-sm);
+  padding: clamp(16px, 2vw, 22px);
 }
 
 .pf-series-detail__poster {
@@ -390,7 +433,7 @@
   margin: 0;
   color: var(--pf-text);
   font-size: 1.3rem;
-  font-weight: 800;
+  font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -453,7 +496,7 @@
   padding: 10px 14px;
   border-radius: var(--pf-radius-sm);
   border: 1px solid transparent;
-  background: var(--pf-surface);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--pf-text);
   text-align: left;
   cursor: pointer;
@@ -461,7 +504,7 @@
 
 .pf-season-row--selected {
   border-color: var(--pf-gold);
-  background: var(--pf-surface-2);
+  background: rgba(242, 193, 78, 0.1);
   color: var(--pf-gold);
 }
 
@@ -476,6 +519,10 @@
   opacity: 0.75;
 }
 
+/* Episodes ("capítulos", owner ask #1): the RIGHT column next to the poster
+   column above. Rows stay an opaque, non-blurred surface deliberately - a TV
+   season can list dozens of them, and `backdrop-filter` per row would be the
+   expensive kind of "glass". */
 .pf-series-detail__right {
   flex: 1;
   min-width: 0;
@@ -510,7 +557,7 @@
   align-items: center;
   gap: 14px;
   padding: 10px;
-  border-radius: var(--pf-radius-sm);
+  border-radius: var(--pf-radius-md);
   border: 1px solid transparent;
   background: var(--pf-surface);
   color: var(--pf-text);
@@ -613,10 +660,22 @@
 @media (max-width: 720px) {
   .pf-detail__content {
     flex-direction: column;
-    padding-top: clamp(200px, 40vh, 300px);
+    padding-top: clamp(220px, 44vh, 340px);
+  }
+
+  .pf-detail__left {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
   }
 
   .pf-detail__poster {
     width: 150px;
+  }
+
+  .pf-media-langs {
+    flex: 1;
+    min-width: 200px;
   }
 }

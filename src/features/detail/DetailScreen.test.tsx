@@ -169,7 +169,7 @@ describe('DetailScreen (detail-request spec)', () => {
     expect(await screen.findByText('player-screen:jf-603')).toBeInTheDocument();
   });
 
-  it('InLibrary: shows the green "Audio disponible" line, sourced from the Jellyfin item\'s MediaStreams', async () => {
+  it('InLibrary: shows the media-languages card (download language + audio/subtitle chips), sourced from the Jellyfin item\'s MediaStreams', async () => {
     mockedGetItems.mockResolvedValue({
       Items: [{ Id: 'jf-603', Name: 'The Matrix', ProviderIds: { Tmdb: '603' } }],
       TotalRecordCount: 1,
@@ -180,9 +180,9 @@ describe('DetailScreen (detail-request spec)', () => {
       Id: 'jf-603',
       Name: 'The Matrix',
       MediaStreams: [
-        { Type: 'Audio', Language: 'spa' },
+        { Type: 'Audio', Language: 'spa', IsDefault: true },
         { Type: 'Audio', Language: 'eng' },
-        // Same language twice (e.g. a commentary track) must not repeat in the line.
+        // Same language twice (e.g. a commentary track) must not repeat in the chip list.
         { Type: 'Audio', Language: 'eng' },
         { Type: 'Subtitle', Language: 'spa' },
       ],
@@ -190,7 +190,15 @@ describe('DetailScreen (detail-request spec)', () => {
 
     renderDetail('603');
 
-    expect(await screen.findByText('Audio disponible: Español · Inglés')).toBeInTheDocument();
+    const card = await screen.findByRole('status');
+    expect(within(card).getByText('Descargado en')).toBeInTheDocument();
+    expect(card.querySelector('.pf-media-langs__download strong')).toHaveTextContent('Español');
+    expect(within(card).getByText('Audio')).toBeInTheDocument();
+    expect(within(card).getByText('Subtítulos')).toBeInTheDocument();
+    // "Español" appears 3 times: the download-language line's <strong>, the
+    // audio chip, and the subtitle chip.
+    expect(within(card).getAllByText('Español')).toHaveLength(3);
+    expect(within(card).getByText('Inglés')).toBeInTheDocument();
     expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'jf-603', 'ProviderIds,MediaStreams');
   });
 
@@ -209,17 +217,18 @@ describe('DetailScreen (detail-request spec)', () => {
 
     renderDetail('603');
 
-    expect(await screen.findByText('Audio disponible: UND')).toBeInTheDocument();
+    const card = await screen.findByRole('status');
+    expect(within(card).getAllByText('UND')).toHaveLength(2); // download-language + audio chip
   });
 
-  it('Requestable: no "Audio disponible" line (not in the library, no Jellyfin item to read)', async () => {
+  it('Requestable: no media-languages card (not in the library, no Jellyfin item to read)', async () => {
     mockedGetItems.mockResolvedValue(EMPTY_LIBRARY as never);
     mockedGetMovieDetails.mockResolvedValue(detailFixture({ mediaInfo: null }) as never);
 
     renderDetail('603');
 
     await screen.findByRole('button', { name: /^pedir$/i });
-    expect(screen.queryByText(/Audio disponible/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/descargado en/i)).not.toBeInTheDocument();
   });
 
   it('Requestable: shows an enabled "Pedir" action and no "Reproducir"', async () => {
@@ -382,6 +391,41 @@ describe('DetailScreen (TV via ?type=tv)', () => {
     expect(await screen.findByRole('heading', { name: 'Temporada 2' })).toBeInTheDocument();
     expect(screen.getByText('S2·E1 — Episode Three')).toBeInTheDocument();
     expect(screen.queryByText('S1·E1 — Episode One')).not.toBeInTheDocument();
+  });
+
+  it('two-pane: media-languages card is sourced from the first AVAILABLE episode\'s Jellyfin item, not the series item (a Series carries no MediaStreams of its own - confirmed live against the real server)', async () => {
+    mockedGetItems.mockImplementation(async (_userId, params) => {
+      if (params?.parentId === 'jf-1408') {
+        return {
+          Items: [{ Id: 'ep-1', Name: 'Episode One', IndexNumber: 1, ParentIndexNumber: 1, SeriesId: 'jf-1408' }],
+          TotalRecordCount: 1,
+          StartIndex: 0,
+        };
+      }
+      return {
+        Items: [{ Id: 'jf-1408', Name: 'Mr. Robot', Type: 'Series', ProviderIds: { Tmdb: '1408' } }],
+        TotalRecordCount: 1,
+        StartIndex: 0,
+      };
+    });
+    mockedGetTvDetails.mockResolvedValue(tvFixture() as never);
+    mockedGetItem.mockResolvedValue({
+      Id: 'ep-1',
+      Name: 'Episode One',
+      MediaStreams: [
+        { Type: 'Audio', Language: 'eng', IsDefault: true },
+        { Type: 'Subtitle', Language: 'spa' },
+      ],
+    } as never);
+
+    renderDetail('1408', '?type=tv');
+
+    await screen.findByRole('heading', { name: /mr\. robot/i });
+    const card = await screen.findByRole('status');
+    expect(card.querySelector('.pf-media-langs__download strong')).toHaveTextContent('Inglés');
+    expect(within(card).getByText('Subtítulos')).toBeInTheDocument();
+    expect(within(card).getByText('Español')).toBeInTheDocument();
+    expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'ep-1', 'ProviderIds,MediaStreams');
   });
 
   it('two-pane renders for a series in the Jellyfin library even when Jellyseerr says "partially available" (status 4)', async () => {
