@@ -18,7 +18,7 @@
   padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
   background: rgba(12, 12, 16, 0.92);
   backdrop-filter: blur(12px);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--pf-glass-border);
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.45);
 }
 
@@ -390,6 +390,13 @@
 .pf-fullplayer__art {
   flex: 0 1 auto;
   align-self: center;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `min()` value - see scripts/check-legacy-css.mjs rule b / design.md D2 -
+     so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this min() mostly
+     resolves to its 340px cap already, so the static value below is what
+     modern browsers already render most of the time, not a guess). */
+  width: 340px;
   width: min(72vw, 340px);
   aspect-ratio: 1 / 1;
   margin: 0.5rem 0;
@@ -484,7 +491,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 5 controls (shuffle · prev · play · next · repeat) must fit small phones. */
+  /* 5 controls (shuffle · prev · play · next · repeat) must fit small phones.
+     Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md D2)
+     - this app's TV/desktop-first target viewport is wide enough that this
+     clamp mostly resolves to its 1.25rem cap already. */
+  gap: 1.25rem;
   gap: clamp(0.5rem, 4vw, 1.25rem);
 }
 

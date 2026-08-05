@@ -22,6 +22,13 @@
 
 .pf-downloads__title {
   margin: 0;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
+     D2 - so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this clamp mostly
+     resolves to its cap already, so the static value below is what modern
+     browsers already render most of the time, not a guess). */
+  font-size: 1.8rem;
   font-size: clamp(1.4rem, 2vw, 1.8rem);
   font-weight: 800;
   color: var(--pf-text);
@@ -35,7 +42,7 @@
   height: 40px;
   border-radius: var(--pf-radius-pill);
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--pf-glass-border);
   color: var(--pf-text);
   cursor: pointer;
   transition:

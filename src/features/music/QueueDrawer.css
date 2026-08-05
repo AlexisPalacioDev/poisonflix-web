@@ -4,12 +4,19 @@
   bottom: 88px; /* sit above the now-playing bar */
   top: 0;
   z-index: 95;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `min()` value - see scripts/check-legacy-css.mjs rule b / design.md D2 -
+     so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this min() mostly
+     resolves to its 360px cap already, so the static value below is what
+     modern browsers already render most of the time, not a guess). */
+  width: 360px;
   width: min(360px, 92vw);
   display: flex;
   flex-direction: column;
   background: rgba(16, 16, 22, 0.98);
   backdrop-filter: blur(16px);
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid var(--pf-glass-border);
   box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
 }
 
@@ -179,7 +186,7 @@
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.5rem 1rem 0.75rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--pf-glass-border);
 }
 
 .pf-queue__autoplay-text {

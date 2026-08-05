@@ -44,7 +44,15 @@
    `auto`: the webOS 2018 Chrome does not derive an SVG's intrinsic ratio from
    its viewBox, so `auto` there collapses to the 150px default. */
 .pf-music__brand > svg {
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
+     D2 - so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this clamp mostly
+     resolves to its 4.5rem cap already, so the static value below is what
+     modern browsers already render most of the time, not a guess). */
+  width: 4.5rem;
   width: clamp(3.25rem, 9vw, 4.5rem);
+  height: 4.5rem;
   height: clamp(3.25rem, 9vw, 4.5rem);
   filter: drop-shadow(0 6px 18px rgb(0 0 0 / 0.55));
 }
@@ -130,7 +138,7 @@
   padding: 3px;
   border-radius: var(--pf-radius-pill, 999px);
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--pf-glass-border);
 }
 
 .pf-music__source-btn {
@@ -799,6 +807,13 @@
 
 .pf-music__detail-title {
   margin: 0;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
+     D2 - so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this clamp mostly
+     resolves to its 3.5rem cap already, so the static value below is what
+     modern browsers already render most of the time, not a guess). */
+  font-size: 3.5rem;
   font-size: clamp(1.8rem, 5vw, 3.5rem);
   font-weight: 900;
   letter-spacing: -0.03em;
