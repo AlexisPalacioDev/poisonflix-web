@@ -2,6 +2,7 @@
    layout) on top, big preview panel below. Clears the fixed header. */
 
 .pf-search {
+  position: relative;
   flex: 1;
   min-height: 100%;
   padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
@@ -11,36 +12,86 @@
   gap: var(--pf-space-md);
 }
 
-.pf-search__query {
-  padding: 0 var(--pf-gutter) var(--pf-space-md);
+/* Same ambient wash as Home (home.css's `.pf-home__rows::before` - see there
+   for the full reasoning): the screen needs a light source, or every surface
+   below floats on flat #0a0c10 with nothing to be glass against. Anchored to
+   the top of the screen, falls off downwards, pure paint - no blur, so it
+   spends nothing from the ≤2-blurred-surface budget the fixed header and the
+   now-playing bar already claim. */
+.pf-search::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1100px;
+  /* Behind the screen's own content, above the page background. NOT paired
+     with a `.pf-search > *` z-index bump: that selector would also match the
+     fixed `<Header>` and could override its `position: fixed`. */
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1400px 560px at 12% 0px, rgba(242, 193, 78, 0.13) 0%, rgba(242, 193, 78, 0) 70%),
+    radial-gradient(1100px 560px at 96% 520px, rgba(140, 255, 90, 0.07) 0%, rgba(140, 255, 90, 0) 70%),
+    linear-gradient(to bottom, rgba(28, 33, 45, 0.55) 0px, rgba(28, 33, 45, 0) 900px);
 }
 
+.pf-search__query {
+  padding: 0 var(--pf-gutter) var(--pf-space-lg);
+}
+
+/* The query field is the primary object on this screen, so it is styled like
+   one: a wide glass slab with a real specular top edge, not a hairline box.
+   Glass without `backdrop-filter` - a translucent gradient over the ambient
+   wash above reads the same and costs nothing. */
 .pf-search__input {
   width: 100%;
-  max-width: 560px;
-  padding: 14px 18px;
-  border-radius: var(--pf-radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: var(--pf-surface);
+  max-width: 680px;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` - see scripts/check-legacy-css.mjs rule b / design.md D2 - so
+     the declaration is dropped and the PRIOR one wins). Same technique for
+     every other clamp() in this file. */
+  padding: 18px 24px;
+  border-radius: var(--pf-radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(to bottom, rgba(38, 44, 57, 0.72) 0%, rgba(18, 21, 27, 0.72) 100%);
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
   color: var(--pf-text);
-  font-size: 1.05rem;
+  font-size: 1.15rem;
+  font-weight: 500;
   transition:
     border-color var(--pf-dur-fast) var(--pf-ease),
+    background var(--pf-dur-fast) var(--pf-ease),
     box-shadow var(--pf-dur-fast) var(--pf-ease);
 }
 
 .pf-search__input::placeholder {
   color: var(--pf-text-dim);
+  font-weight: 400;
 }
 
+/* Gold focus treatment: the ring is what the d-pad relies on to say "you are
+   here", so it stays the loudest signal - the warm glow underneath it is
+   additive only. */
 .pf-search__input:focus-visible {
   outline: none;
   border-color: var(--pf-gold);
-  box-shadow: var(--pf-ring);
+  background: linear-gradient(to bottom, rgba(48, 42, 24, 0.8) 0%, rgba(22, 20, 15, 0.8) 100%);
+  box-shadow:
+    var(--pf-ring),
+    0 16px 44px rgba(242, 193, 78, 0.16);
 }
 
+/* The preview is a floating glass sheet now, not loose text on the page -
+   the same "card on a lit backdrop" idea Detail's `.pf-detail__info` uses,
+   minus the blur (Detail can afford it as one of two fixed surfaces; this
+   screen must not add a third). A translucent gradient + hairline + real
+   elevation is what carries it. */
 .pf-search__preview {
   display: flex;
+  align-items: flex-start;
   /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
      `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
      D2 - so the declaration is dropped and the PRIOR one wins; this app's
@@ -48,24 +99,37 @@
      resolves to its cap already, so the static value below is what modern
      browsers already render most of the time, not a guess). Same technique
      for every other clamp() in this file. */
-  gap: 36px;
-  gap: clamp(20px, 3vw, 36px);
-  padding: var(--pf-space-md) var(--pf-gutter) var(--pf-space-lg);
+  gap: 40px;
+  gap: clamp(20px, 3.2vw, 40px);
+  margin: var(--pf-space-md) var(--pf-gutter) var(--pf-space-lg);
+  padding: 32px;
+  padding: clamp(20px, 2.4vw, 32px);
+  max-width: 1000px;
+  border-radius: var(--pf-radius-xl);
+  border: 1px solid var(--pf-glass-border);
+  background: linear-gradient(150deg, rgba(38, 44, 57, 0.55) 0%, rgba(16, 19, 25, 0.62) 62%);
+  box-shadow:
+    var(--pf-elev-2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 .pf-search__preview--empty {
   color: var(--pf-text-dim);
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  font-size: 1.05rem;
 }
 
 .pf-search__preview-art {
   flex: 0 0 auto;
-  width: 240px;
-  width: clamp(180px, 20vw, 240px);
+  width: 220px;
+  width: clamp(150px, 17vw, 220px);
   aspect-ratio: 2 / 3;
   border-radius: var(--pf-radius-lg);
   overflow: hidden;
   background: var(--pf-surface);
-  box-shadow: var(--pf-shadow-card);
+  box-shadow: var(--pf-shadow-hero);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -89,39 +153,50 @@
   flex-direction: column;
   gap: var(--pf-space-sm);
   min-width: 0;
-  padding-top: var(--pf-space-xs);
+  padding-top: var(--pf-space-2xs);
 }
 
 .pf-search__preview-title {
   margin: 0;
   color: var(--pf-text);
-  font-size: 2rem;
-  font-size: clamp(1.4rem, 2.4vw, 2rem);
+  font-size: 2.3rem;
+  font-size: clamp(1.5rem, 2.7vw, 2.3rem);
   font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
 }
 
 .pf-search__preview-meta {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--pf-text);
+  color: rgba(237, 239, 242, 0.8);
   font-size: 0.92rem;
+  font-weight: 500;
 }
 
 .pf-search__preview-overview {
   margin: 0;
-  color: rgba(237, 239, 242, 0.82);
+  color: rgba(237, 239, 242, 0.8);
   max-width: 62ch;
-  line-height: 1.6;
+  line-height: 1.7;
+  font-weight: 300;
 }
 
 /* "Audio disponible" line (feature-map §5 big-preview enrichment) - same
-   toxic-green InLibrary-associated color as Detail's `.pf-detail__audio`. */
+   toxic-green InLibrary-associated color as Detail's `.pf-detail__audio`,
+   promoted to a chip so it reads as a fact about the file rather than a
+   stray green sentence under the synopsis. */
 .pf-search__preview-audio {
-  margin: 0;
+  align-self: flex-start;
+  margin: var(--pf-space-2xs) 0 0;
+  padding: 6px 14px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(140, 255, 90, 0.1);
+  border: 1px solid rgba(140, 255, 90, 0.28);
   color: var(--pf-available);
   font-weight: 600;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
 }
 
 @media (max-width: 720px) {
