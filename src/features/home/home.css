@@ -7,11 +7,16 @@
 }
 
 /* Rows sit just below the hero, overlapping its lower scrim slightly so the
-   page reads as one continuous surface instead of hero-then-void. */
+   page reads as one continuous surface instead of hero-then-void. The pull-up
+   here is the exact negative of `--pf-hero-overlap` (design.md D4, defect
+   #2): the hero's own `padding-bottom` reserves that same amount on top of
+   its floor, so the overlap can never exceed what's reserved - previously
+   this was an isolated `clamp()` unrelated to Hero's padding, which is what
+   let the two drift apart and overlap the hero's action buttons. */
 .pf-home__rows {
   position: relative;
   z-index: 1;
-  margin-top: clamp(-64px, -4vw, -32px);
+  margin-top: calc(-1 * var(--pf-hero-overlap));
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-lg);

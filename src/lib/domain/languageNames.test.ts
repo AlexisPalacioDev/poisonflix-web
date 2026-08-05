@@ -31,6 +31,31 @@ describe('languageDisplayName', () => {
     expect(languageDisplayName('jpn', 'fallback')).toBe('Japonés');
     expect(languageDisplayName('kor', 'fallback')).toBe('Coreano');
   });
+
+  it('resolves the previously-unmapped ISO 639-2 codes observed raw in the wild (detail-request spec)', () => {
+    expect(languageDisplayName('ces', 'fallback')).toBe('Checo');
+    expect(languageDisplayName('dan', 'fallback')).toBe('Danés');
+    expect(languageDisplayName('ell', 'fallback')).toBe('Griego');
+    expect(languageDisplayName('fin', 'fallback')).toBe('Finés');
+    expect(languageDisplayName('hun', 'fallback')).toBe('Húngaro');
+    expect(languageDisplayName('nor', 'fallback')).toBe('Noruego');
+    expect(languageDisplayName('pol', 'fallback')).toBe('Polaco');
+    expect(languageDisplayName('ron', 'fallback')).toBe('Rumano');
+    expect(languageDisplayName('slk', 'fallback')).toBe('Eslovaco');
+    expect(languageDisplayName('swe', 'fallback')).toBe('Sueco');
+    expect(languageDisplayName('tur', 'fallback')).toBe('Turco');
+  });
+
+  it('also resolves the ISO 639-2/B alias codes for the same languages', () => {
+    expect(languageDisplayName('cze', 'fallback')).toBe('Checo');
+    expect(languageDisplayName('gre', 'fallback')).toBe('Griego');
+    expect(languageDisplayName('rum', 'fallback')).toBe('Rumano');
+    expect(languageDisplayName('slo', 'fallback')).toBe('Eslovaco');
+  });
+
+  it('still falls back for "und" (undetermined) after the table expansion', () => {
+    expect(languageDisplayName('und', 'UND')).toBe('UND');
+  });
 });
 
 describe('languageFamily', () => {

@@ -378,6 +378,28 @@
   font-weight: 500;
 }
 
+/* Collapse control for a long chip list (detail-request spec's "Subtitle
+   chip collapse" / design.md D5b) - a real <button>, reachable by Tab and
+   d-pad like any other control, not a decorative span (protects TV-2's
+   focus-order guarantee). Sits right after the `<ul>`, same visual rhythm
+   as a chip but styled as an affordance to expand, not a label. */
+.pf-media-langs__more {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 4px 11px;
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  border: 1px solid var(--pf-glass-border);
+  color: var(--pf-gold);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pf-media-langs__more:hover {
+  background: rgba(242, 193, 78, 0.1);
+}
+
 /* ---------------------------------------------------------------------------
    TV series two-pane layout (Detail enhancements, feature-map §7 "TV SERIES
    layout", walkthrough §19/§20), ported from `SeriesDetailContent.kt`.

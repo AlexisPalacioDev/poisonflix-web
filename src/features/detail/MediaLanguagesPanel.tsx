@@ -1,6 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import { audioLanguagesOf, defaultAudioLanguageOf, subtitleLanguagesOf } from './audioLanguages';
+import { prioritizeLanguages } from './prioritizeLanguages';
+
+// Detail-request spec's "Subtitle chip collapse for long lists": at most 4
+// always-visible chips (app language, Español, Inglés, file default -
+// deduplicated), the rest behind an expandable "+N" control. Applied to
+// both language rows (audio lists are typically short, so this is a no-op
+// there in practice, but keeps one code path instead of two).
+const VISIBLE_CHIP_LIMIT = 4;
 
 // Poster-side language card (owner asks #2 + #4): what the file actually
 // downloaded/plays in by default, plus the full audio/subtitle breakdown
@@ -17,6 +25,39 @@ import { audioLanguagesOf, defaultAudioLanguageOf, subtitleLanguagesOf } from '.
 interface MediaLanguagesPanelProps {
   item: JellyfinItem | null | undefined;
   isLoading: boolean;
+}
+
+interface LanguageChipRowProps {
+  label: string;
+  languages: string[];
+  defaultLanguage: string | null;
+}
+
+function LanguageChipRow({ label, languages, defaultLanguage }: LanguageChipRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const { shown, hidden } = useMemo(
+    () => prioritizeLanguages(languages, defaultLanguage, VISIBLE_CHIP_LIMIT),
+    [languages, defaultLanguage],
+  );
+  const visible = expanded ? languages : shown;
+
+  return (
+    <div className="pf-media-langs__row">
+      <span className="pf-media-langs__label">{label}</span>
+      <ul className="pf-media-langs__chips">
+        {visible.map((lang, index) => (
+          <li key={`${lang}-${index}`} className="pf-media-langs__chip">
+            {lang}
+          </li>
+        ))}
+      </ul>
+      {!expanded && hidden.length > 0 && (
+        <button type="button" className="pf-media-langs__more" onClick={() => setExpanded(true)}>
+          +{hidden.length}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProps) {
@@ -48,29 +89,15 @@ export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProp
       )}
 
       {audioLanguages.length > 0 && (
-        <div className="pf-media-langs__row">
-          <span className="pf-media-langs__label">Audio</span>
-          <ul className="pf-media-langs__chips">
-            {audioLanguages.map((lang) => (
-              <li key={lang} className="pf-media-langs__chip">
-                {lang}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <LanguageChipRow label="Audio" languages={audioLanguages} defaultLanguage={downloadLanguage} />
       )}
 
       {subtitleLanguages.length > 0 && (
-        <div className="pf-media-langs__row">
-          <span className="pf-media-langs__label">Subtítulos</span>
-          <ul className="pf-media-langs__chips">
-            {subtitleLanguages.map((lang) => (
-              <li key={lang} className="pf-media-langs__chip">
-                {lang}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <LanguageChipRow
+          label="Subtítulos"
+          languages={subtitleLanguages}
+          defaultLanguage={downloadLanguage}
+        />
       )}
     </section>
   );

@@ -92,10 +92,18 @@
      The @supports branch is byte-for-byte the value this repo already
      shipped, so modern Chrome renders identically before/after this switch. */
   --pf-gutter: 24px;
+
+  /* --- Hero/first-row overlap contract (design.md D4, defect #2): ONE token
+     pair instead of two independent values in two files, so the reserved
+     space at the bottom of the hero can never be smaller than the overlap
+     the first row pulls up by - the root cause of the reported solape. --- */
+  --pf-hero-pad-b: 56px;
+  --pf-hero-overlap: 16px;
 }
 
 @supports (width: clamp(1px, 1vw, 2px)) {
   :root {
     --pf-gutter: clamp(16px, 4.5vw, 60px);
+    --pf-hero-pad-b: clamp(40px, 7vh, 88px);
   }
 }

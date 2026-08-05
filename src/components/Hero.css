@@ -51,13 +51,14 @@
      Chrome 53 fails at COMPUTED-value time (not parse time) - declaration
      doubling can't rescue that (design.md D2's support table). Splitting
      into longhands isolates the var()-only sides (fine) from the
-     clamp()-only bottom (fixable via doubling, below). Formalized as
-     `--pf-hero-pad-b` in slice 2 (design.md D4) - 56px is that same value,
-     used early so the two slices don't disagree on the TV floor. */
+     bottom, now driven by the shared hero/first-row overlap contract
+     (design.md D4, defect #2): `--pf-hero-pad-b` degrades to a flat px on
+     Chrome 53 (see theme.css), so `calc(var()+var())` here never mixes a
+     literal clamp()/min() into this declaration - no doubling needed, same
+     reasoning already applied to the plain `var(--pf-gutter)` sides above. */
   padding-top: 0;
   padding-right: var(--pf-gutter);
-  padding-bottom: 56px;
-  padding-bottom: clamp(40px, 7vh, 88px);
+  padding-bottom: calc(var(--pf-hero-pad-b) + var(--pf-hero-overlap));
   padding-left: var(--pf-gutter);
   max-width: 720px;
   display: flex;
