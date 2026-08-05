@@ -148,27 +148,37 @@
   padding: 0 14px;
 }
 
-.pf-header__menu-panel .pf-header__search-label {
+/* Icon-only at every width, not just on phones: the labels turned the bar into
+   a wall of words competing with the artwork behind it. Every control already
+   carries an `aria-label`, so hiding the text costs nothing to a screen reader
+   - it only removes the redundant visible copy of a name the icon already
+   gives sighted users.
+   Two carve-outs, both by higher specificity so source order doesn't matter:
+   the hamburger dropdown (a vertical list of icons with no text would be
+   unreadable) and the language chip (it has no icon at all - "ES"/"EN" IS its
+   affordance, so hiding it would leave an empty pill). */
+.pf-header__search-label {
+  display: none;
+}
+
+.pf-header__search {
+  width: 40px;
+  justify-content: center;
+  padding: 0;
+}
+
+.pf-header__lang-chip {
+  width: auto;
+  padding: 0 12px;
+}
+
+.pf-header__menu-panel .pf-header__search-label,
+.pf-header__lang-chip .pf-header__search-label {
   display: inline;
 }
 
-@media (max-width: 640px) {
-  .pf-header__search-label {
-    display: none;
-  }
-
-  .pf-header__search {
-    width: 40px;
-    justify-content: center;
-    padding: 0;
-  }
-
-  .pf-header__lang-chip {
-    width: auto;
-    padding: 0 12px;
-  }
-
-  .pf-header__lang-chip .pf-header__search-label {
-    display: inline;
-  }
+.pf-header__menu-panel .pf-header__search {
+  width: auto;
+  justify-content: flex-start;
+  padding: 0 14px;
 }
