@@ -3,11 +3,36 @@
    horizontal scroll with a thin scrollbar and soft fade edges. */
 
 .pf-row {
+  position: relative;
   margin: 0;
 }
 
+/* Hairline shelf rule above every rail, feathered out at both ends so it never
+   reads as a hard box edge. One pixel of paint is what turns an undifferentiated
+   column of posters into a stack of distinct shelves all the way down the page -
+   the rhythm the ambient wash alone can only provide near the top. */
+.pf-row::before {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--pf-space-lg));
+  left: var(--pf-gutter);
+  right: var(--pf-gutter);
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.1) 14%,
+    rgba(255, 255, 255, 0.1) 86%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
 .pf-row__title {
-  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 2px;
   padding: 0 var(--pf-gutter);
   /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
      `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
@@ -15,10 +40,24 @@
      TV/desktop-first target viewport is wide enough that this clamp mostly
      resolves to its cap already, so the static value below is what modern
      browsers already render most of the time, not a guess). */
-  font-size: 1.4rem;
-  font-size: clamp(1.15rem, 1.6vw, 1.4rem);
+  font-size: 1.5rem;
+  font-size: clamp(1.2rem, 1.7vw, 1.5rem);
   font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--pf-text);
+}
+
+/* Gold accent rule beside every section heading. One 3px bar is what turns a
+   stack of identical white headings into a scannable shelf list, and it is
+   the only place Home restates the brand accent between hero and cards. */
+.pf-row__title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, var(--pf-gold) 0%, rgba(242, 193, 78, 0.12) 100%);
+  box-shadow: 0 0 14px rgba(242, 193, 78, 0.35);
 }
 
 /* Title-as-link: whole heading is the hit target; the "Ver todo ›" cue sits
@@ -26,8 +65,8 @@
    hovered or keyboard-focused, so it reads as one affordance. */
 .pf-row__title-link {
   display: inline-flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
   color: inherit;
   text-decoration: none;
 }
@@ -45,42 +84,59 @@
   outline: none;
 }
 
+/* The cue is a glass pill now, and it is visible AT REST (dimmed) instead of
+   fully hidden. Two reasons: a d-pad TV has no hover at all, so a hidden
+   affordance is an invisible one there; and a row of faint pills gives the
+   heading row a designed rhythm rather than a pop-in on mouse-over. */
 .pf-row__title-cta {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-size: 0.8rem;
-  font-weight: 600;
+  gap: 4px;
+  padding: 4px 8px 4px 12px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--pf-text-dim);
-  opacity: 0;
+  opacity: 0.55;
   transform: translateX(-4px);
   transition:
     opacity var(--pf-dur-fast) var(--pf-ease),
     transform var(--pf-dur-fast) var(--pf-ease),
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
     color var(--pf-dur-fast) var(--pf-ease);
 }
 
 .pf-row__title-cta > svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .pf-row__title-link:hover .pf-row__title-cta {
   opacity: 1;
   transform: translateX(0);
   color: var(--pf-gold);
+  background: rgba(242, 193, 78, 0.13);
+  border-color: rgba(242, 193, 78, 0.42);
 }
 
 .pf-row__title-link:focus-visible .pf-row__title-cta {
   opacity: 1;
   transform: translateX(0);
   color: var(--pf-gold);
+  background: rgba(242, 193, 78, 0.13);
+  border-color: rgba(242, 193, 78, 0.42);
 }
 
-/* Coarse pointers have no hover to reveal the cue, so keep it always visible. */
+/* Coarse pointers have no hover to raise the cue to full strength, so land it
+   in its resting position there instead of leaving it nudged left. */
 @media (hover: none) {
   .pf-row__title-cta {
-    opacity: 1;
+    opacity: 0.8;
     transform: translateX(0);
   }
 }
@@ -127,7 +183,7 @@
 
 .pf-row__track {
   display: flex;
-  gap: 18px;
+  gap: 20px;
   overflow-x: auto;
   /* Generous top/bottom padding so a hovered card's lift + scale
      (translateY(-6px) scale(1.04)) is NOT clipped: `overflow-x: auto` forces
@@ -188,15 +244,15 @@
 .pf-row__nav--prev {
   left: 0;
   justify-content: flex-start;
-  padding-left: 8px;
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.7), transparent);
+  padding-left: 10px;
+  background: linear-gradient(to right, rgba(10, 12, 16, 0.85) 0%, rgba(10, 12, 16, 0) 100%);
 }
 
 .pf-row__nav--next {
   right: 0;
   justify-content: flex-end;
-  padding-right: 8px;
-  background: linear-gradient(to left, rgba(0, 0, 0, 0.7), transparent);
+  padding-right: 10px;
+  background: linear-gradient(to left, rgba(10, 12, 16, 0.85) 0%, rgba(10, 12, 16, 0) 100%);
 }
 
 .pf-row__viewport:hover .pf-row__nav {
@@ -207,16 +263,36 @@
   opacity: 1;
 }
 
+/* The control itself is the circular glass chip; the button around it stays a
+   full-height gradient hit target (a big, forgiving target matters more than
+   the visual on a d-pad). No `backdrop-filter` here - a rail is a per-item
+   surface and `scripts/check-legacy-css.mjs` rule (d) rejects blur on any
+   `row`-matching selector, which is exactly the budget this redesign must
+   protect. The translucent gradient below reads as glass for free. */
 .pf-row__nav > svg {
-  transition: transform var(--pf-dur-fast) var(--pf-ease);
+  width: 46px;
+  height: 46px;
+  padding: 9px;
+  border-radius: 50%;
+  background: linear-gradient(to bottom, rgba(38, 44, 56, 0.92) 0%, rgba(18, 21, 27, 0.92) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  transition:
+    transform var(--pf-dur-fast) var(--pf-ease),
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease);
 }
 
 .pf-row__nav:hover > svg {
-  transform: scale(1.2);
+  transform: scale(1.1);
+  border-color: var(--pf-gold);
+  background: linear-gradient(to bottom, rgba(52, 44, 22, 0.95) 0%, rgba(24, 21, 14, 0.95) 100%);
 }
 
 .pf-row__nav:focus-visible > svg {
-  transform: scale(1.2);
+  transform: scale(1.1);
+  border-color: var(--pf-gold);
+  background: linear-gradient(to bottom, rgba(52, 44, 22, 0.95) 0%, rgba(24, 21, 14, 0.95) 100%);
 }
 
 .pf-row__nav:focus-visible {
@@ -235,9 +311,9 @@
 
 .pf-row__skeleton-card {
   flex: 0 0 auto;
-  width: 168px;
-  height: 252px;
-  border-radius: var(--pf-radius-md);
+  width: 184px;
+  height: 276px;
+  border-radius: var(--pf-radius-lg);
 }
 
 @media (max-width: 640px) {
@@ -252,7 +328,7 @@
   }
 
   .pf-row__skeleton-card {
-    width: 128px;
-    height: 192px;
+    width: 132px;
+    height: 198px;
   }
 }

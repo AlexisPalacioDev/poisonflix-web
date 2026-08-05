@@ -5,8 +5,8 @@
 .pf-poster-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: 168px;
+  gap: 10px;
+  width: 184px;
   flex: 0 0 auto;
   background: transparent;
   border: none;
@@ -19,14 +19,14 @@
 
 .pf-poster-card__art {
   position: relative;
-  width: 168px;
-  height: 252px;
-  border-radius: var(--pf-radius-md);
+  width: 184px;
+  height: 276px;
+  border-radius: var(--pf-radius-lg);
   overflow: hidden;
   background: var(--pf-surface);
   box-shadow: var(--pf-shadow-card);
   outline: 2px solid transparent;
-  outline-offset: 0;
+  outline-offset: 3px;
   transition:
     transform var(--pf-dur) var(--pf-ease),
     box-shadow var(--pf-dur) var(--pf-ease),
@@ -38,6 +38,33 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* Glass-over-print treatment. THIS is where the "vidrio y profundidad"
+   language lands on the object the user actually looks at 200 times per
+   screen. Three cheap layers, zero blur:
+     1. a hairline inner ring, so the artwork sits inside a bezel instead of
+        being cut flush against the page;
+     2. a diagonal specular sheen across the top-left, the cue that reads as
+        "a pane of glass in front of the poster";
+     3. a short dark foot at the bottom, which grounds the card and keeps the
+        StatusBadge/progress bar legible over pale artwork.
+   `pointer-events: none` so it never eats a click; the badge and progress
+   bar below are lifted to z-index 2 so this overlay can't cover them. */
+.pf-poster-card__art::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(152deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.02) 26%, rgba(255, 255, 255, 0) 46%),
+    linear-gradient(to top, rgba(5, 7, 11, 0.62) 0%, rgba(5, 7, 11, 0) 34%);
 }
 
 .pf-poster-card__placeholder {
@@ -56,15 +83,24 @@
    53/webOS 2018 error-handling: an unsupported pseudo-class inside a
    comma-separated list invalidates the WHOLE rule, not just its own branch -
    design.md D2/corrections table). Two independent rules instead. */
+/* Two shadows on lift: the black one is the physical drop, the gold one is a
+   soft bloom that makes the raised card feel LIT rather than just moved. The
+   gold `outline` is kept exactly as it was (not swapped for a box-shadow
+   ring) because `outline` is the ring the d-pad/TV path relies on and it
+   survives Chrome 53 unchanged - the bloom is additive, never a replacement. */
 .pf-poster-card:hover .pf-poster-card__art {
-  transform: translateY(-6px) scale(1.04);
-  box-shadow: var(--pf-shadow-card-hover);
+  transform: translateY(-10px) scale(1.045);
+  box-shadow:
+    var(--pf-shadow-card-hover),
+    0 14px 38px rgba(242, 193, 78, 0.24);
   outline-color: var(--pf-gold);
 }
 
 .pf-poster-card:focus-visible .pf-poster-card__art {
-  transform: translateY(-6px) scale(1.04);
-  box-shadow: var(--pf-shadow-card-hover);
+  transform: translateY(-10px) scale(1.045);
+  box-shadow:
+    var(--pf-shadow-card-hover),
+    0 14px 38px rgba(242, 193, 78, 0.24);
   outline-color: var(--pf-gold);
 }
 
@@ -75,10 +111,14 @@
   box-shadow: none;
 }
 
+/* Above `.pf-poster-card__art::after` (z-index 1), otherwise the glass overlay
+   would paint on top of it - a pseudo-element comes last in paint order among
+   siblings at the same level. */
 .pf-poster-card__badge {
   position: absolute;
+  z-index: 2;
   bottom: 14px;
-  left: 8px;
+  left: 10px;
 }
 
 /* Watch-progress treatment (ported from `PosterCard.kt`): dims the art so
@@ -91,23 +131,26 @@
 
 .pf-poster-card__progress-track {
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   bottom: 0;
   height: 4px;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .pf-poster-card__progress-fill {
   display: block;
   height: 100%;
-  background: var(--pf-gold);
+  background: linear-gradient(to right, var(--pf-gold-dim) 0%, var(--pf-gold) 100%);
+  box-shadow: 0 0 12px rgba(242, 193, 78, 0.65);
 }
 
 .pf-poster-card__title {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--pf-text-dim);
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: rgba(237, 239, 242, 0.6);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -125,10 +168,11 @@
 @media (max-width: 640px) {
   .pf-poster-card,
   .pf-poster-card__art {
-    width: 128px;
+    width: 132px;
   }
 
   .pf-poster-card__art {
-    height: 192px;
+    height: 198px;
+    border-radius: var(--pf-radius-md);
   }
 }

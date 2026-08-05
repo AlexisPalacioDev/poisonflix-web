@@ -49,23 +49,46 @@
    share this, this just makes the sharing explicit for every other screen)
    ----------------------------------------------------------------------- */
 .pf-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 26px;
+  gap: 10px;
+  padding: 14px 30px;
   border-radius: var(--pf-radius-pill);
-  font-size: 1rem;
+  font-size: 1.02rem;
   font-weight: 700;
+  letter-spacing: 0.005em;
   cursor: pointer;
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   transition:
     transform var(--pf-dur-fast) var(--pf-ease),
     background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
     box-shadow var(--pf-dur-fast) var(--pf-ease);
 }
 
+/* Top-edge specular rim: the cheapest cue that a control is a physical, lit
+   object rather than a flat colour swatch. Kept to a 1px hairline so it can
+   never wash over the label the way a tall gradient overlay would (the
+   pseudo-element paints above the button's own text). */
+.pf-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 14%;
+  right: 14%;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+}
+
 .pf-btn:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
 .pf-btn:active {
@@ -73,35 +96,52 @@
 }
 
 .pf-btn--play {
-  background: var(--pf-available);
-  color: #06210a;
-  box-shadow: 0 8px 24px rgba(140, 255, 90, 0.28);
+  background: linear-gradient(to bottom, #a4ff7c 0%, var(--pf-available) 55%, #6fe23c 100%);
+  color: #05230a;
+  box-shadow:
+    0 10px 30px rgba(140, 255, 90, 0.34),
+    0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .pf-btn--play:hover {
-  background: #9dff72;
+  background: linear-gradient(to bottom, #b8ff97 0%, #9dff72 55%, #7bec4b 100%);
+  box-shadow:
+    0 16px 40px rgba(140, 255, 90, 0.44),
+    0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .pf-btn--gold {
-  background: var(--pf-gold);
+  background: linear-gradient(to bottom, #ffd979 0%, var(--pf-gold) 55%, var(--pf-gold-dim) 100%);
   color: #241b03;
-  box-shadow: 0 8px 24px rgba(242, 193, 78, 0.26);
+  box-shadow:
+    0 10px 30px rgba(242, 193, 78, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .pf-btn--gold:hover {
-  background: #f6cd6b;
+  background: linear-gradient(to bottom, #ffe396 0%, #f6cd6b 55%, #e0b348 100%);
+  box-shadow:
+    0 16px 40px rgba(242, 193, 78, 0.42),
+    0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
+/* "Glass" without `backdrop-filter`: a translucent gradient fill + hairline
+   border + a dark drop shadow reads as frosted over a photographic backdrop
+   at zero GPU cost, and stays legible on Chrome 53 where the filter doesn't
+   exist at all. This deliberately spends NOTHING from the ≤2 blurred-surface
+   budget, which the fixed header and the now-playing bar already claim. */
 .pf-btn--ghost {
-  background: rgba(237, 239, 242, 0.12);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.07) 100%);
   color: var(--pf-text);
-  border-color: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(6px);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .pf-btn--ghost:hover {
-  background: rgba(237, 239, 242, 0.2);
-  border-color: rgba(255, 255, 255, 0.32);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.13) 100%);
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
 /* -----------------------------------------------------------------------

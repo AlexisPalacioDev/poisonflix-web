@@ -1,4 +1,5 @@
 .pf-home {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -19,5 +20,45 @@
   margin-top: calc(-1 * var(--pf-hero-overlap));
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-lg);
+  gap: var(--pf-space-xl);
+  padding-top: var(--pf-space-lg);
+}
+
+/* Ambient depth wash - the "vidrio y profundidad" language applied to the PAGE
+   itself, not just to its cards. Detail gets its depth for free from a blurred
+   poster backdrop; Home's rail region had nothing behind it but flat #0a0c10,
+   which is what made every poster read as a sticker on a dead black wall. Two
+   very low-alpha brand glows (gold top-right, toxic-green lower-left) plus a
+   soft lift out of pure black give the shelves a light source, so the glass
+   surfaces above them have something to be glass AGAINST.
+   Scoped to `.pf-home__rows` rather than to `.pf-home`, and anchored at the
+   rails' own top edge: a viewport-fixed wash would step abruptly from 0 to
+   full strength exactly at the hero's bottom edge (the hero backdrop is
+   opaque and paints over it), which shows up as a hard horizontal seam.
+   Anchoring it here means the wash starts at zero right where the hero's
+   feathered floor lands, and simply falls off downwards like real light.
+   `z-index: -1` keeps it behind the rows' own content while staying above
+   the page background (`.pf-home__rows` is the stacking context).
+   Pure paint: no `backdrop-filter`, no `filter`, no compositing cost - the
+   ≤2-blurred-surface budget is fully spent by the fixed header and the
+   now-playing bar, and this must not touch it. */
+.pf-home__rows::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1500px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1500px 640px at 86% 40px, rgba(242, 193, 78, 0.15) 0%, rgba(242, 193, 78, 0) 72%),
+    radial-gradient(1200px 640px at 2% 720px, rgba(140, 255, 90, 0.075) 0%, rgba(140, 255, 90, 0) 72%),
+    linear-gradient(to bottom, rgba(28, 33, 45, 0) 0px, rgba(28, 33, 45, 0.5) 380px, rgba(28, 33, 45, 0) 1500px);
+}
+
+/* The first rail sits directly under the hero's feathered floor, so its shelf
+   rule would draw a hard line across the hero instead of between two rails. */
+.pf-home__rows > .pf-row:first-child::before {
+  display: none;
 }

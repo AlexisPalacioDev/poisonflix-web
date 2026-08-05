@@ -37,10 +37,32 @@
     var(--pf-surface);
 }
 
+/* Scrim + cinematic vignette. The two brand scrims carry legibility (dark at
+   the bottom and the left, where the copy lives); the third layer is a soft
+   radial that pulls the corners down so the frame reads as a lit shot rather
+   than a flat photo pasted edge to edge. Layer order matters: the vignette
+   goes LAST so it sits underneath the two legibility scrims. */
 .pf-hero__scrim {
   position: absolute;
   inset: 0;
-  background: var(--pf-scrim-bottom), var(--pf-scrim-left);
+  background:
+    var(--pf-scrim-bottom),
+    var(--pf-scrim-left),
+    radial-gradient(118% 86% at 52% 36%, rgba(0, 0, 0, 0) 42%, rgba(0, 0, 0, 0.42) 100%);
+}
+
+/* Feathered floor: the hero doesn't stop, it dissolves into the rail region
+   below it. Without this the bottom edge of the backdrop is a visible seam
+   whenever the artwork is bright down there. */
+.pf-hero::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 150px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--pf-bg) 0%, rgba(10, 12, 16, 0.6) 42%, rgba(10, 12, 16, 0) 100%);
 }
 
 .pf-hero__content {
@@ -66,24 +88,51 @@
   gap: var(--pf-space-md);
 }
 
+/* "DESTACADO" as a lit glass pill rather than loose gold micro-text: it gives
+   the copy column a top anchor and states the brand accent before the title
+   does. Same no-blur glass recipe as `.pf-btn--ghost` (translucent gradient +
+   hairline + drop shadow) so nothing is spent from the blur budget. */
 .pf-hero__eyebrow {
   align-self: flex-start;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 15px 6px 13px;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, rgba(242, 193, 78, 0.2) 0%, rgba(242, 193, 78, 0.07) 100%);
+  border: 1px solid rgba(242, 193, 78, 0.36);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--pf-gold);
+}
+
+.pf-hero__eyebrow::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pf-gold);
+  box-shadow: 0 0 10px rgba(242, 193, 78, 0.9);
 }
 
 .pf-hero__title {
   margin: 0;
   /* Static fallback first (see .pf-hero's min-height comment above for why -
      same technique throughout this file). */
-  font-size: 4.4rem;
-  font-size: clamp(2.2rem, 5.6vw, 4.4rem);
+  font-size: 4.6rem;
+  font-size: clamp(2.3rem, 5.8vw, 4.6rem);
   font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
   color: var(--pf-text);
-  text-shadow: 0 4px 24px rgba(0, 0, 0, 0.55);
+  /* Two shadows, not one: a tight dark halo keeps the glyph edges crisp over
+     busy artwork, the wide soft one lifts the whole block off the backdrop. */
+  text-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.55),
+    0 10px 44px rgba(0, 0, 0, 0.7);
 }
 
 .pf-hero__meta {
@@ -91,7 +140,22 @@
   align-items: center;
   gap: 14px;
   font-size: 0.95rem;
-  color: var(--pf-text);
+  font-weight: 500;
+  color: rgba(237, 239, 242, 0.82);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+/* Dot separators between the meta facts, so year/rating read as one line of
+   metadata instead of two orphan words with a gap between them. */
+.pf-hero__meta > span + span::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-right: 14px;
+  border-radius: 50%;
+  background: rgba(237, 239, 242, 0.42);
+  vertical-align: middle;
 }
 
 .pf-hero__rating {
@@ -101,11 +165,13 @@
 
 .pf-hero__overview {
   margin: 0;
-  max-width: 60ch;
-  color: rgba(237, 239, 242, 0.86);
-  line-height: 1.6;
-  font-size: 1.05rem;
-  font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+  max-width: 56ch;
+  color: rgba(237, 239, 242, 0.8);
+  line-height: 1.65;
+  font-weight: 300;
+  font-size: 1.08rem;
+  font-size: clamp(0.98rem, 1.25vw, 1.08rem);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -116,7 +182,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--pf-space-sm);
-  margin-top: var(--pf-space-xs);
+  margin-top: var(--pf-space-sm);
 }
 
 /* `.pf-btn`/`.pf-btn--play/--gold/--ghost` now live in
