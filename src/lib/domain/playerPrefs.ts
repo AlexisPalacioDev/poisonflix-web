@@ -134,6 +134,12 @@ export function setAudioPreference(value: string): void {
   localStorage.setItem(AUDIO_STORAGE_KEY, value);
 }
 
+/** Test/reset helper - clears the saved preference back to "never set". */
+export function clearAudioPreference(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(AUDIO_STORAGE_KEY);
+}
+
 export function audioPreferenceKeyFor(
   track: { language: string | null; displayTitle: string },
 ): string {
@@ -147,22 +153,27 @@ export interface AudioCandidate {
 }
 
 /**
- * Picks the audio track to open with: the saved language if this file has it,
- * otherwise the file's own default, otherwise the first track.
+ * Picks the audio track to open with:
+ *  1. The saved language, if this file has a matching track.
+ *  2. Otherwise, AUTO rule: Spanish, if this file has it - a release marking
+ *     English as its own default (`IsDefault`) must not silently play in
+ *     English when a Spanish track exists (owner's rule: "nunca debe faltar
+ *     el español" - reported live on "The Punisher: One Last Kill", which
+ *     opened in English despite carrying embedded Spanish subtitles/audio).
+ *  3. Otherwise, the file's own default, otherwise the first track.
  *
- * Within the chosen language the file's `isDefault` decides, then stream
- * order. That matters on remuxes, which carry the SAME language several times
- * at different qualities (TrueHD 7.1, AC3 5.1, AC3 stereo) — picking merely
- * the first match there would quietly demote the good mix.
+ * Within a chosen language (steps 1 and 2) the file's `isDefault` decides,
+ * then stream order. That matters on remuxes, which carry the SAME language
+ * several times at different qualities (TrueHD 7.1, AC3 5.1, AC3 stereo) —
+ * picking merely the first match there would quietly demote the good mix.
  */
 export function resolveInitialAudio<T extends AudioCandidate>(tracks: T[]): T | null {
   if (tracks.length === 0) return null;
 
-  const pref = getAudioPreference();
-  if (pref !== null) {
+  const bestInFamily = (family: string): T | null => {
     let best: T | null = null;
     for (const track of tracks) {
-      if (languageFamily(track.language) !== pref) continue;
+      if (languageFamily(track.language) !== family) continue;
       if (!best) {
         best = track;
         continue;
@@ -173,8 +184,18 @@ export function resolveInitialAudio<T extends AudioCandidate>(tracks: T[]): T | 
       }
       if (track.index < best.index) best = track;
     }
-    if (best) return best;
+    return best;
+  };
+
+  const pref = getAudioPreference();
+  if (pref !== null) {
+    const match = bestInFamily(pref);
+    if (match) return match;
+    // Saved family has no matching track in this file - fall through to AUTO.
   }
+
+  const spanish = bestInFamily('es');
+  if (spanish) return spanish;
 
   return tracks.find((track) => track.isDefault) ?? tracks[0] ?? null;
 }

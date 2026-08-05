@@ -7,7 +7,7 @@ import { AuthProvider } from '../../auth/AuthContext';
 import { clearSession, setSession } from '../../lib/session/store';
 import { getItem, getPlaybackInfo } from '../../api/jellyfin';
 import { ApiError } from '../../lib/http/errors';
-import { clearSubtitlePreference } from '../../lib/domain/playerPrefs';
+import { clearAudioPreference, clearSubtitlePreference, setAudioPreference } from '../../lib/domain/playerPrefs';
 import { queryKeys } from '../../hooks/queryKeys';
 
 vi.mock('../../api/jellyfin', async () => {
@@ -246,6 +246,19 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     } as never);
   });
 
+  // Was missing entirely - later describe blocks in this file that assert on
+  // `mockedGetPlaybackInfo` call counts (see the "Spanish must never be
+  // missing" block below) would otherwise inherit this block's leaked,
+  // un-reset call history.
+  afterEach(() => {
+    clearSession();
+    mockedGetPlaybackInfo.mockReset();
+    mockedGetItem.mockReset();
+    hlsInstances.length = 0;
+    clearSubtitlePreference();
+    vi.clearAllMocks();
+  });
+
   it('renders the audio and subtitle track buttons once tracks load', async () => {
     renderPlayer('jf-item-tracks');
     await screen.findByTestId('pf-video');
@@ -328,5 +341,149 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     expect(await screen.findByRole('button', { name: 'Audio' })).toBeInTheDocument();
     // …and the raw-object shape never reached audioTracksOf.
     expect(screen.queryByText(/filter is not a function/i)).not.toBeInTheDocument();
+  });
+});
+
+// Regression: a movie opened in English audio with no subtitle selected at
+// all - the owner's rule is "está bien que hayan las 2 opciones, en inglés y
+// en español, pero nunca debe faltar el español". These exercise the full
+// PlayerScreen wiring (not just the domain functions in playerPrefs.test.ts)
+// for the initial audio/subtitle pick.
+describe('PlayerScreen — Spanish must never be missing on open (owner rule)', () => {
+  const mediaSources = {
+    MediaSources: [
+      {
+        Id: 'ms-1',
+        Container: 'mp4',
+        TranscodingUrl: null,
+        SupportsDirectPlay: true,
+        SupportsDirectStream: true,
+        SupportsTranscoding: false,
+        MediaStreams: [],
+      },
+    ],
+    PlaySessionId: 'sess-1',
+  };
+
+  afterEach(() => {
+    clearSession();
+    mockedGetPlaybackInfo.mockReset();
+    mockedGetItem.mockReset();
+    hlsInstances.length = 0;
+    clearSubtitlePreference();
+    clearAudioPreference();
+    vi.clearAllMocks();
+  });
+
+  it('(a) English-only audio + a Spanish subtitle: audio stays English, the Spanish subtitle is auto-selected', async () => {
+    mockedGetPlaybackInfo.mockResolvedValue(mediaSources as never);
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-a',
+      Name: 'English audio, Spanish subs',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+        { Index: 2, Type: 'Subtitle', Language: 'spa', DisplayTitle: 'Español', IsDefault: false },
+      ],
+    } as never);
+
+    renderPlayer('jf-item-a');
+    await screen.findByTestId('pf-video');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Subtítulos' }));
+    const subtitleDialog = await screen.findByRole('dialog', { name: 'Subtítulos' });
+    expect(within(subtitleDialog).getByRole('button', { name: 'Español' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(within(subtitleDialog).getByRole('button', { name: 'Cerrar' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Audio' }));
+    const audioDialog = await screen.findByRole('dialog', { name: 'Audio' });
+    expect(within(audioDialog).getByRole('button', { name: 'Inglés' })).toHaveAttribute('aria-pressed', 'true');
+
+    // Audio never had to be re-resolved (it stayed the file's own default).
+    expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('(b) Spanish + English audio: Spanish audio is auto-selected, subtitles stay off', async () => {
+    mockedGetPlaybackInfo.mockResolvedValue(mediaSources as never);
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-b',
+      Name: 'Spanish + English audio',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+        { Index: 2, Type: 'Audio', Language: 'spa', DisplayTitle: 'Español', IsDefault: false },
+        { Index: 3, Type: 'Subtitle', Language: 'spa', DisplayTitle: 'Español', IsDefault: false },
+      ],
+    } as never);
+
+    renderPlayer('jf-item-b');
+    await screen.findByTestId('pf-video');
+
+    // The file's default (index 1, English) differs from the resolved
+    // preference (index 2, Spanish) - PlayerScreen must re-resolve
+    // PlaybackInfo with the Spanish AudioStreamIndex.
+    await vi.waitFor(() => {
+      expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2);
+    });
+    expect(mockedGetPlaybackInfo).toHaveBeenNthCalledWith(
+      2,
+      'jf-item-b',
+      expect.objectContaining({ audioStreamIndex: 2 }),
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));
+    const audioDialog = await screen.findByRole('dialog', { name: 'Audio' });
+    expect(within(audioDialog).getByRole('button', { name: 'Español' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(within(audioDialog).getByRole('button', { name: 'Cerrar' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Subtítulos' }));
+    const subtitleDialog = await screen.findByRole('dialog', { name: 'Subtítulos' });
+    expect(within(subtitleDialog).getByRole('button', { name: 'Ninguno' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('(c) English-only audio, no Spanish subtitle available: unchanged - no crash, subtitles stay off', async () => {
+    mockedGetPlaybackInfo.mockResolvedValue(mediaSources as never);
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-c',
+      Name: 'English audio, French subs only',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+        { Index: 2, Type: 'Subtitle', Language: 'fre', DisplayTitle: 'Français', IsDefault: false },
+      ],
+    } as never);
+
+    renderPlayer('jf-item-c');
+    await screen.findByTestId('pf-video');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Subtítulos' }));
+    const subtitleDialog = await screen.findByRole('dialog', { name: 'Subtítulos' });
+    expect(within(subtitleDialog).getByRole('button', { name: 'Ninguno' })).toHaveAttribute('aria-pressed', 'true');
+
+    expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('(e) a saved audio preference wins over the automatic Spanish pick', async () => {
+    setAudioPreference('en');
+    mockedGetPlaybackInfo.mockResolvedValue(mediaSources as never);
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-e',
+      Name: 'Spanish + English audio, English preferred',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+        { Index: 2, Type: 'Audio', Language: 'spa', DisplayTitle: 'Español', IsDefault: false },
+      ],
+    } as never);
+
+    renderPlayer('jf-item-e');
+    await screen.findByTestId('pf-video');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));
+    const audioDialog = await screen.findByRole('dialog', { name: 'Audio' });
+    expect(within(audioDialog).getByRole('button', { name: 'Inglés' })).toHaveAttribute('aria-pressed', 'true');
+
+    // The saved preference matched the file's own default - no re-resolve needed.
+    expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(1);
   });
 });

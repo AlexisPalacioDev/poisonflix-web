@@ -1,16 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  clearAudioPreference,
   clearSubtitlePreference,
   getSubtitlePreference,
+  resolveInitialAudio,
   resolveInitialSubtitle,
+  setAudioPreference,
   setSubtitlePreference,
   SUBTITLE_OFF,
   subtitlePreferenceKeyFor,
+  type AudioCandidate,
   type SubtitleCandidate,
 } from './playerPrefs';
 
 afterEach(() => {
   clearSubtitlePreference();
+  clearAudioPreference();
 });
 
 describe('subtitle preference get/set', () => {
@@ -96,5 +101,60 @@ describe('resolveInitialSubtitle — saved preference wins over AUTO', () => {
     setSubtitlePreference('fre');
     const result = resolveInitialSubtitle([spanishTrack, englishTrack], 'eng', 'es');
     expect(result).toBe(spanishTrack);
+  });
+});
+
+describe('resolveInitialSubtitle — forced vs. non-forced Spanish candidates', () => {
+  it('prefers the non-forced Spanish track over a forced one (forced tracks only carry signs/dialogue, not the whole film)', () => {
+    const spanishForced: SubtitleCandidate = { index: 6, language: 'spa', isDefault: false, isForced: true };
+    const spanishFull: SubtitleCandidate = { index: 7, language: 'spa', isDefault: false, isForced: false };
+    // Audio in English -> AUTO turns Spanish subtitles on; among the two
+    // Spanish candidates the non-forced one must win.
+    const result = resolveInitialSubtitle([spanishForced, spanishFull], 'eng', 'es');
+    expect(result).toBe(spanishFull);
+  });
+});
+
+const audioSpanish: AudioCandidate = { index: 2, language: 'spa', isDefault: false };
+const audioEnglishDefault: AudioCandidate = { index: 1, language: 'eng', isDefault: true };
+const audioLatino: AudioCandidate = { index: 3, language: 'lat', isDefault: false };
+
+describe('resolveInitialAudio — Spanish must never be silently skipped (AUTO rule)', () => {
+  it('prefers Spanish audio over the file\'s own default when no preference is saved', () => {
+    const result = resolveInitialAudio([audioEnglishDefault, audioSpanish]);
+    expect(result).toBe(audioSpanish);
+  });
+
+  it('recognizes Latin-American Spanish ("lat") as Spanish too', () => {
+    const result = resolveInitialAudio([audioEnglishDefault, audioLatino]);
+    expect(result).toBe(audioLatino);
+  });
+
+  it('falls back to the file default when there is no Spanish audio track at all (unchanged behavior)', () => {
+    const audioFrench: AudioCandidate = { index: 4, language: 'fre', isDefault: false };
+    const result = resolveInitialAudio([audioEnglishDefault, audioFrench]);
+    expect(result).toBe(audioEnglishDefault);
+  });
+
+  it('among several Spanish candidates, prefers the one marked default, then the lowest index', () => {
+    const spanishDefault: AudioCandidate = { index: 5, language: 'esp', isDefault: true };
+    const result = resolveInitialAudio([audioEnglishDefault, audioSpanish, spanishDefault]);
+    expect(result).toBe(spanishDefault);
+  });
+
+  it('a saved preference wins over the automatic Spanish rule', () => {
+    setAudioPreference('en');
+    const result = resolveInitialAudio([audioEnglishDefault, audioSpanish]);
+    expect(result).toBe(audioEnglishDefault);
+  });
+
+  it('falls through to the Spanish AUTO rule when the saved preference has no matching track in this file', () => {
+    setAudioPreference('fre');
+    const result = resolveInitialAudio([audioEnglishDefault, audioSpanish]);
+    expect(result).toBe(audioSpanish);
+  });
+
+  it('returns null when there are no audio tracks at all', () => {
+    expect(resolveInitialAudio([])).toBeNull();
   });
 });
