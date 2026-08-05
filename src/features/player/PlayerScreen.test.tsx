@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useRoutes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlayerScreen } from './PlayerScreen';
@@ -80,12 +80,29 @@ function renderPlayer(itemId = 'jf-item-1') {
 }
 
 describe('PlayerScreen (player spec: stream resolution + honest error messages)', () => {
+  // `clearAudioPreference` matters as much as the subtitle one: a remembered
+  // audio LANGUAGE outranks the file's own default, so one leaking into a
+  // later block makes `resolveInitialAudio` pick a track the server isn't
+  // serving, which re-resolves PlaybackInfo and breaks that block's
+  // call-count assertions. It leaked intermittently rather than always
+  // because whether the preference got written depended on the async effect
+  // landing before the test ended.
+  // `cleanup()` FIRST, and that order is the whole point. Vitest runs
+  // afterEach hooks innermost-first, so this block's hook fires BEFORE
+  // Testing Library's automatic unmount. Resetting the spies here while the
+  // component is still mounted leaves its in-flight effects free to call
+  // `getPlaybackInfo` afterwards, and that late call lands inside the NEXT
+  // test's window - which is exactly how a `jf-item-tracks` request showed up
+  // in a `jf-item-a` test and made the call-count assertion flaky under load.
+  // Unmounting first stops the effects, then the reset is meaningful.
   afterEach(() => {
+    cleanup();
     clearSession();
     mockedGetPlaybackInfo.mockReset();
     mockedGetItem.mockReset();
     hlsInstances.length = 0;
     clearSubtitlePreference();
+    clearAudioPreference();
     vi.clearAllMocks();
   });
 
@@ -250,12 +267,24 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
   // `mockedGetPlaybackInfo` call counts (see the "Spanish must never be
   // missing" block below) would otherwise inherit this block's leaked,
   // un-reset call history.
+  // `cleanup()` FIRST, and that order is the whole point. Vitest runs
+  // afterEach hooks innermost-first, so this block's hook fires BEFORE
+  // Testing Library's automatic unmount. Resetting the spies here while the
+  // component is still mounted leaves its in-flight effects free to call
+  // `getPlaybackInfo` afterwards, and that late call lands inside the NEXT
+  // test's window - which is exactly how a `jf-item-tracks` request showed up
+  // in a `jf-item-a` test and made the call-count assertion flaky under load.
+  // Unmounting first stops the effects, then the reset is meaningful.
   afterEach(() => {
+    cleanup();
     clearSession();
     mockedGetPlaybackInfo.mockReset();
     mockedGetItem.mockReset();
     hlsInstances.length = 0;
     clearSubtitlePreference();
+    // This block SELECTS tracks, so it is the one most likely to persist an
+    // audio preference into the next block. Same reason as above.
+    clearAudioPreference();
     vi.clearAllMocks();
   });
 
@@ -365,7 +394,16 @@ describe('PlayerScreen — Spanish must never be missing on open (owner rule)', 
     PlaySessionId: 'sess-1',
   };
 
+  // `cleanup()` FIRST, and that order is the whole point. Vitest runs
+  // afterEach hooks innermost-first, so this block's hook fires BEFORE
+  // Testing Library's automatic unmount. Resetting the spies here while the
+  // component is still mounted leaves its in-flight effects free to call
+  // `getPlaybackInfo` afterwards, and that late call lands inside the NEXT
+  // test's window - which is exactly how a `jf-item-tracks` request showed up
+  // in a `jf-item-a` test and made the call-count assertion flaky under load.
+  // Unmounting first stops the effects, then the reset is meaningful.
   afterEach(() => {
+    cleanup();
     clearSession();
     mockedGetPlaybackInfo.mockReset();
     mockedGetItem.mockReset();
