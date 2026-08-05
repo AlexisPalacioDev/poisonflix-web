@@ -3,12 +3,33 @@
    simple card/section shell rather than reusing Row/PosterCard. */
 
 .pf-admin {
+  position: relative;
   flex: 1;
   min-height: 100%;
   padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
   padding-bottom: var(--pf-space-2xl);
   padding-left: var(--pf-gutter);
   padding-right: var(--pf-gutter);
+}
+
+/* Ambient wash, same recipe and reasoning as every other screen (see
+   home.css's `.pf-home__rows::before`). Quieter here than on the poster
+   screens - this is a tool, not a shop window - but enough that the panels
+   below read as sheets on a lit surface instead of grey slabs on black.
+   `z-index: -1` rather than lifting the children, because a
+   `.pf-admin > *` bump would also match the fixed `<Header>`. */
+.pf-admin::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 900px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1400px 520px at 50% 0px, rgba(242, 193, 78, 0.1) 0%, rgba(242, 193, 78, 0) 72%),
+    linear-gradient(to bottom, rgba(28, 33, 45, 0.5) 0px, rgba(28, 33, 45, 0) 800px);
 }
 
 .pf-admin__content {
@@ -20,6 +41,9 @@
 }
 
 .pf-admin__title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin: 0;
   /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
      `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
@@ -27,15 +51,35 @@
      TV/desktop-first target viewport is wide enough that this clamp mostly
      resolves to its cap already, so the static value below is what modern
      browsers already render most of the time, not a guess). */
-  font-size: 1.8rem;
-  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-size: 2.3rem;
+  font-size: clamp(1.6rem, 2.6vw, 2.3rem);
   font-weight: 800;
+  letter-spacing: -0.03em;
   color: var(--pf-text);
 }
 
+/* The same gold accent rule every section masthead in the app carries. */
+.pf-admin__title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, var(--pf-gold) 0%, rgba(242, 193, 78, 0.12) 100%);
+  box-shadow: 0 0 14px rgba(242, 193, 78, 0.35);
+}
+
+/* Panels become glass sheets: translucent gradient, hairline, real elevation
+   and an inset top highlight, instead of an opaque grey slab with no edge.
+   No `backdrop-filter` - these are large, numerous, static surfaces, exactly
+   the case the ≤2-blurred-surface budget exists to protect. */
 .pf-admin__section {
-  background: var(--pf-surface);
-  border-radius: var(--pf-radius-lg);
+  background: linear-gradient(150deg, rgba(38, 44, 57, 0.52) 0%, rgba(16, 19, 25, 0.6) 62%);
+  border: 1px solid var(--pf-glass-border);
+  border-radius: var(--pf-radius-xl);
+  box-shadow:
+    var(--pf-elev-2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
   padding: var(--pf-space-lg);
   display: flex;
   flex-direction: column;
@@ -43,36 +87,62 @@
 }
 
 .pf-admin__section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--pf-gold);
+}
+
+/* A small lit dot instead of a second full accent bar: the section title sits
+   INSIDE a panel that already has an edge, so it needs a marker, not a rule. */
+.pf-admin__section-title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pf-gold);
+  box-shadow: 0 0 10px rgba(242, 193, 78, 0.85);
 }
 
 .pf-admin__label {
   font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--pf-text-dim);
 }
 
 .pf-admin__input {
-  background: var(--pf-bg);
-  border: 1px solid #2a303c;
+  background: rgba(8, 10, 14, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--pf-radius-md);
-  padding: 10px 12px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45);
+  padding: 11px 14px;
   color: var(--pf-text);
   font-size: 0.9rem;
+  transition:
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    box-shadow var(--pf-dur-fast) var(--pf-ease);
 }
 
 .pf-admin__input:focus {
   outline: none;
   border-color: var(--pf-gold);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.45),
+    0 0 0 3px rgba(242, 193, 78, 0.22);
 }
 
 .pf-admin__button {
-  padding: 10px 16px;
-  border-radius: var(--pf-radius-md);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--pf-glass-border);
+  padding: 11px 18px;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
   color: var(--pf-text);
   font-size: 0.875rem;
   font-weight: 600;
@@ -102,19 +172,22 @@
 }
 
 .pf-admin__button--primary {
-  background: var(--pf-gold);
-  border-color: var(--pf-gold);
-  color: #0a0c10;
+  background: linear-gradient(to bottom, #ffd979 0%, var(--pf-gold) 55%, var(--pf-gold-dim) 100%);
+  border-color: rgba(255, 226, 150, 0.6);
+  box-shadow:
+    0 8px 22px rgba(242, 193, 78, 0.3),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+  color: #241b03;
 }
 
 .pf-admin__button--primary:hover {
-  background: var(--pf-gold-dim);
-  color: #0a0c10;
+  background: linear-gradient(to bottom, #ffe396 0%, #f6cd6b 55%, #e0b348 100%);
+  color: #241b03;
 }
 
 .pf-admin__button--primary:focus-visible {
-  background: var(--pf-gold-dim);
-  color: #0a0c10;
+  background: linear-gradient(to bottom, #ffe396 0%, #f6cd6b 55%, #e0b348 100%);
+  color: #241b03;
 }
 
 .pf-admin__button--danger {
