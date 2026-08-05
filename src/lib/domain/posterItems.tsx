@@ -3,6 +3,7 @@ import type { PosterItem } from '../../components/PosterCard';
 import type { GenreRowItem } from '../../hooks/useGenreRow';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
+import type { WatchlistEntry } from '../../api/schemas/bff';
 import { displayTitle } from './displayTitle';
 import { jellyfinPosterUrl, tmdbPosterUrl } from './posterUrl';
 
@@ -93,5 +94,18 @@ export function toResumePosterItem(item: JellyfinItem, token: string | null): Po
     // Bar-only (dimUnwatched omitted -> defaults to false), per walkthrough §2:
     // "Every card has a thin amber progress bar under the poster".
     progressPercent: resumePercent(item),
+  };
+}
+
+// --- Mi lista / watchlist (BFF-backed, non-owned titles) -------------------
+
+export function toWatchlistPosterItem(entry: WatchlistEntry): PosterItem {
+  return {
+    // A watchlist entry is always a not-yet-owned title, so its TMDB id routes
+    // straight to Detail (where "Pedir" lives) - same convention as trending.
+    id: String(entry.tmdbId),
+    title: entry.title,
+    imageUrl: tmdbPosterUrl(entry.posterPath),
+    mediaType: entry.mediaType,
   };
 }

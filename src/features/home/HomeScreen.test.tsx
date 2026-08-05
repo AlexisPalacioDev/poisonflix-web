@@ -30,6 +30,13 @@ vi.mock('../../api/arr', () => ({
   getSonarrQueue: vi.fn(),
   getSonarrSeries: vi.fn(),
 }));
+// "Mi lista" row: empty by default so it renders nothing and every existing
+// Home assertion holds unchanged.
+vi.mock('../../api/bff', () => ({
+  getWatchlist: vi.fn().mockResolvedValue([]),
+  addToWatchlist: vi.fn(),
+  removeFromWatchlist: vi.fn(),
+}));
 
 const mockedGetItems = vi.mocked(getItems);
 const mockedDiscoverTrending = vi.mocked(discoverTrending);
@@ -100,7 +107,11 @@ const TRENDING_FIXTURE = {
 // Jellyfin server would.
 function mockGetItemsScoped(libraryFixture: unknown) {
   mockedGetItems.mockImplementation(async (_userId, params) => {
-    if (params?.genres) return { Items: [], TotalRecordCount: 0, StartIndex: 0 } as never;
+    // Genre rows (`genres`) and the "Mis favoritos" row (`filters: IsFavorite`)
+    // both share this mocked getItems; only the Library row is unscoped. Return
+    // empty for the scoped calls so LIBRARY_FIXTURE's title renders exactly once
+    // (a real server has no favorites by default here).
+    if (params?.genres || params?.filters) return { Items: [], TotalRecordCount: 0, StartIndex: 0 } as never;
     return libraryFixture as never;
   });
 }

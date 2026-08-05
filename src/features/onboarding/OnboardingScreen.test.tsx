@@ -12,6 +12,13 @@ import { ApiError, NetworkError } from '../../lib/http/errors';
 
 vi.mock('../../api/jellyfin', () => ({ authenticateByName: vi.fn() }));
 vi.mock('../../api/jellyseerr', () => ({ authJellyfin: vi.fn() }));
+// After login this test lands on Home, which now fetches the watchlist. Stub it
+// so that async call settles immediately instead of hitting the real network.
+vi.mock('../../api/bff', () => ({
+  getWatchlist: vi.fn().mockResolvedValue([]),
+  addToWatchlist: vi.fn(),
+  removeFromWatchlist: vi.fn(),
+}));
 
 const mockedAuthenticateByName = vi.mocked(authenticateByName);
 const mockedAuthJellyfin = vi.mocked(authJellyfin);

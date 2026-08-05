@@ -34,6 +34,11 @@ export const queryKeys = {
   // +18 adult row (Prowlarr discover) and AniList cover/info enrichment.
   adultRow: () => ['prowlarr', 'adult'] as const,
   adultInfo: (title: string) => ['anilist', 'info', title] as const,
+  // "Mis favoritos" row (Jellyfin IsFavorite filter, per user).
+  favoritesRow: (userId: string) => ['jellyfin', 'favorites', userId] as const,
+  // "Mi lista" (BFF-backed watchlist). Keyed only by the client identity the
+  // session cookie already implies; the BFF scopes it to the calling user.
+  watchlist: () => ['bff', 'watchlist'] as const,
   // Admin screen: invite codes + Jellyfin users list.
   invites: () => ['bff', 'invites'] as const,
   adminUsers: () => ['bff', 'adminUsers'] as const,

@@ -8,6 +8,8 @@ import { SeriesTwoPane } from './SeriesTwoPane';
 import { audioLanguagesOf } from './audioLanguages';
 import { useTitleDetail, type MediaType } from '../../hooks/useTitleDetail';
 import { useRequestMedia } from '../../hooks/useRequestMedia';
+import { useAddToWatchlist, useRemoveFromWatchlist, useWatchlist, isInWatchlist } from '../../hooks/useWatchlist';
+import { useToggleFavorite } from '../../hooks/useFavorites';
 import { useLibraryItem } from '../../hooks/useLibraryItem';
 import { useSeriesLibraryId } from '../../hooks/useSeriesLibraryId';
 import { useSeriesEpisodes } from '../../hooks/useSeriesEpisodes';
@@ -124,6 +126,15 @@ export function DetailScreen() {
   const { detail, status, isLoading, isError, refetch } = useTitleDetail(tmdbId, mediaType);
   const requestMutation = useRequestMedia(mediaType);
 
+  // Mi lista (save to request/download later) + favorites (⭐ on owned titles).
+  const watchlist = useWatchlist();
+  const addWatchlist = useAddToWatchlist();
+  const removeWatchlist = useRemoveFromWatchlist();
+  const toggleFavorite = useToggleFavorite();
+  // Optimistic ⭐ state: the mutation invalidates the library item, but that
+  // round-trips; flip locally on click and roll back only on error.
+  const [favoriteOverride, setFavoriteOverride] = useState<boolean | null>(null);
+
   // Library delete (Radarr/Sonarr/Jellyfin "Eliminar") is admin-only (security
   // hardening: the BFF now returns 403 for a non-admin DELETE/PUT on
   // radarr/sonarr) - gated here purely for UX, since the BFF re-enforces this
@@ -220,6 +231,7 @@ export function DetailScreen() {
     setSelectedSeason(null);
     setShowDeleteConfirm(false);
     setShowCancelConfirm(false);
+    setFavoriteOverride(null);
     requestMutation.reset();
     deleteMutation.reset();
     cancelDownload.reset();
@@ -290,6 +302,39 @@ export function DetailScreen() {
   const runtime = formatRuntime(detail.runtime);
   const backdropUrl = tmdbPosterUrl(detail.backdropPath, 'w1280');
   const posterUrl = tmdbPosterUrl(detail.posterPath, 'w500');
+
+  // Mi lista: available for any title you don't already own (InLibrary titles
+  // are already downloaded, so saving-for-later is moot). Membership is keyed
+  // by the (tmdbId, mediaType) pair, like the store.
+  const canWatchlist = displayStatus != null && displayStatus.kind !== 'InLibrary';
+  const inWatchlist = isInWatchlist(watchlist.data, detail.id, mediaType);
+  const watchlistPending = addWatchlist.isPending || removeWatchlist.isPending;
+  const handleToggleWatchlist = () => {
+    if (inWatchlist) {
+      removeWatchlist.mutate({ tmdbId: detail.id, mediaType });
+    } else {
+      addWatchlist.mutate({
+        tmdbId: detail.id,
+        mediaType,
+        title: detail.title,
+        posterPath: detail.posterPath ?? null,
+      });
+    }
+  };
+
+  // Favorite ⭐: only for a MOVIE already in the library (`libraryItemId` is set
+  // exactly in that case). Series in the library use the two-pane layout, whose
+  // favorite affordance is out of scope for this pass.
+  const isFavorite = favoriteOverride ?? (libraryItem?.UserData?.IsFavorite ?? false);
+  const handleToggleFavorite = () => {
+    if (!libraryItemId) return;
+    const next = !isFavorite;
+    setFavoriteOverride(next);
+    toggleFavorite.mutate(
+      { itemId: libraryItemId, on: next },
+      { onError: () => setFavoriteOverride(!next) },
+    );
+  };
 
   // Trigger: a SERIES whose Jellyfin series id resolves (i.e. it has an
   // episode browser to show), independent of the Jellyseerr status. Movies
@@ -394,6 +439,30 @@ export function DetailScreen() {
                 onRequest={handleRequest}
                 onPlay={goToPlayer}
               />
+            )}
+
+            {canWatchlist && (
+              <button
+                type="button"
+                className={`pf-detail__save${inWatchlist ? ' pf-detail__save--on' : ''}`}
+                onClick={handleToggleWatchlist}
+                disabled={watchlistPending}
+                aria-pressed={inWatchlist}
+              >
+                {inWatchlist ? '✓ En mi lista' : '+ Guardar en mi lista'}
+              </button>
+            )}
+
+            {libraryItemId && (
+              <button
+                type="button"
+                className={`pf-detail__save${isFavorite ? ' pf-detail__save--on' : ''}`}
+                onClick={handleToggleFavorite}
+                disabled={toggleFavorite.isPending}
+                aria-pressed={isFavorite}
+              >
+                {isFavorite ? '★ En favoritos' : '☆ Agregar a favoritos'}
+              </button>
             )}
 
             {displayStatus?.kind === 'Requesting' && moviePercent != null && (

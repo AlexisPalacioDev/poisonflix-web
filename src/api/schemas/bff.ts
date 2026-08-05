@@ -79,3 +79,25 @@ export const StorageSchema = z.object({
   totalSpace: z.number(),
 });
 export type Storage = z.infer<typeof StorageSchema>;
+
+// ---------------------------------------------------------------------------
+// Mi lista (watchlist): GET/POST /bff/watchlist,
+// DELETE /bff/watchlist/{mediaType}/{tmdbId}. Per-user saved titles to
+// request/download later (BFF keys them by the resolved session user).
+// ---------------------------------------------------------------------------
+
+export const WatchlistEntrySchema = z.object({
+  tmdbId: z.number(),
+  mediaType: z.enum(['movie', 'tv']),
+  title: z.string(),
+  posterPath: z.string().nullable(),
+  addedAt: z.string(),
+});
+export type WatchlistEntry = z.infer<typeof WatchlistEntrySchema>;
+
+// All three endpoints (GET/POST/DELETE) return the full updated list, so one
+// mutation can hand react-query the new state without a refetch.
+export const WatchlistResponseSchema = z.object({
+  items: z.array(WatchlistEntrySchema),
+});
+export type WatchlistResponse = z.infer<typeof WatchlistResponseSchema>;

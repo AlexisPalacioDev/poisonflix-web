@@ -10,6 +10,8 @@ import {
   type AdminUser,
   StorageSchema,
   type Storage,
+  WatchlistResponseSchema,
+  type WatchlistEntry,
 } from './schemas/bff';
 
 // BFF orchestration client (security hardening: the browser no longer drives
@@ -106,4 +108,43 @@ export async function resetUserPassword(userId: string, newPassword: string): Pr
 
 export async function getAdminStorage(): Promise<Storage> {
   return apiFetch('bff', '/admin/storage', { schema: StorageSchema });
+}
+
+// ---------------------------------------------------------------------------
+// Mi lista (watchlist). The BFF keys the list by the session user server-side,
+// so no user id is ever sent from here. Every call returns the full updated
+// list.
+// ---------------------------------------------------------------------------
+
+export interface WatchlistItemParams {
+  tmdbId: number;
+  mediaType: 'movie' | 'tv';
+  title: string;
+  posterPath: string | null;
+}
+
+export async function getWatchlist(): Promise<WatchlistEntry[]> {
+  const { items } = await apiFetch('bff', '/watchlist', { schema: WatchlistResponseSchema });
+  return items;
+}
+
+export async function addToWatchlist(entry: WatchlistItemParams): Promise<WatchlistEntry[]> {
+  const { items } = await apiFetch('bff', '/watchlist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+    schema: WatchlistResponseSchema,
+  });
+  return items;
+}
+
+export async function removeFromWatchlist(
+  tmdbId: number,
+  mediaType: 'movie' | 'tv',
+): Promise<WatchlistEntry[]> {
+  const { items } = await apiFetch('bff', `/watchlist/${mediaType}/${tmdbId}`, {
+    method: 'DELETE',
+    schema: WatchlistResponseSchema,
+  });
+  return items;
 }

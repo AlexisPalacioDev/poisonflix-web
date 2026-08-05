@@ -12,7 +12,14 @@ import type { JellyseerrSearchResult } from '../../api/schemas/jellyseerr';
 vi.mock('../../api/jellyfin', () => ({
   getItems: vi.fn(),
   getItem: vi.fn(),
+  setFavorite: vi.fn(),
   getUserViews: vi.fn().mockResolvedValue({ Items: [], TotalRecordCount: 0, StartIndex: 0 }),
+}));
+// Detail (reached from a search result) reads the watchlist; empty by default.
+vi.mock('../../api/bff', () => ({
+  getWatchlist: vi.fn().mockResolvedValue([]),
+  addToWatchlist: vi.fn().mockResolvedValue([]),
+  removeFromWatchlist: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('../../api/jellyseerr', () => ({
   search: vi.fn(),
@@ -263,7 +270,7 @@ describe('SearchScreen (search spec)', () => {
     await waitFor(() => expect(mockedSearch).toHaveBeenCalledWith('fight'), { timeout: 2000 });
     expect(await screen.findByRole('heading', { name: 'Fight Club' })).toBeInTheDocument();
 
-    expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'jf-550', 'ProviderIds,MediaStreams');
+    expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'jf-550', 'ProviderIds,MediaStreams,UserData');
     expect(await screen.findByText('Audio disponible: Inglés · Español')).toBeInTheDocument();
   });
 

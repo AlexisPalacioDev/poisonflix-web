@@ -46,6 +46,9 @@ vi.mock('../../api/arr', () => ({
 }));
 vi.mock('../../api/bff', () => ({
   cancelDownload: vi.fn(),
+  getWatchlist: vi.fn().mockResolvedValue([]),
+  addToWatchlist: vi.fn().mockResolvedValue([]),
+  removeFromWatchlist: vi.fn().mockResolvedValue([]),
 }));
 
 const mockedGetItems = vi.mocked(getItems);
@@ -191,7 +194,7 @@ describe('DetailScreen (detail-request spec)', () => {
     renderDetail('603');
 
     expect(await screen.findByText('Audio disponible: Español · Inglés')).toBeInTheDocument();
-    expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'jf-603', 'ProviderIds,MediaStreams');
+    expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'jf-603', 'ProviderIds,MediaStreams,UserData');
   });
 
   it('InLibrary: an unknown/undetermined audio language reads as "UND", matching the projector', async () => {

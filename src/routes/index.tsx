@@ -11,6 +11,8 @@ import { CategoryScreen } from '../features/browse/CategoryScreen';
 import { LibraryScreen } from '../features/browse/LibraryScreen';
 import { TrendingScreen } from '../features/browse/TrendingScreen';
 import { ContinueWatchingScreen } from '../features/browse/ContinueWatchingScreen';
+import { FavoritesScreen } from '../features/browse/FavoritesScreen';
+import { WatchlistScreen } from '../features/browse/WatchlistScreen';
 import { RegisterScreen } from '../features/register/RegisterScreen';
 import { ForgotPasswordScreen } from '../features/register/ForgotPasswordScreen';
 import { AdminScreen } from '../features/admin/AdminScreen';
@@ -106,6 +108,22 @@ export const routes: RouteObject[] = [
     element: (
       <RouteGuard>
         <ContinueWatchingScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    path: '/favorites',
+    element: (
+      <RouteGuard>
+        <FavoritesScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    path: '/watchlist',
+    element: (
+      <RouteGuard>
+        <WatchlistScreen />
       </RouteGuard>
     ),
   },

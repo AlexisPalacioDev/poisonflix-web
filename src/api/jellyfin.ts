@@ -60,6 +60,8 @@ export interface GetItemsParams {
   genres?: string;
   parentId?: string;
   fields?: string;
+  /** Jellyfin item filter, e.g. 'IsFavorite' for the "Mis favoritos" row. */
+  filters?: string;
 }
 
 export async function getItems(userId: string, params: GetItemsParams = {}): Promise<JellyfinQueryResult> {
@@ -72,6 +74,7 @@ export async function getItems(userId: string, params: GetItemsParams = {}): Pro
   if (params.searchTerm) query.set('SearchTerm', params.searchTerm);
   if (params.genres) query.set('Genres', params.genres);
   if (params.parentId) query.set('ParentId', params.parentId);
+  if (params.filters) query.set('Filters', params.filters);
   query.set('Fields', params.fields ?? 'ProviderIds,MediaStreams');
 
   return apiFetch('jellyfin', `/Users/${userId}/Items?${query.toString()}`, {
@@ -97,6 +100,19 @@ export async function getUserViews(userId: string): Promise<JellyfinQueryResult>
  */
 export async function deleteItem(itemId: string): Promise<void> {
   await apiFetch('jellyfin', `/Items/${itemId}`, { method: 'DELETE' });
+}
+
+/**
+ * Toggle a library item's Jellyfin "favorite" flag (server-side, per user):
+ * POST marks it, DELETE unmarks it (`/Users/{userId}/FavoriteItems/{itemId}`).
+ * Jellyfin persists this in the item's UserData.IsFavorite, so the "Mis
+ * favoritos" row (getItems with `filters: 'IsFavorite'`) reflects it everywhere
+ * that user is signed in. Returns 200 with a UserItemDataDto we don't need.
+ */
+export async function setFavorite(userId: string, itemId: string, on: boolean): Promise<void> {
+  await apiFetch('jellyfin', `/Users/${userId}/FavoriteItems/${itemId}`, {
+    method: on ? 'POST' : 'DELETE',
+  });
 }
 
 export interface GetResumeItemsParams {

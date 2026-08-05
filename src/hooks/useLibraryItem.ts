@@ -26,7 +26,9 @@ export function useLibraryItem(jellyfinItemId: string | null) {
 
   const query = useQuery<JellyfinItem>({
     queryKey: queryKeys.item(jellyfinItemId ?? ''),
-    queryFn: () => getItem(userId as string, jellyfinItemId as string, 'ProviderIds,MediaStreams'),
+    // UserData carries IsFavorite, which Detail's ⭐ favorite toggle reads to
+    // show the current state (in addition to MediaStreams for the audio line).
+    queryFn: () => getItem(userId as string, jellyfinItemId as string, 'ProviderIds,MediaStreams,UserData'),
     enabled: Boolean(userId && jellyfinItemId),
     staleTime: 60_000,
   });

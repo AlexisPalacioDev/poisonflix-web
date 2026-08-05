@@ -15,6 +15,7 @@ import {
   consumeInvite,
   checkInvite,
 } from './invites.mjs';
+import { getWatchlist, addToWatchlist, removeFromWatchlist } from './watchlist.mjs';
 import {
   validateUsername,
   validatePassword,
@@ -474,6 +475,50 @@ async function handleAdminStorage(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// "Mi lista" (watchlist): per-user saved titles to request/download later.
+// Identity comes from `user.id` (the resolved Jellyseerr user), NEVER the
+// request body - so a user can only ever touch their own list.
+const MEDIA_TYPES = new Set(['movie', 'tv']);
+
+async function handleWatchlist(req, res, user, subPath) {
+  // GET /bff/watchlist -> the caller's saved titles.
+  if (subPath === '' && req.method === 'GET') {
+    const items = await getWatchlist(user.id);
+    return send(res, 200, { items });
+  }
+
+  // POST /bff/watchlist  { tmdbId, mediaType, title, posterPath }
+  if (subPath === '' && req.method === 'POST') {
+    let payload;
+    try {
+      payload = JSON.parse((await readBody(req)).toString() || '{}');
+    } catch {
+      return send(res, 400, { error: 'invalid json' });
+    }
+    const tmdbId = Number(payload.tmdbId);
+    const mediaType = payload.mediaType;
+    if (!Number.isFinite(tmdbId)) return send(res, 400, { error: 'tmdbId required' });
+    if (!MEDIA_TYPES.has(mediaType)) return send(res, 400, { error: 'mediaType must be movie|tv' });
+    const entry = {
+      tmdbId,
+      mediaType,
+      title: typeof payload.title === 'string' ? payload.title : 'Sin título',
+      posterPath: typeof payload.posterPath === 'string' ? payload.posterPath : null,
+    };
+    const items = await addToWatchlist(user.id, entry, new Date().toISOString());
+    return send(res, 200, { items });
+  }
+
+  // DELETE /bff/watchlist/{mediaType}/{tmdbId}
+  const del = subPath.match(/^\/(movie|tv)\/(\d+)$/);
+  if (del && req.method === 'DELETE') {
+    const items = await removeFromWatchlist(user.id, Number(del[2]), del[1]);
+    return send(res, 200, { items });
+  }
+
+  return send(res, 404, { error: 'not found' });
+}
+
 // Router
 // ---------------------------------------------------------------------------
 
@@ -514,6 +559,11 @@ const server = createServer(async (req, res) => {
 
     if (path === '/bff/cancel' && req.method === 'POST') {
       return await handleCancel(req, res, user);
+    }
+
+    // Mi lista (watchlist): /bff/watchlist and /bff/watchlist/{mediaType}/{tmdbId}.
+    if (path === '/bff/watchlist' || path.startsWith('/bff/watchlist/')) {
+      return await handleWatchlist(req, res, user, path.slice('/bff/watchlist'.length));
     }
 
     const seg = path.split('/'); // ['', 'radarr', 'api', ...]

@@ -1,5 +1,7 @@
 import { ContinueWatchingRow } from './ContinueWatchingRow';
 import { DownloadingRow } from './DownloadingRow';
+import { FavoritesRow } from './FavoritesRow';
+import { WatchlistRow } from './WatchlistRow';
 import { GenreRow } from './GenreRow';
 import { Header } from '../../components/Header';
 import { Hero, HeroSkeleton, type HeroFeature } from '../../components/Hero';
@@ -136,6 +138,8 @@ export function HomeScreen() {
       <div className="pf-home__rows">
         <ContinueWatchingRow />
         <DownloadingRow />
+        <WatchlistRow />
+        <FavoritesRow />
 
         <Row
           title="Tu biblioteca"

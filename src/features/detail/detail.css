@@ -311,6 +311,41 @@
   cursor: not-allowed;
 }
 
+/* "Guardar en mi lista" + "Agregar a favoritos" toggles. Neutral pill at rest;
+   gold fill once active (in-list / favorited) so the on-state reads at a glance,
+   matching the app's gold accent. */
+.pf-detail__save {
+  align-self: flex-start;
+  padding: 10px 24px;
+  border-radius: var(--pf-radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pf-text);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease),
+    color var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-detail__save:hover,
+.pf-detail__save:focus-visible {
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
+.pf-detail__save--on {
+  border-color: var(--pf-gold);
+  background: rgba(242, 193, 78, 0.16);
+  color: var(--pf-gold);
+}
+
+.pf-detail__save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ---------------------------------------------------------------------------
    TV series two-pane layout (Detail enhancements, feature-map §7 "TV SERIES
    layout", walkthrough §19/§20), ported from `SeriesDetailContent.kt`.
