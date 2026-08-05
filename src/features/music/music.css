@@ -33,6 +33,19 @@
   gap: 0.75rem;
 }
 
+/* Section mark. Sized in rem so it tracks the TV's larger root font, and given
+   a soft drop shadow so the cutout does not read as a sticker pasted on. */
+.pf-music__brand {
+  display: flex;
+  justify-content: center;
+}
+
+.pf-music__brand img {
+  width: clamp(3.25rem, 9vw, 4.5rem);
+  height: auto;
+  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 0.55));
+}
+
 .pf-music__query {
   position: relative;
   display: flex;

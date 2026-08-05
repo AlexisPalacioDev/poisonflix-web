@@ -190,12 +190,49 @@ def _load_state():
 # hang a rating on, so the videoId is the only stable key that covers both, and
 # this file is the single source of truth for both.
 #
-# Shape: {userId: {videoId: 1 | -1}}. A cleared vote drops the key rather than
-# storing 0, so the file stays a record of opinions actually held.
+# Shape: {userId: {videoId: {"v": 1|-1, "title", "artist", "thumb"}}}. A cleared
+# vote drops the key rather than storing 0, so the file stays a record of
+# opinions actually held.
+#
+# The metadata sits beside the vote for the same reason the play tally carries
+# it: a videoId alone renders as nothing, and re-resolving one would mean a
+# YouTube round trip per row. Without it "Tus me gusta" could only have listed
+# bare ids. The client already holds the title and artist at the moment the
+# thumb is pressed, so it sends them and this stores them.
+#
+# The older shape was {userId: {videoId: 1|-1}} — a bare int. _load_ratings
+# still accepts it, so existing votes survive the upgrade; they simply have no
+# title until the track is voted on again.
 # ---------------------------------------------------------------------------
 
 _ratings = {}
 _ratings_lock = threading.Lock()
+
+
+def _clean_vote(raw):
+    """Normalise one stored vote, accepting both the old int and the new dict."""
+    if isinstance(raw, dict):
+        try:
+            vote = int(raw.get("v"))
+        except (TypeError, ValueError):
+            return None
+        if vote not in (1, -1):
+            return None
+        row = {"v": vote}
+        for key in ("title", "artist", "thumb"):
+            value = raw.get(key)
+            if isinstance(value, str) and value:
+                row[key] = value
+        try:
+            row["at"] = float(raw.get("at") or 0)
+        except (TypeError, ValueError):
+            row["at"] = 0
+        return row
+    try:
+        vote = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return {"v": vote} if vote in (1, -1) else None
 
 
 def _load_ratings():
@@ -204,11 +241,18 @@ def _load_ratings():
         with open(RATINGS_PATH, encoding="utf-8") as fh:
             data = json.load(fh)
         if isinstance(data, dict):
-            _ratings = {
-                str(uid): {str(v): int(r) for v, r in (votes or {}).items() if int(r) in (1, -1)}
-                for uid, votes in data.items()
-                if isinstance(votes, dict)
-            }
+            clean = {}
+            for uid, votes in data.items():
+                if not isinstance(votes, dict):
+                    continue
+                bucket = {}
+                for vid, raw in votes.items():
+                    row = _clean_vote(raw)
+                    if row:
+                        bucket[str(vid)] = row
+                if bucket:
+                    clean[str(uid)] = bucket
+            _ratings = clean
     except (FileNotFoundError, ValueError, AttributeError, TypeError):
         _ratings = {}
 
@@ -225,22 +269,67 @@ def _persist_ratings():
 
 
 def user_ratings(user_id):
-    """This user's votes. Anonymous callers get an empty, read-only view rather
-    than sharing one global bucket -- ratings are personal by definition."""
+    """This user's votes as {videoId: 1|-1}.
+
+    Deliberately still returns bare ints: every caller wants the opinion, not the
+    track, and flattening here keeps _drop_disliked and _annotate_ratings exactly
+    as they were. Use user_liked() when you need something renderable.
+    """
     if not user_id:
         return {}
     with _ratings_lock:
-        return dict(_ratings.get(user_id, {}))
+        return {vid: row["v"] for vid, row in _ratings.get(user_id, {}).items()}
 
 
-def set_rating(user_id, video_id, rating):
-    """rating: 1 (up), -1 (down), or 0 to clear. Returns the stored value."""
+def user_liked(user_id):
+    """The thumbed-up tracks, newest first, with enough metadata to render.
+
+    This is the reader the thumb-up never had. Until it existed the only code
+    that looked at the vote table was _drop_disliked, which tests for -1 — so a
+    thumb-up changed nothing anywhere, and there was no screen to see one on.
+    """
+    if not user_id:
+        return []
+    with _ratings_lock:
+        rows = dict(_ratings.get(user_id, {}))
+    out = []
+    for vid, row in rows.items():
+        if row.get("v") != 1:
+            continue
+        out.append({
+            "type": "song",
+            "videoId": vid,
+            "title": row.get("title") or vid,
+            "artist": row.get("artist"),
+            "artists": [row["artist"]] if row.get("artist") else [],
+            "album": None,
+            "durationSeconds": None,
+            "thumbnailUrl": row.get("thumb"),
+            "source": "ytmusic",
+            "at": row.get("at") or 0,
+        })
+    out.sort(key=lambda r: r.get("at") or 0, reverse=True)
+    return out
+
+
+def set_rating(user_id, video_id, rating, title=None, artist=None, thumb=None):
+    """rating: 1 (up), -1 (down), or 0 to clear. Returns the stored value.
+
+    Metadata is optional and only ever added, never blanked: a later vote that
+    arrives without a title must not erase one an earlier vote supplied.
+    """
     if not user_id or not video_id:
         return 0
     with _ratings_lock:
         votes = _ratings.setdefault(user_id, {})
         if rating in (1, -1):
-            votes[video_id] = rating
+            row = votes.get(video_id) or {}
+            row["v"] = rating
+            row["at"] = time.time()
+            for key, value in (("title", title), ("artist", artist), ("thumb", thumb)):
+                if isinstance(value, str) and value:
+                    row[key] = value
+            votes[video_id] = row
         else:
             votes.pop(video_id, None)
             if not votes:
@@ -1707,9 +1796,241 @@ def _home_recommendations(yt, limit):
     return out
 
 
-def recommendations(seed, limit):
-    """Related tracks for a seed videoId (get_watch_playlist), or home quick
-    picks when no seed is available. Best-effort: returns [] on any failure."""
+# ---------------------------------------------------------------------------
+# Radio mix
+#
+# The old radio was one line: get_watch_playlist(seed). That is YouTube Music's
+# autoplay queue for a SINGLE video, and it behaves exactly as advertised — it
+# returns mostly the seed's own artist and runs dry after a handful of tracks.
+# The report was "busco un artista, reproduzco, y sólo me salen unas diez
+# canciones del mismo artista". The API was doing its job; the job was too small.
+#
+# Meanwhile this worker already stored everything a real radio needs and read
+# none of it: a per-user play tally with artists and counts (_plays), and a
+# per-user thumb vote (_ratings) whose UP half had NO READER ANYWHERE — pressing
+# it changed nothing about what you were served next.
+#
+# So a radio is now a mix of independent sources, interleaved round-robin:
+#
+#   seed        the old behaviour, kept but capped
+#   related     get_song_related — "you might also like", genre-adjacent
+#   artists     the artists you actually play most, from _plays
+#   likes       a radio seeded from a track you thumbed UP
+#   history     something you have played before, resurfaced
+#
+# **Round-robin is the part that fixes the complaint.** Concatenating the
+# sources and truncating would still return ten seed-artist tracks, because the
+# seed radio is the longest list and would fill the whole window on its own.
+# ---------------------------------------------------------------------------
+
+# A slow source must never hold the whole radio: whatever answered in time is a
+# better radio than a spinner.
+RADIO_SOURCE_TIMEOUT_S = float(os.environ.get("RADIO_SOURCE_TIMEOUT_S", "8"))
+RADIO_CACHE_TTL_S = float(os.environ.get("RADIO_CACHE_TTL_S", "600"))
+# The share of one radio any SINGLE artist may take. Capping only the seed's
+# artist was not enough in practice: a mixed radio for a Colombian popular track
+# still came back 5/12 Yeison Jimenez, because he was not the seed artist — he
+# was simply who every source happened to agree on. The complaint is "sólo me
+# salen canciones del mismo artista", and it does not care which one.
+ARTIST_MAX_SHARE = 0.30
+
+_radio_cache = {}
+_radio_cache_lock = threading.Lock()
+
+
+def _radio_cached(key):
+    with _radio_cache_lock:
+        hit = _radio_cache.get(key)
+        if hit and hit[1] > time.time():
+            return hit[0]
+    return None
+
+
+def _radio_store(key, value):
+    with _radio_cache_lock:
+        # Bounded so a long-lived worker cannot grow this without limit; radios
+        # are cheap to rebuild and stale ones are worth less than memory.
+        if len(_radio_cache) > 256:
+            _radio_cache.clear()
+        _radio_cache[key] = (value, time.time() + RADIO_CACHE_TTL_S)
+
+
+def _src_seed(yt, seed, want):
+    """The seed's own autoplay queue, plus the browseId that unlocks `related`.
+
+    Returns (tracks, related_browse_id) so the caller gets both from one round
+    trip — get_song_related needs an id that only this response carries.
+    """
+    if not seed:
+        return [], None
+    wp = yt.get_watch_playlist(videoId=seed, limit=want + 5) or {}
+    tracks = [
+        _map_watch_track(t)
+        for t in (wp.get("tracks") or [])
+        if t.get("videoId") and t.get("videoId") != seed
+    ]
+    return tracks, wp.get("related")
+
+
+def _src_related(yt, related_browse_id, want):
+    """Genre-adjacent material: YouTube's own "you might also like" for a song.
+
+    This is the source that makes the radio stop sounding like one artist's
+    discography, so it is worth the extra call even though it needs the seed
+    call to have happened first.
+    """
+    if not related_browse_id:
+        return []
+    out = []
+    for section in (yt.get_song_related(related_browse_id) or []):
+        for item in (section.get("contents") or []):
+            if item.get("videoId"):
+                out.append(_map_song(item))
+            if len(out) >= want:
+                return out
+    return out
+
+
+def _src_your_artists(yt, user_id, want):
+    """Songs by the artists this user actually plays most.
+
+    Ranked by play count rather than recency: the point is "your artists", and
+    one obsessive evening should not outrank a year of listening.
+    """
+    if not user_id:
+        return []
+    tally = {}
+    for row in user_plays(user_id):
+        artist = (row.get("artist") or "").strip()
+        if artist:
+            tally[artist] = tally.get(artist, 0) + int(row.get("count") or 0)
+    if not tally:
+        return []
+    top = sorted(tally, key=tally.get, reverse=True)[:3]
+    out = []
+    for artist in top:
+        try:
+            out.extend(_ytmusic_songs(artist, max(2, want // len(top) + 1)))
+        except Exception:  # noqa: BLE001 — one dead artist must not kill the mix
+            continue
+    return out[:want]
+
+
+def _src_your_likes(yt, user_id, want):
+    """A radio seeded from something this user thumbed UP.
+
+    Until this existed the thumb-up was a button that lied: the only reader of
+    the vote table was _drop_disliked, which looks at -1 and nothing else. A
+    like now buys you more music like the thing you liked, which is the only
+    meaning the gesture ever had.
+    """
+    if not user_id:
+        return []
+    liked = [vid for vid, vote in user_ratings(user_id).items() if vote == 1]
+    if not liked:
+        return []
+    # Rotate through likes rather than always seeding from the same one, or the
+    # radio would be identical every time until the user liked something new.
+    pick = liked[int(time.time() // RADIO_CACHE_TTL_S) % len(liked)]
+    wp = yt.get_watch_playlist(videoId=pick, limit=want + 2) or {}
+    return [
+        _map_watch_track(t)
+        for t in (wp.get("tracks") or [])
+        if t.get("videoId") and t.get("videoId") != pick
+    ][:want]
+
+
+def _src_history(user_id, want):
+    """Tracks this user has played before. No network call — the tally already
+    holds title, artist and length, which is why it was stored that way."""
+    if not user_id:
+        return []
+    out = []
+    for row in user_plays(user_id):
+        if not row.get("videoId") or not row.get("title"):
+            continue
+        out.append({
+            "type": "song",
+            "videoId": row["videoId"],
+            "title": row.get("title"),
+            "artist": row.get("artist"),
+            "artists": [row["artist"]] if row.get("artist") else [],
+            "album": None,
+            "durationSeconds": row.get("seconds") or None,
+            "thumbnailUrl": None,
+            "source": "ytmusic",
+        })
+        if len(out) >= want:
+            break
+    return out
+
+
+def _interleave(sources, limit):
+    """Round-robin the sources into one deduped list, with every artist capped.
+
+    Two rules, and the radio is bad without either:
+
+    Round-robin, because taking the sources in order and truncating would let
+    the longest one fill the whole window — and the longest is the seed radio,
+    so the result would be indistinguishable from the old one-line version.
+
+    A per-artist ceiling, because round-robin alone does not stop one artist
+    winning: if several sources independently return the same popular name, they
+    each contribute him and he takes half the radio anyway.
+
+    When the sources are too thin to fill the radio under the cap, the cap is
+    raised ONE step at a time and the first setting that fills wins. Dropping
+    straight to "no cap" instead — the obvious version — undoes the whole thing:
+    on real data it turned a 3-per-artist radio into 8 of 12 by one artist, the
+    exact complaint, just to gain the last track.
+    """
+    cap = max(1, int(limit * ARTIST_MAX_SHARE))
+    lists = [list(s) for s in sources if s]
+
+    def sweep(artist_cap):
+        out, seen, used = [], set(), {}
+        index = 0
+        while lists and len(out) < limit:
+            progressed = False
+            for tracks in lists:
+                if index >= len(tracks):
+                    continue
+                progressed = True
+                row = tracks[index]
+                vid = row.get("videoId")
+                if not vid or vid in seen:
+                    continue
+                artist = (row.get("artist") or "").strip().lower()
+                if artist and used.get(artist, 0) >= artist_cap:
+                    continue
+                if artist:
+                    used[artist] = used.get(artist, 0) + 1
+                seen.add(vid)
+                out.append(row)
+                if len(out) >= limit:
+                    break
+            if not progressed:
+                break
+            index += 1
+        return out
+
+    best = sweep(cap)
+    relaxed = cap
+    while len(best) < limit and relaxed < limit:
+        relaxed += 1
+        candidate = sweep(relaxed)
+        if len(candidate) <= len(best):
+            break  # more room bought nothing: the material really is exhausted
+        best = candidate
+    return best
+
+
+def recommendations(seed, limit, user_id=None):
+    """A mixed radio for a seed videoId, personalised for `user_id`.
+
+    Best-effort throughout: every source is allowed to fail on its own and the
+    radio is built from whatever answered. A partial radio beats an error.
+    """
     try:
         yt = _get_ytmusic()
     except Exception:  # noqa: BLE001
@@ -1718,19 +2039,62 @@ def recommendations(seed, limit):
     if not seed:
         seed = _recent_seed_video()
 
-    try:
-        if seed:
-            wp = yt.get_watch_playlist(videoId=seed, limit=limit + 5) or {}
-            results = [
-                _map_watch_track(t)
-                for t in (wp.get("tracks") or [])
-                if t.get("videoId") and t.get("videoId") != seed
-            ]
-        else:
+    cache_key = (seed or "", user_id or "", limit)
+    cached = _radio_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    # Fetched first and alone because its response carries the browseId that
+    # _src_related needs; everything else can then run in parallel.
+    seed_tracks, related_id = [], None
+    if seed:
+        try:
+            seed_tracks, related_id = _src_seed(yt, seed, limit)
+        except Exception:  # noqa: BLE001
+            seed_tracks, related_id = [], None
+
+    jobs = {
+        "related": lambda: _src_related(yt, related_id, limit),
+        "artists": lambda: _src_your_artists(yt, user_id, limit),
+        "likes": lambda: _src_your_likes(yt, user_id, limit),
+    }
+    gathered = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        futures = {pool.submit(fn): name for name, fn in jobs.items()}
+        for future in concurrent.futures.as_completed(futures, timeout=None):
+            name = futures[future]
+            try:
+                gathered[name] = future.result(timeout=RADIO_SOURCE_TIMEOUT_S) or []
+            except Exception:  # noqa: BLE001 — a dead source is not a dead radio
+                gathered[name] = []
+
+    # History last: it is the weakest signal (you have heard it already) and
+    # costs nothing, so it is the natural filler when the network sources come
+    # back thin.
+    sources = [
+        seed_tracks,
+        gathered.get("related") or [],
+        gathered.get("artists") or [],
+        gathered.get("likes") or [],
+        _src_history(user_id, limit),
+    ]
+
+    results = _interleave(sources, limit)
+
+    # With no seed and nothing personal to go on there is nothing to mix, so
+    # fall back to YouTube's own home picks rather than returning an empty list.
+    if not results:
+        try:
             results = _home_recommendations(yt, limit)
-    except Exception:  # noqa: BLE001
-        return []
-    return results[:limit]
+        except Exception:  # noqa: BLE001
+            results = []
+
+    # Never cache an empty radio. Every source here is best-effort, so "empty"
+    # usually means a transient failure — and pinning that for the cache TTL
+    # would turn a five-second blip into ten minutes of a dead rail.
+    if results:
+        _radio_store(cache_key, results)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -2045,7 +2409,13 @@ class Handler(BaseHTTPRequestHandler):
             )
 
         if path == "/ratings":
-            return self._send(200, {"ratings": user_ratings(self._user_id())})
+            user_id = self._user_id()
+            # `ratings` keeps its old shape so every existing caller is
+            # untouched; `liked` is the renderable list "Tus me gusta" needs.
+            return self._send(200, {
+                "ratings": user_ratings(user_id),
+                "liked": _annotate_downloaded(user_liked(user_id)),
+            })
 
         if path == "/plays":
             return self._send(200, {"plays": user_plays(self._user_id())})
@@ -2062,13 +2432,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 limit = 10
             limit = max(1, min(limit, 25))
+            # Resolved BEFORE the call now: the radio is personalised (your
+            # artists, your likes, your history), so it needs to know whose.
+            user_id = self._user_id()
             try:
-                results = recommendations(seed, limit)
+                results = recommendations(seed, limit, user_id)
             except Exception:  # noqa: BLE001 — recommendations are best-effort.
                 results = []
             # A radio that keeps serving what you rejected is the whole reason
             # the thumb-down exists, so this filter runs before anything else.
-            user_id = self._user_id()
             results = _drop_disliked(results, user_id)
             return self._send(
                 200, {"results": _annotate_ratings(_annotate_downloaded(results), user_id)}
@@ -2149,7 +2521,17 @@ class Handler(BaseHTTPRequestHandler):
                 rating = 0
             if rating not in (1, -1, 0):
                 return self._send(400, {"error": "invalid_rating"})
-            stored = set_rating(self._user_id(), video_id, rating)
+            # The client holds the title and artist at the moment the thumb is
+            # pressed. Taking them here is what lets "Tus me gusta" render a
+            # track instead of an id, with no extra YouTube round trip.
+            stored = set_rating(
+                self._user_id(),
+                video_id,
+                rating,
+                title=(payload.get("title") or "").strip() or None,
+                artist=(payload.get("artist") or "").strip() or None,
+                thumb=(payload.get("thumbnailUrl") or "").strip() or None,
+            )
             return self._send(200, {"videoId": video_id, "rating": stored})
 
         if parsed.path == "/plays":

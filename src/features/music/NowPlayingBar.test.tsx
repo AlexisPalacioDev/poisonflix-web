@@ -47,7 +47,24 @@ const ratedTracks: MusicTrack[] = [
 let ratingsStore: Record<string, number> = {};
 beforeEach(() => {
   ratingsStore = {};
-  mockedGetRatings.mockImplementation(async () => ({ ...ratingsStore }));
+  // The envelope carries the liked list alongside the votes; a fake still
+  // returning the old bare map would leave every thumb permanently unfilled.
+  mockedGetRatings.mockImplementation(async () => ({
+    ratings: { ...ratingsStore },
+    liked: Object.entries(ratingsStore)
+      .filter(([, vote]) => vote === 1)
+      .map(([videoId]) => ({
+        type: 'song' as const,
+        videoId,
+        title: videoId,
+        artist: null,
+        artists: [],
+        album: null,
+        durationSeconds: null,
+        thumbnailUrl: null,
+        source: 'ytmusic' as const,
+      })),
+  }));
   mockedSetTrackRating.mockImplementation(async (videoId, rating) => {
     if (rating === 0) delete ratingsStore[videoId];
     else ratingsStore[videoId] = rating;

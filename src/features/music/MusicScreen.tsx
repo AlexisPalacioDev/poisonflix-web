@@ -8,6 +8,7 @@ import { useMusicAlbums } from '../../hooks/useMusicAlbums';
 import { useMusicArtists } from '../../hooks/useMusicArtists';
 import { useMusicDownload } from '../../hooks/useMusicDownload';
 import { usePersonalMusicFeed } from '../../hooks/usePersonalMusicFeed';
+import { useRatings } from '../../hooks/useRatings';
 import { resolveCoverUrl } from '../../lib/domain/posterUrl';
 import { audioItemToTrack, searchResultToTrack } from '../../lib/domain/musicTrack';
 import { songsOnly } from '../../lib/domain/musicTaste';
@@ -85,6 +86,7 @@ export function MusicScreen() {
   const { debouncedQuery, enabled, isLoading, isError, results } = useMusicSearch(query, source);
   const { download, stateByVideoId, itemByVideoId } = useMusicDownload();
   const { rows: feedRows, isLoading: feedLoading } = usePersonalMusicFeed();
+  const { liked } = useRatings();
   const { items: libraryItems, isLoading: libraryLoading } = useMusicLibrary();
   const { items: albums, isLoading: albumsLoading, isError: albumsError } = useMusicAlbums(
     tab === 'albumes',
@@ -217,6 +219,13 @@ export function MusicScreen() {
       <Header />
 
       <div className="pf-music__hero">
+        {/* The cassette marks Música the way the clapper marks the video side:
+            you should know which half of the app you are in before you read a
+            word of it. Decorative — the section is already named by the nav. */}
+        <div className="pf-music__brand" aria-hidden="true">
+          <img src="/brand-music.png" alt="" width="72" height="72" />
+        </div>
+
         <div className="pf-music__query">
           <span className="pf-music__query-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="20" height="20" focusable="false">
@@ -348,6 +357,22 @@ export function MusicScreen() {
                 onToggle={toggle}
               />
             ))
+          )}
+
+          {/* The thumb-up finally has somewhere to point. Rendered only once
+              something is liked: an empty rail would just be one more row
+              explaining that a button you pressed did nothing. */}
+          {liked.length > 0 && (
+            <RecommendationsRow
+              title="Tus me gusta"
+              items={liked}
+              isLoading={false}
+              onPlay={handlePlayResult}
+              onPreview={handlePreview}
+              current={current}
+              isPlaying={isPlaying}
+              onToggle={toggle}
+            />
           )}
         </>
       )}

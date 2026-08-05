@@ -311,7 +311,13 @@ function DesktopBar({
             tracks with a videoId: a library track that was never matched to one
             has nothing the worker can key a vote on. */}
         {current.videoId && (
-          <ThumbButtons videoId={current.videoId} title={current.title} variant="bar" />
+          <ThumbButtons
+            videoId={current.videoId}
+            title={current.title}
+            artist={current.artist}
+            thumbnailUrl={current.coverUrl}
+            variant="bar"
+          />
         )}
         <button
           type="button"
@@ -514,7 +520,13 @@ function FullPlayer({
             library track never matched to a videoId has nothing the worker
             can key a vote on. */}
         {current.videoId && (
-          <ThumbButtons videoId={current.videoId} title={current.title} variant="full" />
+          <ThumbButtons
+            videoId={current.videoId}
+            title={current.title}
+            artist={current.artist}
+            thumbnailUrl={current.coverUrl}
+            variant="full"
+          />
         )}
         <div className="pf-fullplayer__volume">
           <button

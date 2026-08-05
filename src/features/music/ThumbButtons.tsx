@@ -5,8 +5,9 @@ import './thumbs.css';
 // clears it, and the two are mutually exclusive. Rendered both in a row's ⋮ menu
 // and in the NowPlayingBar, the two places YT Music puts them.
 //
-// A thumb-down is not decoration: the worker drops that videoId from every radio
-// and recommendation it builds for this user afterwards.
+// Neither thumb is decoration. A thumb-down drops that videoId from every radio
+// the worker builds for this user; a thumb-up becomes one of the seeds those
+// radios are built FROM, and puts the track in "Tus me gusta".
 
 function ThumbUpGlyph({ filled }: { filled: boolean }) {
   return (
@@ -39,18 +40,28 @@ function ThumbDownGlyph({ filled }: { filled: boolean }) {
 export interface ThumbButtonsProps {
   videoId: string;
   title: string;
+  /** Sent with the vote so "Tus me gusta" can show a track, not an id. */
+  artist?: string | null;
+  thumbnailUrl?: string | null;
   /** `menu` sits inside the ⋮ list; `bar` sits in the desktop NowPlayingBar;
    * `full` sits in the mobile full-screen player. */
   variant?: 'menu' | 'bar' | 'full';
 }
 
-export function ThumbButtons({ videoId, title, variant = 'menu' }: ThumbButtonsProps) {
+export function ThumbButtons({
+  videoId,
+  title,
+  artist = null,
+  thumbnailUrl = null,
+  variant = 'menu',
+}: ThumbButtonsProps) {
   const { ratingFor, rate } = useRatings();
   const rating = ratingFor(videoId);
 
   // Pressing the thumb you already hold clears it — the same escape hatch YT
   // Music gives you, so a mis-tap is not permanent.
-  const toggle = (value: 1 | -1) => rate(videoId, rating === value ? 0 : value);
+  const toggle = (value: 1 | -1) =>
+    rate(videoId, rating === value ? 0 : value, { title, artist, thumbnailUrl });
 
   return (
     <div className={`pf-thumbs pf-thumbs--${variant}`}>

@@ -170,6 +170,12 @@ export type MusicPlaylistBatchStatus = z.infer<typeof MusicPlaylistBatchStatusSc
 
 export const MusicRatingsResponseSchema = z.object({
   ratings: z.record(z.string(), z.number()).default({}),
+  /**
+   * The thumbed-up tracks, newest first, with enough metadata to render a row.
+   * The worker stores title and artist beside the vote precisely so this list
+   * can exist — a videoId on its own shows the user nothing.
+   */
+  liked: z.array(MusicResultItemSchema).default([]),
 });
 export type MusicRatingsResponse = z.infer<typeof MusicRatingsResponseSchema>;
 

@@ -26,17 +26,42 @@ function renderThumbs() {
   );
 }
 
+// What every vote carries: the row already knows these, and sending them is
+// what lets "Tus me gusta" list a track instead of a bare videoId.
+const META = { title: 'Chachachá', artist: null, thumbnailUrl: null };
+
 describe('ThumbButtons', () => {
   // A stand-in server: the mutation writes here and the refetch reads it back,
   // so an optimistic update that gets reverted by a stale read would be caught.
+  // It answers with the real envelope — votes AND the renderable liked list —
+  // because a fake that still returned the old bare map would let a regression
+  // in that shape pass unnoticed.
   let stored: Record<string, number> = {};
+  let likedMeta: Record<string, { title?: string | null; artist?: string | null }> = {};
 
   beforeEach(() => {
     stored = {};
-    mockedGetRatings.mockImplementation(async () => ({ ...stored }));
-    mockedSetTrackRating.mockImplementation(async (videoId, rating) => {
+    likedMeta = {};
+    mockedGetRatings.mockImplementation(async () => ({
+      ratings: { ...stored },
+      liked: Object.entries(stored)
+        .filter(([, vote]) => vote === 1)
+        .map(([videoId]) => ({
+          type: 'song' as const,
+          videoId,
+          title: likedMeta[videoId]?.title ?? videoId,
+          artist: likedMeta[videoId]?.artist ?? null,
+          artists: [],
+          album: null,
+          durationSeconds: null,
+          thumbnailUrl: null,
+          source: 'ytmusic' as const,
+        })),
+    }));
+    mockedSetTrackRating.mockImplementation(async (videoId, rating, meta) => {
       if (rating === 0) delete stored[videoId];
       else stored[videoId] = rating;
+      if (meta) likedMeta[videoId] = { title: meta.title, artist: meta.artist };
       return { videoId, rating };
     });
   });
@@ -50,13 +75,13 @@ describe('ThumbButtons', () => {
   it('casts a thumb down', async () => {
     renderThumbs();
     fireEvent.click(screen.getByRole('button', { name: /No me gusta/ }));
-    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', -1));
+    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', -1, META));
   });
 
   it('casts a thumb up', async () => {
     renderThumbs();
     fireEvent.click(screen.getByRole('button', { name: /^Me gusta/ }));
-    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', 1));
+    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', 1, META));
   });
 
   it('shows the vote this user already holds', async () => {
@@ -80,7 +105,7 @@ describe('ThumbButtons', () => {
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: /^Me gusta/ }));
-    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', 0));
+    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', 0, META));
   });
 
   it('switches sides rather than holding both thumbs at once', async () => {
@@ -93,7 +118,7 @@ describe('ThumbButtons', () => {
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: /No me gusta/ }));
-    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', -1));
+    await waitFor(() => expect(mockedSetTrackRating).toHaveBeenCalledWith('vid-1', -1, META));
     expect(screen.getByRole('button', { name: /^Me gusta/ })).toHaveAttribute(
       'aria-pressed',
       'false',

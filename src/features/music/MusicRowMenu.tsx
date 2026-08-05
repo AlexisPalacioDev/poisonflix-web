@@ -38,6 +38,11 @@ export interface MusicRowMenuProps {
    *  rows never matched to a videoId simply omit it. */
   videoId?: string | null;
   title: string;
+  /** Ride along with a thumb vote so "Tus me gusta" renders a track, not an id.
+   *  Optional: a row that does not know them still votes fine, it just stores
+   *  less. */
+  artist?: string | null;
+  coverUrl?: string | null;
   /** Jellyfin itemId when the track is in the library, else null (search result). */
   itemId: string | null;
   /** Params to acquire the track when an action needs it downloaded first. */
@@ -57,6 +62,8 @@ export interface MusicRowMenuProps {
 export function MusicRowMenu({
   title,
   videoId,
+  artist,
+  coverUrl,
   itemId,
   downloadParams,
   onDownload,
@@ -235,7 +242,12 @@ export function MusicRowMenu({
               <ul className="pf-music__addpl-list">
                 {videoId && (
                   <li>
-                    <ThumbButtons videoId={videoId} title={title} />
+                    <ThumbButtons
+                      videoId={videoId}
+                      title={title}
+                      artist={artist}
+                      thumbnailUrl={coverUrl}
+                    />
                   </li>
                 )}
                 {onEnqueue && (

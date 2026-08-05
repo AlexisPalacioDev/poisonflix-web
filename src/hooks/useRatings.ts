@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getRatings, setTrackRating, type RatingValue } from '../api/music';
+import type { MusicRatingsResponse, MusicResultItem } from '../api/schemas/music';
 import { queryKeys } from './queryKeys';
 import { useAuth } from './useAuth';
 
@@ -8,12 +9,22 @@ import { useAuth } from './useAuth';
 // downloaded, which is exactly where a thumb-down matters most.
 //
 // Casting a vote invalidates the feeds: a rejected track has to disappear from
-// the recommendations that suggested it, and seeing it linger would tell the
-// user the button did nothing.
+// the recommendations that suggested it, and a like has to start showing up in
+// the radios it now seeds. Seeing neither happen would tell the user the button
+// did nothing — which, for the thumb-up, used to be literally true.
+
+/** What the worker needs stored alongside a vote so "Tus me gusta" can render it. */
+export interface RatingMeta {
+  title?: string | null;
+  artist?: string | null;
+  thumbnailUrl?: string | null;
+}
 
 export interface Ratings {
   ratingFor: (videoId: string) => RatingValue;
-  rate: (videoId: string, rating: RatingValue) => void;
+  rate: (videoId: string, rating: RatingValue, meta?: RatingMeta) => void;
+  /** The thumbed-up tracks, newest first. Empty until something is liked. */
+  liked: MusicResultItem[];
   isRating: boolean;
 }
 
@@ -29,20 +40,50 @@ export function useRatings(): Ratings {
   });
 
   const mutation = useMutation({
-    mutationFn: ({ videoId, rating }: { videoId: string; rating: RatingValue }) =>
-      setTrackRating(videoId, rating),
+    mutationFn: ({
+      videoId,
+      rating,
+      meta,
+    }: {
+      videoId: string;
+      rating: RatingValue;
+      meta?: RatingMeta;
+    }) => setTrackRating(videoId, rating, meta),
     // Optimistic: the thumb must fill the instant it is pressed. A vote that
     // waits on a round-trip feels broken on a control pressed this casually.
-    onMutate: async ({ videoId, rating }) => {
+    onMutate: async ({ videoId, rating, meta }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.musicRatings() });
-      const previous = queryClient.getQueryData<Record<string, number>>(
+      const previous = queryClient.getQueryData<MusicRatingsResponse>(
         queryKeys.musicRatings(),
       );
-      queryClient.setQueryData<Record<string, number>>(queryKeys.musicRatings(), (old) => {
-        const next = { ...(old ?? {}) };
-        if (rating === 0) delete next[videoId];
-        else next[videoId] = rating;
-        return next;
+      queryClient.setQueryData<MusicRatingsResponse>(queryKeys.musicRatings(), (old) => {
+        const ratings = { ...(old?.ratings ?? {}) };
+        if (rating === 0) delete ratings[videoId];
+        else ratings[videoId] = rating;
+        // Keep `liked` in step too, or the list the user is looking at would
+        // not move until the refetch lands. MusicResultItem is a union — only
+        // the `song` arm carries a videoId — so narrow before comparing.
+        const rest = (old?.liked ?? []).filter(
+          (t) => !('videoId' in t) || t.videoId !== videoId,
+        );
+        const liked =
+          rating === 1
+            ? [
+                {
+                  type: 'song' as const,
+                  videoId,
+                  title: meta?.title ?? videoId,
+                  artist: meta?.artist ?? null,
+                  artists: meta?.artist ? [meta.artist] : [],
+                  album: null,
+                  durationSeconds: null,
+                  thumbnailUrl: meta?.thumbnailUrl ?? null,
+                  source: 'ytmusic' as const,
+                } as MusicResultItem,
+                ...rest,
+              ]
+            : rest;
+        return { ...(old ?? { ratings: {}, liked: [] }), ratings, liked };
       });
       return { previous };
     },
@@ -60,11 +101,12 @@ export function useRatings(): Ratings {
     },
   });
 
-  const ratings = query.data ?? {};
+  const ratings = query.data?.ratings ?? {};
 
   return {
     ratingFor: (videoId) => ((ratings[videoId] ?? 0) as RatingValue),
-    rate: (videoId, rating) => mutation.mutate({ videoId, rating }),
+    rate: (videoId, rating, meta) => mutation.mutate({ videoId, rating, meta }),
+    liked: query.data?.liked ?? [],
     isRating: mutation.isPending,
   };
 }

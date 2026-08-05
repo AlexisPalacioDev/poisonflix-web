@@ -16,6 +16,7 @@ import {
   type MusicPlaylistBatch,
   type MusicPlaylistBatchStatus,
   type MusicRating,
+  type MusicRatingsResponse,
   type MusicPlay,
 } from './schemas/music';
 
@@ -74,27 +75,45 @@ export async function getRadio(seed: RadioSeed, limit = 15): Promise<MusicResult
 /** Thumb value: 1 up, -1 down, 0 clears the vote. */
 export type RatingValue = 1 | -1 | 0;
 
-/** Every vote this user has cast, as videoId -> 1 | -1. */
-export async function getRatings(): Promise<Record<string, number>> {
-  const { ratings } = await apiFetch('bff', '/music/ratings', {
+/**
+ * This user's votes, plus the liked tracks as renderable rows.
+ *
+ * Both come from one request because they are one thing: `ratings` answers "is
+ * this thumb filled?" for a row already on screen, `liked` answers "what have I
+ * liked?" for the screen that lists them.
+ */
+export async function getRatings(): Promise<MusicRatingsResponse> {
+  return apiFetch('bff', '/music/ratings', {
     schema: MusicRatingsResponseSchema,
   });
-  return ratings;
 }
 
 /**
- * Casts (or clears) a thumb. A thumb-down is not cosmetic: the worker drops
- * that videoId from every radio and recommendation it builds for this user
- * afterwards, which is the only thing that makes the button mean something.
+ * Casts (or clears) a thumb.
+ *
+ * Neither thumb is cosmetic any more. A thumb-down drops that videoId from
+ * every radio the worker builds for this user; a thumb-up becomes one of the
+ * seeds those radios are built FROM, and lands in "Tus me gusta".
+ *
+ * The track's title and artist ride along because the worker stores them beside
+ * the vote — it is the only moment we know them, and re-resolving a videoId
+ * later would mean a YouTube round trip per liked row.
  */
 export async function setTrackRating(
   videoId: string,
   rating: RatingValue,
+  meta?: { title?: string | null; artist?: string | null; thumbnailUrl?: string | null },
 ): Promise<MusicRating> {
   return apiFetch('bff', '/music/ratings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ videoId, rating }),
+    body: JSON.stringify({
+      videoId,
+      rating,
+      title: meta?.title ?? undefined,
+      artist: meta?.artist ?? undefined,
+      thumbnailUrl: meta?.thumbnailUrl ?? undefined,
+    }),
     schema: MusicRatingSchema,
   });
 }
