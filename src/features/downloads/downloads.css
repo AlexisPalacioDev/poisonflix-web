@@ -3,6 +3,7 @@
    equally "current", unlike Home's rows of many titles. */
 
 .pf-downloads {
+  position: relative;
   flex: 1;
   min-height: 100%;
   padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
@@ -11,16 +12,56 @@
   padding-right: var(--pf-gutter);
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-md);
+  gap: var(--pf-space-lg);
+}
+
+/* Ambient wash, same recipe and reasoning as Home's rails, Search and Browse
+   (see home.css's `.pf-home__rows::before`). `z-index: -1` rather than
+   lifting the children, because a `.pf-downloads > *` bump would also match
+   the fixed `<Header>`. Pure paint - no `backdrop-filter`, nothing spent
+   from the ≤2 blurred-surface budget. */
+.pf-downloads::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1100px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1500px 600px at 84% 0px, rgba(242, 193, 78, 0.13) 0%, rgba(242, 193, 78, 0) 70%),
+    radial-gradient(1100px 600px at 4% 620px, rgba(140, 255, 90, 0.06) 0%, rgba(140, 255, 90, 0) 70%),
+    linear-gradient(to bottom, rgba(28, 33, 45, 0.55) 0px, rgba(28, 33, 45, 0) 950px);
 }
 
 .pf-downloads__header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding-bottom: var(--pf-space-lg);
+}
+
+.pf-downloads__header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.05) 55%,
+    rgba(255, 255, 255, 0) 100%
+  );
 }
 
 .pf-downloads__title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin: 0;
   /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
      `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
@@ -28,21 +69,35 @@
      TV/desktop-first target viewport is wide enough that this clamp mostly
      resolves to its cap already, so the static value below is what modern
      browsers already render most of the time, not a guess). */
-  font-size: 1.8rem;
-  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-size: 2.3rem;
+  font-size: clamp(1.6rem, 2.6vw, 2.3rem);
   font-weight: 800;
+  letter-spacing: -0.03em;
   color: var(--pf-text);
+}
+
+/* The same gold accent rule Row and Browse headings carry, so every section
+   masthead in the app is recognisably the same object. */
+.pf-downloads__title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, var(--pf-gold) 0%, rgba(242, 193, 78, 0.12) 100%);
+  box-shadow: 0 0 14px rgba(242, 193, 78, 0.35);
 }
 
 .pf-downloads__refresh {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   border-radius: var(--pf-radius-pill);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--pf-glass-border);
+  background: linear-gradient(to bottom, rgba(52, 59, 74, 0.85) 0%, rgba(20, 24, 31, 0.85) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
   color: var(--pf-text);
   cursor: pointer;
   transition:
@@ -73,14 +128,20 @@
 
 .pf-downloads__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 20px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 30px 22px;
+}
+
+/* PosterCard is fixed-width; in a `1fr` track it would hug the left edge of
+   a wider cell (same fix as browse.css). */
+.pf-downloads__grid > * {
+  justify-self: center;
 }
 
 .pf-downloads__skeleton-card {
   width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: var(--pf-radius-md);
+  border-radius: var(--pf-radius-lg);
 }
 
 .pf-downloads__status {
@@ -115,12 +176,23 @@
   background: rgba(229, 72, 77, 0.14);
 }
 
+/* Empty state as a glass sheet rather than centred grey text on a void: the
+   screen a user reaches most often when there's nothing to see should still
+   look designed. */
 .pf-downloads__empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--pf-space-md);
-  padding: var(--pf-space-2xl) 0;
+  margin: var(--pf-space-lg) auto 0;
+  padding: var(--pf-space-2xl) var(--pf-space-xl);
+  max-width: 560px;
+  border-radius: var(--pf-radius-xl);
+  border: 1px solid var(--pf-glass-border);
+  background: linear-gradient(150deg, rgba(38, 44, 57, 0.5) 0%, rgba(16, 19, 25, 0.6) 62%);
+  box-shadow:
+    var(--pf-elev-2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
   color: var(--pf-text-dim);
   text-align: center;
 }
@@ -128,12 +200,18 @@
 .pf-downloads__empty-mark {
   width: 96px;
   height: 96px;
+  opacity: 0.85;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.5));
 }
 
 @media (max-width: 640px) {
   .pf-downloads__grid {
-    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-    gap: 16px 12px;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 20px 12px;
+  }
+
+  .pf-downloads__skeleton-card {
+    border-radius: var(--pf-radius-md);
   }
 }
 
@@ -142,10 +220,24 @@
   margin-top: var(--pf-space-2xl);
 }
 .pf-downloads__adult-title {
-  font-size: var(--pf-text-lg, 1.25rem);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--pf-text-lg, 1.35rem);
   font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--pf-text);
   margin: 0 0 var(--pf-space-2xs);
+}
+
+.pf-downloads__adult-title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, var(--pf-gold) 0%, rgba(242, 193, 78, 0.12) 100%);
+  box-shadow: 0 0 14px rgba(242, 193, 78, 0.35);
 }
 .pf-downloads__adult-hint {
   color: var(--pf-text-dim);
@@ -163,21 +255,25 @@
   position: relative;
 }
 
+/* Above `.pf-poster-card__art::after` (the glass overlay, z-index 1) - this
+   sits on the cell, not inside the art, but the stacking still has to clear
+   the card's own raised badge/progress layer at z-index 2. */
 .pf-downloads__cancel {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 2;
-  padding: 4px 11px;
-  border: 0;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+  padding: 5px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #fff;
-  background: #c0392b;
+  background: linear-gradient(to bottom, #d94b3a 0%, #a82f22 100%);
+  box-shadow: 0 8px 22px rgba(192, 57, 43, 0.45);
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
@@ -185,7 +281,7 @@
 }
 
 .pf-downloads__cancel:hover {
-  background: #e04b39;
+  background: linear-gradient(to bottom, #ef5f4c 0%, #c03b2b 100%);
 }
 
 /* Revealed by hovering the cell OR by keyboard focus landing anywhere in it,
