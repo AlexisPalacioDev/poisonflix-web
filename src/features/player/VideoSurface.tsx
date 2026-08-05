@@ -329,15 +329,27 @@ export function VideoSurface({
   };
 
   /** Applies `track` (or clears, for `null` == "Ninguno") on the CURRENT
-   * source - DirectPlay's sideloaded `<track>` elements, or hls.js's
-   * `subtitleTrack` under transcode. No-ops (documented limitation) under
-   * native Safari HLS, which has no hls.js instance to act on. */
+   * source. Sideloaded `<track>` elements are the primary mechanism on BOTH
+   * paths: Jellyfin serves `Subtitles/{index}/Stream.vtt` for any text
+   * subtitle regardless of how the video itself is delivered, whereas its HLS
+   * manifest carries no subtitle renditions unless the transcode was asked
+   * for them. Restricting the sideload to DirectPlay meant a transcoded
+   * stream had NOTHING to show: the menu listed "Español", marked it, and the
+   * picture stayed bare - verified with zero `textTracks` on the <video> while
+   * the .vtt endpoint returned 200 text/vtt with real Spanish cues.
+   * hls.js's own `subtitleTrack` stays as a fallback for the case where the
+   * manifest DOES carry renditions and no sideloaded element matched.
+   * Still a no-op under native Safari HLS with no hls.js instance. */
   const applySubtitle = (track: MediaStreamTrack | null) => {
-    if (source.kind === 'DirectPlay') {
-      for (const [idx, el] of trackElsRef.current) {
-        if (el.track) el.track.mode = track && idx === track.index ? 'showing' : 'disabled';
-      }
-    } else if (hlsRef.current) {
+    let sideloaded = false;
+    for (const [idx, el] of trackElsRef.current) {
+      if (!el.track) continue;
+      const on = !!track && idx === track.index;
+      el.track.mode = on ? 'showing' : 'disabled';
+      if (on) sideloaded = true;
+    }
+    if (sideloaded || (!track && trackElsRef.current.size > 0)) return;
+    if (hlsRef.current) {
       const hls = hlsRef.current;
       if (!track) {
         hls.subtitleTrack = -1;
@@ -612,21 +624,21 @@ export function VideoSurface({
         }}
         onError={onError}
       >
-        {source.kind === 'DirectPlay'
-          ? subtitles.map((track) => (
-              <track
-                key={track.index}
-                ref={(el) => {
-                  if (el) trackElsRef.current.set(track.index, el);
-                  else trackElsRef.current.delete(track.index);
-                }}
-                kind="subtitles"
-                src={buildSubtitleUrl(track)}
-                srcLang={track.language ?? undefined}
-                label={trackLabel(track)}
-              />
-            ))
-          : null}
+        {/* Sideloaded on BOTH paths, not just DirectPlay - see `applySubtitle`
+            for why the transcoded stream would otherwise have nothing to show. */}
+        {subtitles.map((track) => (
+          <track
+            key={track.index}
+            ref={(el) => {
+              if (el) trackElsRef.current.set(track.index, el);
+              else trackElsRef.current.delete(track.index);
+            }}
+            kind="subtitles"
+            src={buildSubtitleUrl(track)}
+            srcLang={track.language ?? undefined}
+            label={trackLabel(track)}
+          />
+        ))}
       </video>
 
       <div
