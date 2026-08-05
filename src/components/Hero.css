@@ -221,10 +221,13 @@
   margin-top: var(--pf-space-xs);
 }
 
+/* Must track `.pf-btn`'s real box (primitives.css): 15px padding + a ~24px
+   line + 2px of border = 56px tall, and the same soft radius - otherwise the
+   placeholder promises a pill and the loaded button delivers a surface. */
 .pf-hero__sk-btn {
-  width: 150px;
-  height: 48px;
-  border-radius: var(--pf-radius-pill);
+  width: 158px;
+  height: 56px;
+  border-radius: var(--pf-radius-lg);
 }
 
 @media (max-width: 640px) {
@@ -238,7 +241,7 @@
   }
 
   .pf-btn {
-    padding: 11px 20px;
+    padding: 12px 22px;
     font-size: 0.95rem;
   }
 }
