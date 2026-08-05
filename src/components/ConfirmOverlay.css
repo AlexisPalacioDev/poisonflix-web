@@ -13,6 +13,13 @@
 }
 
 .pf-confirm-overlay__card {
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `min()` value - see scripts/check-legacy-css.mjs rule b / design.md D2 -
+     so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this min() mostly
+     resolves to its 420px cap already, so the static value below is what
+     modern browsers already render most of the time, not a guess). */
+  width: 420px;
   width: min(420px, 100%);
   background: var(--pf-surface);
   border-radius: var(--pf-radius-lg);

@@ -13,7 +13,15 @@
 }
 
 .pf-track-menu__sheet {
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `min()` value - see scripts/check-legacy-css.mjs rule b / design.md D2 -
+     so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that these min()s
+     mostly resolve to their caps already, so the static values below are
+     what modern browsers already render most of the time, not a guess). */
+  width: 420px;
   width: min(90vw, 420px);
+  max-height: 520px;
   max-height: min(80vh, 520px);
   overflow-y: auto;
   display: flex;
@@ -22,7 +30,7 @@
   padding: 20px;
   border-radius: var(--pf-radius-lg, 16px);
   background: var(--pf-surface, #12151c);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--pf-glass-border, rgba(255, 255, 255, 0.08));
 }
 
 .pf-track-menu__title {

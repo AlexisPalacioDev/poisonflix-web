@@ -41,6 +41,13 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
+     D2 - so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that these clamps
+     mostly resolve to their caps already, so the static value below is
+     what modern browsers already render most of the time, not a guess). */
+  padding: 24px 40px;
   padding: clamp(14px, 3vh, 24px) clamp(16px, 3vw, 40px);
   background: linear-gradient(
     180deg,
@@ -138,6 +145,13 @@
   white-space: nowrap;
   color: #fff;
   font-weight: 700;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
+     D2 - so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this clamp mostly
+     resolves to its cap already, so the static value below is what modern
+     browsers already render most of the time, not a guess). */
+  font-size: 1.2rem;
   font-size: clamp(1rem, 2vw, 1.2rem);
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
 }
