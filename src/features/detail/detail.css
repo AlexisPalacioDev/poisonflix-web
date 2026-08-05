@@ -475,6 +475,12 @@
 .pf-series-detail__progress {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+.pf-series-detail__progress-row {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
 
@@ -490,13 +496,31 @@
 .pf-series-detail__progress-fill {
   display: block;
   height: 100%;
-  background: var(--pf-gold);
+  background: var(--pf-available);
 }
 
 .pf-series-detail__progress-label {
-  color: var(--pf-gold);
+  color: var(--pf-text);
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* Activity ("N descargas activas" / "no hay descargas activas") - deliberately
+   a SEPARATE line from the completeness bar above it (owner's complaint: the
+   two used to be fused into one "Descargando · N%" bar that kept reading a
+   stale completeness percentage under an activity label). Muted by default;
+   only the completeness bar/label uses the brand accent colors. */
+.pf-series-detail__activity {
+  margin: 0;
+  color: var(--pf-text-dim);
+  font-size: 0.8rem;
+}
+
+.pf-series-detail__warning {
+  margin: 0;
+  color: var(--pf-danger);
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .pf-series-detail__delete {
@@ -550,6 +574,14 @@
   font-size: 0.78rem;
   color: inherit;
   opacity: 0.75;
+}
+
+/* Per-season activity badge (owner ask: "por temporada, si hay algo bajando
+   ahí") - only rendered when that season actually has an active
+   download/import/queue entry, never a static decoration. */
+.pf-season-row__activity {
+  color: var(--pf-gold);
+  opacity: 1;
 }
 
 /* Episodes ("capítulos", owner ask #1): the RIGHT column next to the poster
@@ -662,8 +694,33 @@
   color: var(--pf-gold);
 }
 
+/* Done transferring, waiting on Sonarr's own import step - the exact state
+   the owner's live Bleach repro exposed (episodeId 1015: sizeleft 0, status
+   completed) as invisible before this rework. Distinct from "downloading"
+   (no mini progress bar - there is no percent left to show) and from
+   "queued" (this one already finished the transfer). */
+.pf-episode-row__status--importing {
+  color: var(--pf-gold-dim);
+}
+
+/* The ONLY status allowed to read "En cola" - waiting its turn in Sonarr's
+   queue, not started yet. */
+.pf-episode-row__status--queued {
+  color: var(--pf-text-dim);
+}
+
 .pf-episode-row__status--missing {
   color: var(--pf-text-dim);
+}
+
+.pf-episode-row__status--not-monitored {
+  color: var(--pf-text-dim);
+  font-style: italic;
+}
+
+.pf-episode-row__warning {
+  color: var(--pf-danger);
+  font-weight: 600;
 }
 
 .pf-episode-row__mini-track {

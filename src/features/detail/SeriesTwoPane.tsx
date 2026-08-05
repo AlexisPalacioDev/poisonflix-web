@@ -1,6 +1,7 @@
+import { useMemo } from 'react';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import { MediaLanguagesPanel } from './MediaLanguagesPanel';
-import type { SeriesEpisode } from '../../hooks/useSeriesEpisodes';
+import { progressOf, type EpisodeProgress, type SeriesEpisode } from '../../hooks/useSeriesEpisodes';
 
 // TV series two-pane detail (projector-feature-map.md §7 "TV SERIES layout",
 // walkthrough §19/§20), ported from `SeriesDetailContent`/`SeasonRow`/
@@ -12,17 +13,36 @@ import type { SeriesEpisode } from '../../hooks/useSeriesEpisodes';
 // Deviation from the Kotlin reference (noted, not silent): the Kotlin poster
 // "takes over" with a percent readout instead of the play button when no
 // episode is playable yet (`canPlaySeries` false). This port always renders
-// the below-title progress bar instead when `seriesProgress` is non-null,
-// whether or not an episode is already playable - simpler to implement and
-// test on the web, and both walkthrough screenshots (§19/§20) show that bar
-// alongside a playable poster anyway.
+// the below-title progress summary instead when the series has any episodes
+// at all, whether or not an episode is already playable - simpler to
+// implement and test on the web, and both walkthrough screenshots (§19/§20)
+// show that summary alongside a playable poster anyway.
+//
+// Honesty rework (owner's live Bleach repro: Season 2 all read "En cola"
+// while Sonarr's own queue held ONE completed record; a "Descargando · 20%"
+// bar kept reading while nothing was moving): every level now says only what
+// is actually true.
+// - Per episode: `episodeStatusLine` distinguishes Available/Downloading (real
+//   %)/Importing (done transferring, waiting on Sonarr's import step)/Queued
+//   (waiting its turn, not started - the ONLY case that may say "En cola")/
+//   Missing (nothing incoming)/NotMonitored (Sonarr itself isn't looking for
+//   it) - see `useSeriesEpisodes.ts`'s `EpisodeStatus`. A per-record
+//   `warning` (Sonarr's own `errorMessage`/`trackedDownloadStatus`) renders
+//   inline instead of staying invisible.
+// - Per season: completeness ("X de Y episodios") is never confused with
+//   activity (an "⬇ N" badge only when that season has something actually
+//   moving).
+// - Per series: `SeriesProgressSummary` keeps "how much do I HAVE"
+//   (completeness) strictly separate from "how much is currently HAPPENING"
+//   (activity) - the owner's second complaint was these two fused into one
+//   mislabeled bar. Zero activity is stated explicitly, never left silent.
 
 interface SeriesTwoPaneProps {
   title: string;
   posterUrl: string | null;
   canPlay: boolean;
   onPlayFirstEpisode: () => void;
-  seriesProgress: number | null;
+  seriesProgress: EpisodeProgress;
   // Poster-side language card source (owner asks #2/#4): the first playable
   // episode's raw Jellyfin item (a Series item itself carries no
   // MediaStreams - see DetailScreen's `mediaLanguagesItemId`).
@@ -49,6 +69,20 @@ interface SeriesTwoPaneProps {
   onPlayEpisode: (jellyfinItemId: string) => void;
 }
 
+/** Episodes currently moving through Sonarr in any way (downloading, importing or merely queued) - "activity", never confused with "completeness" (`availableCount`/`totalCount`). */
+function activeCountOf(progress: EpisodeProgress): number {
+  return progress.downloadingCount + progress.importingCount + progress.queuedCount;
+}
+
+function WarningNote({ warning }: { warning: string | null }) {
+  if (!warning) return null;
+  return (
+    <span className="pf-episode-row__warning" role="alert">
+      ⚠ {warning}
+    </span>
+  );
+}
+
 function episodeStatusLine(status: SeriesEpisode['status']) {
   switch (status.kind) {
     case 'Available':
@@ -63,10 +97,35 @@ function episodeStatusLine(status: SeriesEpisode['status']) {
             />
           </span>
           Descargando · {Math.round(status.percent)}%
+          <WarningNote warning={status.warning} />
+        </span>
+      );
+    case 'Importing':
+      return (
+        <span className="pf-episode-row__status pf-episode-row__status--importing">
+          Importando…
+          <WarningNote warning={status.warning} />
+        </span>
+      );
+    case 'Queued':
+      // The ONLY status allowed to say "En cola" - it means what it says:
+      // sitting in Sonarr's queue, not yet started (see `queueInfoFromRecord`
+      // in useSeriesEpisodes.ts).
+      return (
+        <span className="pf-episode-row__status pf-episode-row__status--queued">
+          En cola
+          <WarningNote warning={status.warning} />
         </span>
       );
     case 'Missing':
-      return <span className="pf-episode-row__status pf-episode-row__status--missing">En cola</span>;
+      // Previously mislabeled "En cola" (owner's live Bleach repro: Season 2
+      // read this for every episode while Sonarr's queue held a single
+      // unrelated record) - nothing is incoming, so nothing should imply it is.
+      return <span className="pf-episode-row__status pf-episode-row__status--missing">Falta</span>;
+    case 'NotMonitored':
+      return (
+        <span className="pf-episode-row__status pf-episode-row__status--not-monitored">No se está buscando</span>
+      );
   }
 }
 
@@ -102,6 +161,53 @@ function EpisodeRow({
   );
 }
 
+/**
+ * Series-level honesty (owner's second complaint): completeness ("tenés X de
+ * Y episodios") and activity ("N descargas activas", or an explicit "no hay
+ * nada bajando") are two different questions, rendered as two different
+ * lines - never fused into one "Descargando · N%" bar that keeps reading a
+ * stale completeness percentage under an activity label.
+ */
+function SeriesProgressSummary({ progress }: { progress: EpisodeProgress }) {
+  if (progress.totalCount === 0) return null;
+
+  const completenessPercent = Math.floor((progress.availableCount / progress.totalCount) * 100);
+  const activeCount = activeCountOf(progress);
+
+  return (
+    <div className="pf-series-detail__progress">
+      <div className="pf-series-detail__progress-row">
+        <span className="pf-series-detail__progress-track">
+          <span className="pf-series-detail__progress-fill" style={{ width: `${completenessPercent}%` }} />
+        </span>
+        <span className="pf-series-detail__progress-label">
+          {progress.availableCount} de {progress.totalCount} episodios
+        </span>
+      </div>
+
+      {/* No `role="status"` here: the media-languages card right below already
+          owns that role in this same pane (`MediaLanguagesPanel`), and tests
+          query it by role - a second `status` region would make that query
+          ambiguous. This line is still always-visible plain text either way,
+          which is the actual honesty requirement (owner: "si NO hay nada
+          descargando, la UI tiene que decirlo"). */}
+      <p className="pf-series-detail__activity">
+        {activeCount > 0
+          ? `${activeCount} ${activeCount === 1 ? 'descarga activa' : 'descargas activas'}`
+          : 'No hay descargas activas en este momento'}
+      </p>
+
+      {progress.warningCount > 0 && (
+        <p className="pf-series-detail__warning" role="alert">
+          {progress.warningCount === 1
+            ? '1 descarga necesita atención'
+            : `${progress.warningCount} descargas necesitan atención`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SeriesTwoPane({
   title,
   posterUrl,
@@ -123,6 +229,17 @@ export function SeriesTwoPane({
 }: SeriesTwoPaneProps) {
   const currentSeason = selectedSeason ?? seasons[0] ?? null;
   const seasonEpisodes = currentSeason != null ? (episodesBySeason.get(currentSeason) ?? []) : [];
+
+  // Per-season completeness/activity (owner ask: "por temporada, cuántos
+  // episodios tenés de cuántos, y si hay algo bajando ahí") - same `progressOf`
+  // the series-level summary uses, just scoped to one season's episode subset.
+  const progressBySeason = useMemo(() => {
+    const map = new Map<number, EpisodeProgress>();
+    for (const [season, episodes] of episodesBySeason) {
+      map.set(season, progressOf(episodes));
+    }
+    return map;
+  }, [episodesBySeason]);
 
   return (
     <div className="pf-series-detail">
@@ -149,14 +266,7 @@ export function SeriesTwoPane({
 
         <h1 className="pf-series-detail__title">{title}</h1>
 
-        {seriesProgress != null && (
-          <div className="pf-series-detail__progress">
-            <span className="pf-series-detail__progress-track">
-              <span className="pf-series-detail__progress-fill" style={{ width: `${seriesProgress}%` }} />
-            </span>
-            <span className="pf-series-detail__progress-label">Descargando · {seriesProgress}%</span>
-          </div>
-        )}
+        <SeriesProgressSummary progress={seriesProgress} />
 
         <MediaLanguagesPanel item={mediaLanguagesItem} isLoading={isMediaLanguagesLoading} />
 
@@ -180,7 +290,9 @@ export function SeriesTwoPane({
         <h2 className="pf-series-detail__seasons-label">TEMPORADAS</h2>
         <ul className="pf-series-detail__seasons">
           {seasons.map((season) => {
-            const count = episodesBySeason.get(season)?.length ?? 0;
+            const progress = progressBySeason.get(season);
+            const total = progress?.totalCount ?? 0;
+            const active = progress ? activeCountOf(progress) : 0;
             const isSelected = season === currentSeason;
             return (
               <li key={season}>
@@ -191,7 +303,8 @@ export function SeriesTwoPane({
                 >
                   <span className="pf-season-row__title">Temporada {season}</span>
                   <span className="pf-season-row__count">
-                    {count} {count === 1 ? 'episodio' : 'episodios'}
+                    {progress?.availableCount ?? 0} de {total} {total === 1 ? 'episodio' : 'episodios'}
+                    {active > 0 && <span className="pf-season-row__activity"> · ⬇ {active}</span>}
                   </span>
                 </button>
               </li>

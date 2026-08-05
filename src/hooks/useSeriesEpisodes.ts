@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getItems } from '../api/jellyfin';
 import { getSonarrEpisodes, getSonarrQueue, getSonarrSeries } from '../api/arr';
-import type { SonarrEpisode } from '../api/schemas/arr';
+import type { ArrQueueRecord, SonarrEpisode } from '../api/schemas/arr';
 import { jellyfinPosterUrl } from '../lib/domain/posterUrl';
 import { queryKeys } from './queryKeys';
 import { useAuth } from './useAuth';
@@ -15,20 +15,37 @@ import { useAuth } from './useAuth';
 // and carries the `jellyfinItemId` the player route needs - same "Jellyfin
 // presence wins" decision `lib/domain/libraryIndex.ts` already makes at the
 // title level. Sonarr contributes the FULL canonical episode list (so
-// not-yet-downloaded episodes still show up as `Missing`/`Downloading`
-// instead of vanishing) plus the real per-episode download %.
+// not-yet-downloaded episodes still show up instead of vanishing) plus each
+// queue record's real per-episode phase/percent/health.
+//
+// Honesty rework (owner's live Bleach repro: Season 2 all read "En cola"
+// while Sonarr's own queue held a single COMPLETED record and nothing else -
+// the app was inventing activity that wasn't happening): a Sonarr queue
+// record no longer collapses to one bare percent. `queueInfoFromRecord`
+// below reads `trackedDownloadState`/`status`/`sizeleft` to tell apart three
+// genuinely different situations a queue entry can be in - actively
+// transferring bytes (`Downloading`), done transferring but not yet moved
+// into the library (`Importing`), and sitting in the client not started yet
+// (`Queued`) - and `errorMessage`/`trackedDownloadStatus` surface a stuck
+// transfer instead of hiding it. An episode with NO queue record at all is
+// `Missing` (nothing incoming) unless Sonarr itself isn't even looking for it
+// (`monitored: false`), which is `NotMonitored` - a different, more honest
+// silence.
 //
 // Sonarr 401s without a provisioned API key in this dev environment (task
 // constraint - same as `useCancelDownload`'s Radarr/Sonarr steps): every
 // Sonarr call below is independently try/caught, so a 401/outage degrades to
-// Jellyfin-only episodes (no Missing/Downloading rows, no crash) rather than
-// blanking the whole two-pane layout. Jellyfin failures are caught the same
-// way, for the same reason.
+// Jellyfin-only episodes (no Missing/Downloading/etc. rows, no crash) rather
+// than blanking the whole two-pane layout. Jellyfin failures are caught the
+// same way, for the same reason.
 
 export type EpisodeStatus =
   | { kind: 'Available'; jellyfinItemId: string }
-  | { kind: 'Downloading'; percent: number }
-  | { kind: 'Missing' };
+  | { kind: 'Downloading'; percent: number; warning: string | null }
+  | { kind: 'Importing'; warning: string | null }
+  | { kind: 'Queued'; warning: string | null }
+  | { kind: 'Missing' }
+  | { kind: 'NotMonitored' };
 
 export interface SeriesEpisode {
   seasonNumber: number;
@@ -37,6 +54,12 @@ export interface SeriesEpisode {
   overview: string | null;
   stillUrl: string | null;
   status: EpisodeStatus;
+  // The episode's own raw Jellyfin `MediaStreams` (audio/subtitle tracks),
+  // for the media-languages panel's per-series aggregation
+  // (`seriesLanguages.ts`) - `null` for anything not `Available` (Sonarr
+  // never carries stream data, only Jellyfin does once the file is in the
+  // library).
+  mediaStreams: unknown[] | null;
 }
 
 interface JellyfinEpisodeInfo {
@@ -44,6 +67,7 @@ interface JellyfinEpisodeInfo {
   title: string | null;
   overview: string | null;
   stillUrl: string | null;
+  mediaStreams: unknown[] | null;
 }
 
 function episodeKey(season: number, episode: number): string {
@@ -62,7 +86,13 @@ async function loadJellyfinEpisodes(
       parentId: seriesJellyfinItemId,
       includeItemTypes: 'Episode',
       recursive: true,
-      fields: 'Overview,ProviderIds,ImageTags',
+      // `MediaStreams` added (owner ask #4 / Bleach repro): the media-languages
+      // panel used to resolve only the FIRST available episode's item via a
+      // second `getItem` call and present ITS languages as the whole series'.
+      // Every episode's item already flows through this single bulk fetch, so
+      // asking for MediaStreams here gets every episode's real audio/subtitle
+      // tracks for free - no N+1 fetch needed.
+      fields: 'Overview,ProviderIds,ImageTags,MediaStreams',
     });
     for (const item of result.Items) {
       if (item.IndexNumber == null) continue;
@@ -72,6 +102,7 @@ async function loadJellyfinEpisodes(
         title: item.Name,
         overview: item.Overview ?? null,
         stillUrl: jellyfinPosterUrl(item, token),
+        mediaStreams: item.MediaStreams ?? null,
       });
     }
   } catch {
@@ -81,9 +112,11 @@ async function loadJellyfinEpisodes(
   return map;
 }
 
-interface SonarrLoadResult {
-  episodes: SonarrEpisode[];
-  percentByEpisodeId: Map<number, number>;
+/** A queue record's meaning, resolved from Sonarr's own fields rather than assumed from bare presence. */
+export interface EpisodeQueueInfo {
+  phase: 'downloading' | 'importing' | 'queued';
+  percent: number | null;
+  warning: string | null;
 }
 
 /** Download completion 0..100, or null if the total size is unknown - same rule as `lib/domain/downloadProgress.ts`'s `percentOf` (not exported from there, so intentionally duplicated here; both are ~5 lines). */
@@ -92,9 +125,67 @@ function queuePercent(size: number, sizeleft: number): number | null {
   return Math.min(100, Math.max(0, ((size - sizeleft) / size) * 100));
 }
 
-/** Sonarr's full episode list + a queue-derived percent map, matched by tmdbId or (fallback) tvdbId. Every step is independently best-effort. */
+const IMPORT_PIPELINE_STATES = new Set(['importPending', 'importing', 'imported']);
+
+/** A record's own health message, or `null` on a clean transfer - never invented, only Sonarr's own `errorMessage`/`trackedDownloadStatus`. */
+function warningOf(record: ArrQueueRecord): string | null {
+  if (record.errorMessage) return record.errorMessage;
+  if (record.trackedDownloadStatus === 'warning') return 'La descarga necesita atención en Sonarr.';
+  if (record.trackedDownloadStatus === 'error') return 'La descarga falló.';
+  return null;
+}
+
+/**
+ * Resolves what a Sonarr queue record actually means, instead of collapsing
+ * every record to "downloading N%" (the owner's Bleach repro: a record with
+ * `sizeleft: 0, status: "completed"` is DONE transferring, waiting on
+ * Sonarr's import step - showing "En cola" or a stuck percent for it is a
+ * lie either way).
+ *
+ * - `importing`: Sonarr's own post-download pipeline (`trackedDownloadState`
+ *   in importPending/importing/imported) hasn't finished, OR the transfer
+ *   itself reports done (`status: "completed"`, or `sizeleft <= 0` with a
+ *   known `size`) but Jellyfin doesn't have the file yet.
+ * - `downloading`: the client itself reports actively transferring.
+ * - `queued`: anything else (queued/paused/delay/unknown status) - waiting
+ *   its turn, not moving yet. This is the ONLY phase "En cola" may honestly
+ *   describe.
+ */
+export function queueInfoFromRecord(record: ArrQueueRecord): EpisodeQueueInfo {
+  const percent = queuePercent(record.size, record.sizeleft);
+  const isImporting =
+    (record.trackedDownloadState != null && IMPORT_PIPELINE_STATES.has(record.trackedDownloadState)) ||
+    record.status === 'completed' ||
+    (record.size > 0 && record.sizeleft <= 0);
+
+  const phase: EpisodeQueueInfo['phase'] = isImporting
+    ? 'importing'
+    : record.status === 'downloading'
+      ? 'downloading'
+      : 'queued';
+
+  return { phase, percent, warning: warningOf(record) };
+}
+
+function statusFromQueueInfo(info: EpisodeQueueInfo): EpisodeStatus {
+  switch (info.phase) {
+    case 'downloading':
+      return { kind: 'Downloading', percent: info.percent ?? 0, warning: info.warning };
+    case 'importing':
+      return { kind: 'Importing', warning: info.warning };
+    case 'queued':
+      return { kind: 'Queued', warning: info.warning };
+  }
+}
+
+interface SonarrLoadResult {
+  episodes: SonarrEpisode[];
+  queueInfoByEpisodeId: Map<number, EpisodeQueueInfo>;
+}
+
+/** Sonarr's full episode list + a queue-derived status map, matched by tmdbId or (fallback) tvdbId. Every step is independently best-effort. */
 async function loadSonarrEpisodes(tmdbId: number | null, tvdbId: number | null): Promise<SonarrLoadResult> {
-  const empty: SonarrLoadResult = { episodes: [], percentByEpisodeId: new Map() };
+  const empty: SonarrLoadResult = { episodes: [], queueInfoByEpisodeId: new Map() };
   if (tmdbId == null && tvdbId == null) return empty;
 
   try {
@@ -106,37 +197,39 @@ async function loadSonarrEpisodes(tmdbId: number | null, tvdbId: number | null):
 
     const episodes = await getSonarrEpisodes(series.id);
 
-    const percentByEpisodeId = new Map<number, number>();
+    const queueInfoByEpisodeId = new Map<number, EpisodeQueueInfo>();
     try {
       const queue = await getSonarrQueue(true);
       for (const record of queue.records) {
         if (record.seriesId !== series.id || record.episodeId == null) continue;
-        const percent = queuePercent(record.size, record.sizeleft);
-        if (percent != null) percentByEpisodeId.set(record.episodeId, percent);
+        queueInfoByEpisodeId.set(record.episodeId, queueInfoFromRecord(record));
       }
     } catch {
       // Best-effort - an unreachable queue still leaves the full episode list.
     }
 
-    return { episodes, percentByEpisodeId };
+    return { episodes, queueInfoByEpisodeId };
   } catch {
     // Sonarr 401s without an API key in this dev env - degrade to
-    // Jellyfin-only (no Missing/Downloading rows), no crash.
+    // Jellyfin-only (no Missing/Downloading/etc. rows), no crash.
     return empty;
   }
 }
 
 /**
- * Merges Jellyfin's playable episodes with Sonarr's full list + queue %,
- * keyed by (season, episode) - `EpisodeRepositoryImpl.kt`'s merge rule
- * verbatim: Jellyfin presence wins (`Available`); else Sonarr's queue %
- * (`Downloading`); else `Missing`. Season 0 "specials" are hidden UNLESS
- * Jellyfin actually has the file (a playable special must never be hidden).
+ * Merges Jellyfin's playable episodes with Sonarr's full list + queue status,
+ * keyed by (season, episode). Jellyfin presence wins (`Available`); else a
+ * matching Sonarr queue record resolves to `Downloading`/`Importing`/`Queued`
+ * (never invented - see `queueInfoFromRecord`); else `Missing` when Sonarr is
+ * still tracking the episode, or `NotMonitored` when Sonarr has explicitly
+ * given up on it (`monitored: false` - nothing is going to fetch it). Season
+ * 0 "specials" are hidden UNLESS Jellyfin actually has the file (a playable
+ * special must never be hidden).
  */
 export function mergeEpisodes(
   jellyfin: Map<string, JellyfinEpisodeInfo>,
   sonarrEpisodes: SonarrEpisode[],
-  percentByEpisodeId: Map<number, number>,
+  queueInfoByEpisodeId: Map<number, EpisodeQueueInfo>,
 ): SeriesEpisode[] {
   const sonarrByKey = new Map<string, SonarrEpisode>();
   for (const ep of sonarrEpisodes) {
@@ -155,11 +248,14 @@ export function mergeEpisodes(
     if (seasonNumber < 1 && !jf) continue;
 
     const sonarr = sonarrByKey.get(key);
+    const queueInfo = sonarr ? queueInfoByEpisodeId.get(sonarr.id) : undefined;
     const status: EpisodeStatus = jf
       ? { kind: 'Available', jellyfinItemId: jf.jellyfinItemId }
-      : sonarr && percentByEpisodeId.has(sonarr.id)
-        ? { kind: 'Downloading', percent: percentByEpisodeId.get(sonarr.id) as number }
-        : { kind: 'Missing' };
+      : queueInfo
+        ? statusFromQueueInfo(queueInfo)
+        : sonarr?.monitored === false
+          ? { kind: 'NotMonitored' }
+          : { kind: 'Missing' };
 
     episodes.push({
       seasonNumber,
@@ -168,6 +264,7 @@ export function mergeEpisodes(
       overview: jf?.overview ?? null,
       stillUrl: jf?.stillUrl ?? null,
       status,
+      mediaStreams: jf?.mediaStreams ?? null,
     });
   }
 
@@ -190,29 +287,61 @@ export function groupBySeason(episodes: SeriesEpisode[]): Map<number, SeriesEpis
 }
 
 /**
- * Whole-series completeness as a single 0..99 percentage: every episode
- * contributes its own readiness (Available = 1, Downloading = its fraction,
- * Missing = 0), averaged over ALL episodes. Returns `null` when there are no
- * episodes or the series is already fully available (100%) - in both cases
- * there is no progress bar to show. Ported from `DetailViewModel.kt`'s
- * `seriesCompleteness` verbatim.
+ * Honest progress over a set of episodes - a whole series, or one season's
+ * subset (same shape, same function; `SeriesTwoPane` applies it at both
+ * levels). Deliberately keeps "how much do I HAVE" (`availableCount` /
+ * `totalCount`) separate from "how much is currently HAPPENING"
+ * (`downloadingCount` / `importingCount` / `queuedCount`) - the owner's
+ * second complaint was these two different questions being fused into one
+ * "Descargando · N%" bar that kept reading a stale completeness percentage
+ * under an activity label, showing movement that had already stopped.
+ * `warningCount` surfaces stuck/broken transfers that were previously
+ * invisible (an item wedged in Sonarr's import pipeline for hours read as
+ * plain "En cola" before this rework).
  */
-export function seriesCompleteness(episodes: SeriesEpisode[]): number | null {
-  if (episodes.length === 0) return null;
+export interface EpisodeProgress {
+  availableCount: number;
+  totalCount: number;
+  downloadingCount: number;
+  importingCount: number;
+  queuedCount: number;
+  warningCount: number;
+}
 
-  const readiness = episodes.reduce((sum, episode) => {
-    switch (episode.status.kind) {
+export function progressOf(episodes: SeriesEpisode[]): EpisodeProgress {
+  const progress: EpisodeProgress = {
+    availableCount: 0,
+    totalCount: episodes.length,
+    downloadingCount: 0,
+    importingCount: 0,
+    queuedCount: 0,
+    warningCount: 0,
+  };
+
+  for (const { status } of episodes) {
+    switch (status.kind) {
       case 'Available':
-        return sum + 1;
+        progress.availableCount += 1;
+        break;
       case 'Downloading':
-        return sum + Math.min(1, Math.max(0, episode.status.percent / 100));
+        progress.downloadingCount += 1;
+        if (status.warning) progress.warningCount += 1;
+        break;
+      case 'Importing':
+        progress.importingCount += 1;
+        if (status.warning) progress.warningCount += 1;
+        break;
+      case 'Queued':
+        progress.queuedCount += 1;
+        if (status.warning) progress.warningCount += 1;
+        break;
       case 'Missing':
-        return sum;
+      case 'NotMonitored':
+        break;
     }
-  }, 0);
+  }
 
-  const percent = Math.floor((readiness / episodes.length) * 100);
-  return percent >= 100 ? null : percent;
+  return progress;
 }
 
 /**
@@ -236,7 +365,7 @@ export interface UseSeriesEpisodesResult {
   episodes: SeriesEpisode[];
   episodesBySeason: Map<number, SeriesEpisode[]>;
   seasons: number[];
-  seriesProgress: number | null;
+  seriesProgress: EpisodeProgress;
   defaultSeason: number | null;
   isLoading: boolean;
   isError: boolean;
@@ -264,12 +393,13 @@ export function useSeriesEpisodes(
         loadJellyfinEpisodes(userId as string, seriesJellyfinItemId as string, token),
         loadSonarrEpisodes(Number.isFinite(numericTmdbId) ? numericTmdbId : null, tvdbId),
       ]);
-      return mergeEpisodes(jellyfin, sonarr.episodes, sonarr.percentByEpisodeId);
+      return mergeEpisodes(jellyfin, sonarr.episodes, sonarr.queueInfoByEpisodeId);
     },
     enabled: Boolean(userId && seriesJellyfinItemId),
-    // Live-refresh per-episode status (queued/downloading/available) on the detail
-    // page. Without this the episode list was fetched once on mount and froze, so a
-    // completed download kept showing "En cola" until a manual reload.
+    // Live-refresh per-episode status (queued/downloading/importing/available)
+    // on the detail page. Without this the episode list was fetched once on
+    // mount and froze, so a completed download kept showing a stale status
+    // until a manual reload.
     staleTime: 8_000,
     refetchInterval: 15_000,
   });
@@ -280,7 +410,7 @@ export function useSeriesEpisodes(
     () => Array.from(episodesBySeason.keys()).sort((a, b) => a - b),
     [episodesBySeason],
   );
-  const seriesProgress = useMemo(() => seriesCompleteness(episodes), [episodes]);
+  const seriesProgress = useMemo(() => progressOf(episodes), [episodes]);
   const defaultSeason = useMemo(() => defaultSeasonFor(episodes), [episodes]);
 
   return {
