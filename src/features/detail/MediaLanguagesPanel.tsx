@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
+import type { SeriesEpisode } from '../../hooks/useSeriesEpisodes';
 import { audioLanguagesOf, defaultAudioLanguageOf, subtitleLanguagesOf } from './audioLanguages';
 import { prioritizeLanguages } from './prioritizeLanguages';
+import { seriesAudioLanguagesOf, seriesSubtitleLanguagesOf, type LanguageCoverage } from './seriesLanguages';
 
 // Detail-request spec's "Subtitle chip collapse for long lists": at most 4
 // always-visible chips (app language, Español, Inglés, file default -
@@ -19,27 +21,45 @@ const VISIBLE_CHIP_LIMIT = 4;
 //
 // `item` is the raw Jellyfin item (movie's own, or - for a series - the
 // first playable episode's, since a Series item carries no MediaStreams of
-// its own). `null`/`undefined` (not in the library yet, or a series with no
-// playable episode) renders nothing, same as the line it replaces.
+// its own) - it always drives the "Descargado en X" line. `null`/`undefined`
+// (not in the library yet, or a series with no playable episode) renders
+// nothing, same as the line it replaces.
+//
+// `episodes` (series only, owner ask #4 / live Bleach repro: 95 episodes, 71
+// with an embedded Spanish subtitle) switches the Audio/Subtítulos chip rows
+// from "`item`'s one file" to real per-series coverage
+// (`seriesLanguages.ts`): a chip that doesn't cover every episode reads
+// `Label · count de total` instead of a bare label that silently implied
+// 100% - the owner read a plain "Español" chip sourced from one lucky
+// episode and concluded the series had NO Spanish. Movies never pass this
+// prop and keep the original single-item chips unchanged.
 
 interface MediaLanguagesPanelProps {
   item: JellyfinItem | null | undefined;
   isLoading: boolean;
+  episodes?: SeriesEpisode[];
 }
 
 interface LanguageChipRowProps {
   label: string;
-  languages: string[];
+  coverage: LanguageCoverage[];
   defaultLanguage: string | null;
 }
 
-function LanguageChipRow({ label, languages, defaultLanguage }: LanguageChipRowProps) {
+/** `Label` when every considered episode/file has it, `Label · count de total` otherwise - never silently implies full coverage. */
+function chipText({ label, count, total }: LanguageCoverage): string {
+  return count < total ? `${label} · ${count} de ${total}` : label;
+}
+
+function LanguageChipRow({ label, coverage, defaultLanguage }: LanguageChipRowProps) {
   const [expanded, setExpanded] = useState(false);
+  const labels = useMemo(() => coverage.map((entry) => entry.label), [coverage]);
+  const byLabel = useMemo(() => new Map(coverage.map((entry) => [entry.label, entry])), [coverage]);
   const { shown, hidden } = useMemo(
-    () => prioritizeLanguages(languages, defaultLanguage, VISIBLE_CHIP_LIMIT),
-    [languages, defaultLanguage],
+    () => prioritizeLanguages(labels, defaultLanguage, VISIBLE_CHIP_LIMIT),
+    [labels, defaultLanguage],
   );
-  const visible = expanded ? languages : shown;
+  const visible = expanded ? labels : shown;
 
   return (
     <div className="pf-media-langs__row">
@@ -47,7 +67,7 @@ function LanguageChipRow({ label, languages, defaultLanguage }: LanguageChipRowP
       <ul className="pf-media-langs__chips">
         {visible.map((lang, index) => (
           <li key={`${lang}-${index}`} className="pf-media-langs__chip">
-            {lang}
+            {chipText(byLabel.get(lang) as LanguageCoverage)}
           </li>
         ))}
       </ul>
@@ -60,10 +80,22 @@ function LanguageChipRow({ label, languages, defaultLanguage }: LanguageChipRowP
   );
 }
 
-export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProps) {
+/** Wraps a single-item's language list as "full coverage" (count === total === 1 per language) - the movie/single-file shape `chipText` renders as a plain label, same as before this rework. */
+function fullCoverageOf(languages: string[]): LanguageCoverage[] {
+  return languages.map((label) => ({ label, count: 1, total: 1 }));
+}
+
+export function MediaLanguagesPanel({ item, episodes, isLoading }: MediaLanguagesPanelProps) {
   const downloadLanguage = useMemo(() => defaultAudioLanguageOf(item), [item]);
-  const audioLanguages = useMemo(() => audioLanguagesOf(item), [item]);
-  const subtitleLanguages = useMemo(() => subtitleLanguagesOf(item), [item]);
+
+  const audioCoverage = useMemo(
+    () => (episodes ? seriesAudioLanguagesOf(episodes) : fullCoverageOf(audioLanguagesOf(item))),
+    [episodes, item],
+  );
+  const subtitleCoverage = useMemo(
+    () => (episodes ? seriesSubtitleLanguagesOf(episodes) : fullCoverageOf(subtitleLanguagesOf(item))),
+    [episodes, item],
+  );
 
   if (isLoading) {
     return (
@@ -76,7 +108,7 @@ export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProp
     );
   }
 
-  if (downloadLanguage == null && audioLanguages.length === 0 && subtitleLanguages.length === 0) {
+  if (downloadLanguage == null && audioCoverage.length === 0 && subtitleCoverage.length === 0) {
     return null;
   }
 
@@ -88,16 +120,12 @@ export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProp
         </p>
       )}
 
-      {audioLanguages.length > 0 && (
-        <LanguageChipRow label="Audio" languages={audioLanguages} defaultLanguage={downloadLanguage} />
+      {audioCoverage.length > 0 && (
+        <LanguageChipRow label="Audio" coverage={audioCoverage} defaultLanguage={downloadLanguage} />
       )}
 
-      {subtitleLanguages.length > 0 && (
-        <LanguageChipRow
-          label="Subtítulos"
-          languages={subtitleLanguages}
-          defaultLanguage={downloadLanguage}
-        />
+      {subtitleCoverage.length > 0 && (
+        <LanguageChipRow label="Subtítulos" coverage={subtitleCoverage} defaultLanguage={downloadLanguage} />
       )}
     </section>
   );

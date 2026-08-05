@@ -397,7 +397,23 @@ describe('DetailScreen (TV via ?type=tv)', () => {
     mockedGetItems.mockImplementation(async (_userId, params) => {
       if (params?.parentId === 'jf-1408') {
         return {
-          Items: [{ Id: 'ep-1', Name: 'Episode One', IndexNumber: 1, ParentIndexNumber: 1, SeriesId: 'jf-1408' }],
+          Items: [
+            {
+              Id: 'ep-1',
+              Name: 'Episode One',
+              IndexNumber: 1,
+              ParentIndexNumber: 1,
+              SeriesId: 'jf-1408',
+              // Same streams `getItem` below returns for this episode - the
+              // media-languages panel's per-series coverage (owner ask #4)
+              // reads every episode's OWN streams from this bulk fetch
+              // (`useSeriesEpisodes.ts`), not a second per-item call.
+              MediaStreams: [
+                { Type: 'Audio', Language: 'eng', IsDefault: true },
+                { Type: 'Subtitle', Language: 'spa' },
+              ],
+            },
+          ],
           TotalRecordCount: 1,
           StartIndex: 0,
         };
@@ -422,7 +438,11 @@ describe('DetailScreen (TV via ?type=tv)', () => {
 
     await screen.findByRole('heading', { name: /mr\. robot/i });
     const card = await screen.findByRole('status');
+    // "Descargado en" still sources from the single resolved library item
+    // (`useLibraryItem`/`getItem`) - the panel's per-episode DEFAULT.
     expect(card.querySelector('.pf-media-langs__download strong')).toHaveTextContent('Inglés');
+    // The chip itself is a single-episode series here (1 of 1), so it reads
+    // as a plain label, same as full coverage always does.
     expect(within(card).getByText('Subtítulos')).toBeInTheDocument();
     expect(within(card).getByText('Español')).toBeInTheDocument();
     expect(mockedGetItem).toHaveBeenCalledWith('user-1', 'ep-1', 'ProviderIds,MediaStreams');

@@ -241,6 +241,11 @@ export function SeriesTwoPane({
     return map;
   }, [episodesBySeason]);
 
+  // Full flat episode list, ALL seasons - the media-languages panel's
+  // per-series coverage (owner ask #4) must count against every episode the
+  // series has, not just whichever season happens to be selected.
+  const allEpisodes = useMemo(() => Array.from(episodesBySeason.values()).flat(), [episodesBySeason]);
+
   return (
     <div className="pf-series-detail">
       <div className="pf-glass pf-glass--blur pf-series-detail__left">
@@ -268,7 +273,11 @@ export function SeriesTwoPane({
 
         <SeriesProgressSummary progress={seriesProgress} />
 
-        <MediaLanguagesPanel item={mediaLanguagesItem} isLoading={isMediaLanguagesLoading} />
+        <MediaLanguagesPanel
+          item={mediaLanguagesItem}
+          episodes={allEpisodes}
+          isLoading={isMediaLanguagesLoading}
+        />
 
         {secondaryLabel != null && (
           <button

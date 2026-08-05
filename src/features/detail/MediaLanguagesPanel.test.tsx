@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
+import type { SeriesEpisode } from '../../hooks/useSeriesEpisodes';
 import { MediaLanguagesPanel } from './MediaLanguagesPanel';
 
 function itemWithSubtitles(codes: string[]): JellyfinItem {
@@ -13,6 +14,18 @@ function itemWithSubtitles(codes: string[]): JellyfinItem {
       ...codes.map((code) => ({ Type: 'Subtitle', Language: code })),
     ],
   } as unknown as JellyfinItem;
+}
+
+function seriesEpisode(seasonNumber: number, episodeNumber: number, mediaStreams: unknown[] | null): SeriesEpisode {
+  return {
+    seasonNumber,
+    episodeNumber,
+    title: `E${episodeNumber}`,
+    overview: null,
+    stillUrl: null,
+    status: { kind: 'Missing' },
+    mediaStreams,
+  };
 }
 
 describe('MediaLanguagesPanel', () => {
@@ -93,5 +106,43 @@ describe('MediaLanguagesPanel', () => {
       .getAllByRole('listitem')
       .map((el) => el.textContent);
     expect(visibleLabels).toEqual(['Español', 'Inglés', 'Francés', 'Alemán']);
+  });
+});
+
+describe('MediaLanguagesPanel (series coverage - owner ask #4, live Bleach repro: 95 episodes, 71 with embedded Spanish)', () => {
+  it('shows "Label · count de total" when a language does not cover every episode', () => {
+    const episodes = [
+      ...Array.from({ length: 71 }, (_, i) => seriesEpisode(1, i + 1, [{ Type: 'Subtitle', Language: 'spa' }])),
+      ...Array.from({ length: 24 }, (_, i) => seriesEpisode(1, 71 + i + 1, null)),
+    ];
+    render(<MediaLanguagesPanel item={null} episodes={episodes} isLoading={false} />);
+
+    const card = screen.getByRole('status');
+    expect(within(card).getByText('Español · 71 de 95')).toBeInTheDocument();
+  });
+
+  it('shows a plain label (no count) when a language covers every episode', () => {
+    const episodes = Array.from({ length: 3 }, (_, i) =>
+      seriesEpisode(1, i + 1, [{ Type: 'Audio', Language: 'jpn' }]),
+    );
+    render(<MediaLanguagesPanel item={null} episodes={episodes} isLoading={false} />);
+
+    const card = screen.getByRole('status');
+    expect(within(card).getByText('Japonés')).toBeInTheDocument();
+    expect(within(card).queryByText(/Japonés ·/)).not.toBeInTheDocument();
+  });
+
+  it('renders nothing when no episode has any media streams yet (nothing downloaded)', () => {
+    const episodes = [seriesEpisode(1, 1, null), seriesEpisode(1, 2, null)];
+    const { container } = render(<MediaLanguagesPanel item={null} episodes={episodes} isLoading={false} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('falls back to the single-item behavior (movie / no `episodes` prop) unchanged', () => {
+    const item = itemWithSubtitles(['eng']);
+    render(<MediaLanguagesPanel item={item} isLoading={false} />);
+
+    const card = screen.getByRole('status');
+    expect(within(card).getByText('Inglés')).toBeInTheDocument();
   });
 });
