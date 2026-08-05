@@ -37,6 +37,14 @@
    opaque and paints over it), which shows up as a hard horizontal seam.
    Anchoring it here means the wash starts at zero right where the hero's
    feathered floor lands, and simply falls off downwards like real light.
+   That is only true if EVERY layer is zero at `top: 0`, which the first
+   version got wrong: the linear layer did start at 0 alpha, but the radial
+   glows were centred 40px down with a 640px radius, so at the element's top
+   edge they were already at nearly full strength and there was nothing above
+   to blend into - a 1px step from rgb(11,12,17) to rgb(25,24,19), read as a
+   hard line cutting the page in half. A radial only reaches zero once the
+   distance to its centre passes its last colour stop, so each centre now sits
+   further down than `radius * stop` (720 > 900*0.72, 900 > 760*0.72).
    `z-index: -1` keeps it behind the rows' own content while staying above
    the page background (`.pf-home__rows` is the stacking context).
    Pure paint: no `backdrop-filter`, no `filter`, no compositing cost - the
@@ -52,8 +60,8 @@
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(1500px 640px at 86% 40px, rgba(242, 193, 78, 0.15) 0%, rgba(242, 193, 78, 0) 72%),
-    radial-gradient(1200px 640px at 2% 720px, rgba(140, 255, 90, 0.075) 0%, rgba(140, 255, 90, 0) 72%),
+    radial-gradient(1500px 900px at 86% 720px, rgba(242, 193, 78, 0.15) 0%, rgba(242, 193, 78, 0) 72%),
+    radial-gradient(1200px 760px at 2% 900px, rgba(140, 255, 90, 0.075) 0%, rgba(140, 255, 90, 0) 72%),
     linear-gradient(to bottom, rgba(28, 33, 45, 0) 0px, rgba(28, 33, 45, 0.5) 380px, rgba(28, 33, 45, 0) 1500px);
 }
 
