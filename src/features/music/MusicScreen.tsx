@@ -14,6 +14,7 @@ import { audioItemToTrack, searchResultToTrack } from '../../lib/domain/musicTra
 import { songsOnly } from '../../lib/domain/musicTaste';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { MusicSearchResult, MusicSongResult, MusicSource } from '../../api/schemas/music';
+import { PoisonMark } from '../onboarding/PoisonMark';
 import { useMusicPlayer } from './musicPlayerCore';
 import { SourceToggle } from './SourceToggle';
 import { CoverImage } from './CoverImage';
@@ -223,7 +224,7 @@ export function MusicScreen() {
             you should know which half of the app you are in before you read a
             word of it. Decorative — the section is already named by the nav. */}
         <div className="pf-music__brand" aria-hidden="true">
-          <img src="/brand-music.png" alt="" width="72" height="72" />
+          <PoisonMark variant="music" />
         </div>
 
         <div className="pf-music__query">

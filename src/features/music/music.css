@@ -40,9 +40,12 @@
   justify-content: center;
 }
 
-.pf-music__brand img {
+/* The mark is inline SVG now, and height is set explicitly rather than left to
+   `auto`: the webOS 2018 Chrome does not derive an SVG's intrinsic ratio from
+   its viewBox, so `auto` there collapses to the 150px default. */
+.pf-music__brand > svg {
   width: clamp(3.25rem, 9vw, 4.5rem);
-  height: auto;
+  height: clamp(3.25rem, 9vw, 4.5rem);
   filter: drop-shadow(0 6px 18px rgb(0 0 0 / 0.55));
 }
 
