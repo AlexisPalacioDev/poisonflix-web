@@ -4,6 +4,7 @@
    full-screen grid in the app reads as one surface. */
 
 .pf-browse {
+  position: relative;
   flex: 1;
   min-height: 100%;
   padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
@@ -12,24 +13,67 @@
   padding-right: var(--pf-gutter);
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-md);
+  gap: var(--pf-space-lg);
 }
 
+/* Ambient wash, same recipe and same reasoning as Home's rails and Search
+   (see home.css's `.pf-home__rows::before`): a light source so the grid
+   reads as objects on a lit surface instead of stickers on a black wall.
+   `z-index: -1` rather than lifting the children, because a
+   `.pf-browse > *` bump would also match the fixed `<Header>`.
+   Pure paint - no `backdrop-filter`, nothing spent from the ≤2 blurred
+   surface budget. */
+.pf-browse::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1200px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(1500px 600px at 84% 0px, rgba(242, 193, 78, 0.13) 0%, rgba(242, 193, 78, 0) 70%),
+    radial-gradient(1100px 600px at 4% 620px, rgba(140, 255, 90, 0.06) 0%, rgba(140, 255, 90, 0) 70%),
+    linear-gradient(to bottom, rgba(28, 33, 45, 0.55) 0px, rgba(28, 33, 45, 0) 1000px);
+}
+
+/* Title block reads as a masthead: a glass back chip, the gold accent rule
+   every section heading in the app now carries, and a feathered hairline
+   under the whole row that separates it from the grid. */
 .pf-browse__header {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--pf-space-sm);
+  gap: var(--pf-space-md);
+  padding-bottom: var(--pf-space-lg);
+}
+
+.pf-browse__header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.05) 55%,
+    rgba(255, 255, 255, 0) 100%
+  );
 }
 
 .pf-browse__back {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   border-radius: var(--pf-radius-pill);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--pf-glass-border);
+  background: linear-gradient(to bottom, rgba(52, 59, 74, 0.85) 0%, rgba(20, 24, 31, 0.85) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
   color: var(--pf-text);
   cursor: pointer;
   transition:
@@ -59,6 +103,9 @@
 }
 
 .pf-browse__title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin: 0;
   /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
      `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
@@ -66,22 +113,41 @@
      TV/desktop-first target viewport is wide enough that this clamp mostly
      resolves to its cap already, so the static value below is what modern
      browsers already render most of the time, not a guess). */
-  font-size: 1.8rem;
-  font-size: clamp(1.4rem, 2vw, 1.8rem);
+  font-size: 2.3rem;
+  font-size: clamp(1.6rem, 2.6vw, 2.3rem);
   font-weight: 800;
+  letter-spacing: -0.03em;
   color: var(--pf-text);
+}
+
+/* The same gold accent rule Row's headings carry (Row.css), so a "ver todo"
+   grid is visibly the same section the rail it came from was. */
+.pf-browse__title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, var(--pf-gold) 0%, rgba(242, 193, 78, 0.12) 100%);
+  box-shadow: 0 0 14px rgba(242, 193, 78, 0.35);
 }
 
 .pf-browse__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 20px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 30px 22px;
+}
+
+/* PosterCard is fixed-width; in a `1fr` grid track it would sit hard against
+   the left edge of a wider cell. Centring keeps the columns visually even. */
+.pf-browse__grid > * {
+  justify-self: center;
 }
 
 .pf-browse__skeleton-card {
   width: 100%;
   aspect-ratio: 2 / 3;
-  border-radius: var(--pf-radius-md);
+  border-radius: var(--pf-radius-lg);
 }
 
 .pf-browse__status {
@@ -119,7 +185,11 @@
 
 @media (max-width: 640px) {
   .pf-browse__grid {
-    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-    gap: 16px 12px;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 20px 12px;
+  }
+
+  .pf-browse__skeleton-card {
+    border-radius: var(--pf-radius-md);
   }
 }
