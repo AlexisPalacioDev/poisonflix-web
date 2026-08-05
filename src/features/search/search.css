@@ -41,6 +41,14 @@
 
 .pf-search__preview {
   display: flex;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
+     D2 - so the declaration is dropped and the PRIOR one wins; this app's
+     TV/desktop-first target viewport is wide enough that this clamp mostly
+     resolves to its cap already, so the static value below is what modern
+     browsers already render most of the time, not a guess). Same technique
+     for every other clamp() in this file. */
+  gap: 36px;
   gap: clamp(20px, 3vw, 36px);
   padding: var(--pf-space-md) var(--pf-gutter) var(--pf-space-lg);
 }
@@ -51,6 +59,7 @@
 
 .pf-search__preview-art {
   flex: 0 0 auto;
+  width: 240px;
   width: clamp(180px, 20vw, 240px);
   aspect-ratio: 2 / 3;
   border-radius: var(--pf-radius-lg);
@@ -86,6 +95,7 @@
 .pf-search__preview-title {
   margin: 0;
   color: var(--pf-text);
+  font-size: 2rem;
   font-size: clamp(1.4rem, 2.4vw, 2rem);
   font-weight: 800;
 }

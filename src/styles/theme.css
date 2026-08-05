@@ -69,6 +69,16 @@
   --pf-glass-border: rgba(255, 255, 255, 0.08);
   --pf-glass-blur: blur(28px) saturate(150%);
 
+  /* Header/nav "chrome" blur (Header.css's `.pf-header--scrolled` and
+     `.pf-header__menu-panel`) - deliberately lighter/subtler than
+     `--pf-glass-blur` (14px vs 28px): a fixed top bar needs to stay legible
+     without heavily obscuring the content scrolling beneath it, unlike a
+     floating card. Token exists so the SAME value isn't duplicated as a
+     literal in two rules within Header.css (D1's single-source-of-truth
+     spirit) - not meant to alias `--pf-glass-blur`, which is a distinct,
+     intentionally different value for a distinct surface type. */
+  --pf-chrome-blur: blur(14px) saturate(1.2);
+
   /* --- Elevation scale (aliases the existing shadow tokens above, named for
      the shared "vidrio y profundidad" language: 1 = resting card, 2 = raised
      panel, 3 = hero/modal-level surface). --- */
