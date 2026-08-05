@@ -4,10 +4,15 @@ import { PoisonMark } from './PoisonMark';
 
 // The mark is the only place the brand artwork lives, and it is inline SVG
 // rather than an <img>, so nothing else in the app fails loudly if it breaks.
-// These tests pin the contract the five call sites rely on: it renders, it is
-// labelled, the `music` variant is visibly a different mark (not just a colour
-// swap of the same one), and `className` reaches the <svg> so the per-screen
-// CSS can size it.
+//
+// A note on what these tests can and cannot do: a first pass here asserted only
+// that the two variants produced different markup. That passed while the music
+// variant was the clapperboard recoloured green - different paths, same object.
+// Comparing markup is worthless. So the shape assertions below name the parts
+// that make each object recognisable (two tape reels for the cassette, the
+// three-band slate for the clapper) via `data-part`, which is a claim a wrong
+// drawing cannot satisfy by accident. Anything about how it *looks* still needs
+// human eyes on a render.
 
 describe('PoisonMark', () => {
   it('renders a labelled SVG for the video side', () => {
@@ -19,21 +24,42 @@ describe('PoisonMark', () => {
     expect(screen.getByRole('img', { name: 'PoisonFlix' })).toBe(svg);
   });
 
-  it('swaps to the cassette mark and its own label for the music side', () => {
+  it('renders the cassette under its own label for the music side', () => {
     const { container } = render(<PoisonMark variant="music" />);
 
-    expect(screen.getByRole('img', { name: 'PoisonFlix Música' })).not.toBeNull();
-    // The cassette carries the green accent; the clapper never does.
-    expect(container.innerHTML).toContain('#57C838');
-    expect(container.innerHTML).not.toContain('#E1152B');
+    expect(screen.getByRole('img', { name: 'PoisonFlix Música' })).toBe(
+      container.querySelector('svg'),
+    );
   });
 
-  it('draws a different shape per variant instead of recolouring one', () => {
-    const video = render(<PoisonMark />).container.innerHTML;
-    const music = render(<PoisonMark variant="music" />).container.innerHTML;
+  it('draws the cassette with a pair of tape reels', () => {
+    const { container } = render(<PoisonMark variant="music" />);
 
-    expect(video).not.toEqual(music);
-    expect(video).toContain('#E1152B');
+    const reels = Array.from(container.querySelectorAll('[data-part="reel"] > circle:first-child'));
+    expect(reels).toHaveLength(2);
+    // Mirrored across the shell's centre line, which is what reads as a
+    // cassette rather than as a single lens or eye.
+    const cx = reels.map((r) => Number(r.getAttribute('cx')));
+    expect(cx[0]).toBe(-cx[1]);
+    expect(cx[0]).not.toBe(0);
+  });
+
+  it('draws the clapper with its three-band slate and no reels', () => {
+    const { container } = render(<PoisonMark />);
+
+    expect(container.querySelectorAll('[data-part="stripe"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-part="reel"]')).toHaveLength(0);
+  });
+
+  it('keeps the two variants as different objects, not one recoloured', () => {
+    const music = render(<PoisonMark variant="music" />).container;
+
+    // The cassette must not inherit the clapper's slate, and the clapper must
+    // not grow reels - covered above. Colour is the last difference, not the
+    // only one.
+    expect(music.querySelectorAll('[data-part="stripe"]')).toHaveLength(0);
+    expect(music.innerHTML).toContain('#57C838');
+    expect(music.innerHTML).not.toContain('#E1152B');
   });
 
   it('forwards className so each screen can size the mark', () => {

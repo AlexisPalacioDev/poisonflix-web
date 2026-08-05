@@ -47,8 +47,11 @@ export default defineConfig({
         theme_color: '#0a0c10',
         background_color: '#0a0c10',
         display: 'standalone',
-        // Rendered from the live PoisonMark component (see the icon-*.png in
-        // public/) so the launcher icon cannot drift from the in-app mark.
+        // Rendered from `public/brand-video.png`, the clapper artwork the owner
+        // supplied - NOT from the PoisonMark component, whatever this comment
+        // used to claim. PoisonMark is a flat re-draw of that same artwork, and
+        // `public/favicon.svg` is exported from it, so the launcher icon and the
+        // in-app mark share a source even though they are produced separately.
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
