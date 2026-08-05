@@ -1,0 +1,168 @@
+/* Shared "vidrio y profundidad" primitives (design.md D1): the surface,
+   button, chip, panel and form-field treatment every screen consumes
+   instead of hand-rolling its own rgba/blur/shadow combo. Detail
+   (`ab8a5ec`) is the arbiter - every value below traces back to what
+   `detail.css`/`Hero.css` already shipped and had approved; this file only
+   moves those values one layer up so the other 24 stylesheets can reuse
+   them. Plain CSS, BEM-ish naming, no CSS-in-JS/Tailwind (hard project
+   rule). Values live as tokens in `theme.css`. */
+
+/* -----------------------------------------------------------------------
+   Glass surface
+   -----------------------------------------------------------------------
+   `.pf-glass` alone is the LOOK - translucent background, hairline border,
+   radius, shadow - with NO blur, so it's safe (and cheap) to use on any
+   surface, including per-row/per-card ones, at zero extra GPU cost.
+
+   `.pf-glass--blur` adds the real `backdrop-filter` on top and is reserved
+   for large, few, fixed surfaces (header, playback bar, queue drawer, modal
+   overlays, at most one accent card per screen) per the spec's
+   backdrop-filter budget (≤2 surfaces with visible blur at once). Combined,
+   `.pf-glass .pf-glass--blur` reproduces detail.css's original `.pf-glass`
+   byte-for-byte - Detail's own 3 call sites adopt exactly this pair so the
+   approved arbiter doesn't move a pixel. Never add `--blur` to a row/card/
+   chip rule - `scripts/check-legacy-css.mjs` enforces this by selector. */
+.pf-glass {
+  background: var(--pf-glass-bg);
+  border: 1px solid var(--pf-glass-border);
+  border-radius: var(--pf-radius-xl);
+  box-shadow: var(--pf-elev-3);
+}
+
+.pf-glass--blur {
+  backdrop-filter: var(--pf-glass-blur);
+  -webkit-backdrop-filter: var(--pf-glass-blur);
+}
+
+/* Some embedded/TV WebViews accept the `backdrop-filter` declaration but
+   never render it, which would leave a `.pf-glass--blur` surface merely
+   translucent with nothing behind it softened - illegible. Fall back to a
+   near-opaque background so the card stays readable instead. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pf-glass--blur {
+    background: var(--pf-glass-bg-opaque);
+  }
+}
+
+/* -----------------------------------------------------------------------
+   Buttons (ported as-is from Hero.css's `.pf-btn*` - hero + detail already
+   share this, this just makes the sharing explicit for every other screen)
+   ----------------------------------------------------------------------- */
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 26px;
+  border-radius: var(--pf-radius-pill);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition:
+    transform var(--pf-dur-fast) var(--pf-ease),
+    background var(--pf-dur-fast) var(--pf-ease),
+    box-shadow var(--pf-dur-fast) var(--pf-ease);
+}
+
+.pf-btn:hover {
+  transform: translateY(-1px);
+}
+
+.pf-btn:active {
+  transform: translateY(0);
+}
+
+.pf-btn--play {
+  background: var(--pf-available);
+  color: #06210a;
+  box-shadow: 0 8px 24px rgba(140, 255, 90, 0.28);
+}
+
+.pf-btn--play:hover {
+  background: #9dff72;
+}
+
+.pf-btn--gold {
+  background: var(--pf-gold);
+  color: #241b03;
+  box-shadow: 0 8px 24px rgba(242, 193, 78, 0.26);
+}
+
+.pf-btn--gold:hover {
+  background: #f6cd6b;
+}
+
+.pf-btn--ghost {
+  background: rgba(237, 239, 242, 0.12);
+  color: var(--pf-text);
+  border-color: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.pf-btn--ghost:hover {
+  background: rgba(237, 239, 242, 0.2);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+/* -----------------------------------------------------------------------
+   Chip (ported from detail.css's `.pf-media-langs__chip`, generalized so
+   any screen's pill-shaped tag can reuse it without a local declaration)
+   ----------------------------------------------------------------------- */
+.pf-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--pf-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+/* -----------------------------------------------------------------------
+   Panel (opaque content block for settings/admin/auth screens - no blur:
+   these are large, static, often full-height surfaces, well outside the
+   backdrop-filter budget)
+   ----------------------------------------------------------------------- */
+.pf-panel {
+  background: var(--pf-glass-bg-opaque);
+  border: 1px solid var(--pf-glass-border);
+  border-radius: var(--pf-radius-lg);
+  box-shadow: var(--pf-elev-1);
+  padding: var(--pf-space-lg);
+}
+
+/* -----------------------------------------------------------------------
+   Form field (ported from onboarding.css's `.pf-onboarding__field/__label/
+   __input`, generalized for register/forgot-password/admin reuse)
+   ----------------------------------------------------------------------- */
+.pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pf-field__label {
+  font-size: 0.8125rem;
+  color: var(--pf-text-dim);
+}
+
+.pf-field__input {
+  background: var(--pf-bg);
+  border: 1px solid #2a303c;
+  border-radius: var(--pf-radius-md);
+  padding: 12px 14px;
+  color: var(--pf-text);
+  font-size: 0.95rem;
+}
+
+.pf-field__input:focus {
+  outline: none;
+  border-color: var(--pf-gold);
+}
+
+.pf-field__input:disabled {
+  color: var(--pf-text-dim);
+  opacity: 0.7;
+}

@@ -6,7 +6,8 @@ import { audioLanguagesOf, defaultAudioLanguageOf, subtitleLanguagesOf } from '.
 // downloaded/plays in by default, plus the full audio/subtitle breakdown
 // embedded in it. One compact card next to the cover instead of the old
 // scattered "Audio disponible" text line + the (now admin-only) torrents
-// block - see detail.css's `.pf-glass` for the shared card treatment.
+// block - see src/styles/primitives.css's `.pf-glass`/`.pf-glass--blur` for
+// the shared card treatment.
 //
 // `item` is the raw Jellyfin item (movie's own, or - for a series - the
 // first playable episode's, since a Series item carries no MediaStreams of
@@ -25,7 +26,10 @@ export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProp
 
   if (isLoading) {
     return (
-      <section className="pf-glass pf-media-langs pf-media-langs--loading" aria-busy="true">
+      <section
+        className="pf-glass pf-glass--blur pf-media-langs pf-media-langs--loading"
+        aria-busy="true"
+      >
         <span className="pf-media-langs__hint">Cargando idiomas…</span>
       </section>
     );
@@ -36,7 +40,7 @@ export function MediaLanguagesPanel({ item, isLoading }: MediaLanguagesPanelProp
   }
 
   return (
-    <section className="pf-glass pf-media-langs" role="status">
+    <section className="pf-glass pf-glass--blur pf-media-langs" role="status">
       {downloadLanguage != null && (
         <p className="pf-media-langs__download">
           Descargado en <strong>{downloadLanguage}</strong>

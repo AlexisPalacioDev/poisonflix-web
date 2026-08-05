@@ -74,7 +74,14 @@
   font-weight: 600;
 }
 
-.pf-header__search:hover,
+/* Split from a combined `:hover, :focus-visible` list - Chrome 53/webOS 2018
+   drops the whole rule when one selector in a comma list is unsupported. */
+.pf-header__search:hover {
+  background: rgba(242, 193, 78, 0.14);
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
 .pf-header__search:focus-visible {
   background: rgba(242, 193, 78, 0.14);
   border-color: var(--pf-gold);

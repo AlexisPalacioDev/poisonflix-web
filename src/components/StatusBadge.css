@@ -2,6 +2,13 @@
    InLibrary -> available/green, Requesting -> gold, Requestable -> neutral
    outline. */
 
+/* No `backdrop-filter`: this badge renders PER CARD (posterItems.tsx,
+   DownloadingRow.tsx, SearchScreen.tsx grids), so a blur here was decenas of
+   GPU-composited layers on a single Search grid - exactly the "per-item
+   blur" the spec's backdrop-filter budget forbids (design.md corrections
+   table: pulled forward from slice 2's task 2.9 into slice 1, since
+   `scripts/check-legacy-css.mjs` enforces this budget tree-wide from the
+   moment it exists). */
 .pf-status-badge {
   display: inline-block;
   padding: 2px 8px;
@@ -9,7 +16,6 @@
   font-size: 0.6875rem;
   font-weight: 600;
   line-height: 1.4;
-  backdrop-filter: blur(2px);
 }
 
 .pf-status-badge--in-library {

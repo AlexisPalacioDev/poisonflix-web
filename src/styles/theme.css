@@ -19,8 +19,9 @@
   --pf-space-xl: 40px;
   --pf-space-2xl: 64px;
   /* Horizontal page gutter grows on wide desktop / TV so rows breathe and
-     content doesn't clump against the left edge on ultra-wide screens. */
-  --pf-gutter: clamp(16px, 4.5vw, 60px);
+     content doesn't clump against the left edge on ultra-wide screens.
+     Token value is set at the bottom of this block (Chrome 53 floor + the
+     @supports-gated fluid branch right after) - see that comment for why. */
 
   /* --- Radii --- */
   --pf-radius-sm: 8px;
@@ -59,4 +60,42 @@
     rgba(10, 12, 16, 0.6) 42%,
     rgba(10, 12, 16, 0) 78%
   );
+
+  /* --- Glass / depth (the "vidrio y profundidad" language, arbitrated by
+     Detail's approved detail.css - see src/styles/primitives.css for the
+     shared surface classes that consume these). --- */
+  --pf-glass-bg: rgba(18, 21, 27, 0.5);
+  --pf-glass-bg-opaque: rgba(15, 18, 23, 0.92); /* no backdrop-filter support */
+  --pf-glass-border: rgba(255, 255, 255, 0.08);
+  --pf-glass-blur: blur(28px) saturate(150%);
+
+  /* --- Elevation scale (aliases the existing shadow tokens above, named for
+     the shared "vidrio y profundidad" language: 1 = resting card, 2 = raised
+     panel, 3 = hero/modal-level surface). --- */
+  --pf-elev-1: var(--pf-shadow-card);
+  --pf-elev-2: 0 12px 30px rgba(0, 0, 0, 0.48);
+  --pf-elev-3: var(--pf-shadow-hero);
+
+  /* --- Typography scale (font-size only; weight/tracking stay per call site,
+     they vary too much to bundle into one token - see detail.css's title/
+     season-heading/overview/label rules, the source of these values). --- */
+  --pf-font-title: clamp(2rem, 3.6vw, 3rem);
+  --pf-font-section: 1.1rem;
+  --pf-font-body: 1rem;
+  --pf-font-label: 0.72rem;
+
+  /* Horizontal page gutter: flat px floor first (Chrome 53/webOS 2018 can't
+     resolve `var()` against a `clamp()` value at computed-value time - see
+     postcss-flex-gap-fallback.mjs's header comment and design.md D2 - so the
+     token itself must degrade, not just its consumers), then the fluid value
+     under @supports for every browser that actually understands clamp().
+     The @supports branch is byte-for-byte the value this repo already
+     shipped, so modern Chrome renders identically before/after this switch. */
+  --pf-gutter: 24px;
+}
+
+@supports (width: clamp(1px, 1vw, 2px)) {
+  :root {
+    --pf-gutter: clamp(16px, 4.5vw, 60px);
+  }
 }

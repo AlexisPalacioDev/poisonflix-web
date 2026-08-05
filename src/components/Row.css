@@ -25,7 +25,14 @@
   text-decoration: none;
 }
 
-.pf-row__title-link:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-row__title-link:hover {
+  color: var(--pf-gold);
+  outline: none;
+}
+
 .pf-row__title-link:focus-visible {
   color: var(--pf-gold);
   outline: none;
@@ -51,7 +58,12 @@
   height: 16px;
 }
 
-.pf-row__title-link:hover .pf-row__title-cta,
+.pf-row__title-link:hover .pf-row__title-cta {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--pf-gold);
+}
+
 .pf-row__title-link:focus-visible .pf-row__title-cta {
   opacity: 1;
   transform: translateX(0);
@@ -92,7 +104,10 @@
   transition: background var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-row__retry:hover,
+.pf-row__retry:hover {
+  background: rgba(229, 72, 77, 0.14);
+}
+
 .pf-row__retry:focus-visible {
   background: rgba(229, 72, 77, 0.14);
 }
@@ -177,7 +192,10 @@
   background: linear-gradient(to left, rgba(0, 0, 0, 0.7), transparent);
 }
 
-.pf-row__viewport:hover .pf-row__nav,
+.pf-row__viewport:hover .pf-row__nav {
+  opacity: 1;
+}
+
 .pf-row__nav:focus-visible {
   opacity: 1;
 }
@@ -186,7 +204,10 @@
   transition: transform var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-row__nav:hover > svg,
+.pf-row__nav:hover > svg {
+  transform: scale(1.2);
+}
+
 .pf-row__nav:focus-visible > svg {
   transform: scale(1.2);
 }

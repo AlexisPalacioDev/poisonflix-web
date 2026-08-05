@@ -39,7 +39,15 @@
     transform var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-browse__back:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-browse__back:hover {
+  background: rgba(242, 193, 78, 0.14);
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
 .pf-browse__back:focus-visible {
   background: rgba(242, 193, 78, 0.14);
   border-color: var(--pf-gold);
@@ -94,7 +102,10 @@
   transition: background var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-browse__retry:hover,
+.pf-browse__retry:hover {
+  background: rgba(229, 72, 77, 0.14);
+}
+
 .pf-browse__retry:focus-visible {
   background: rgba(229, 72, 77, 0.14);
 }

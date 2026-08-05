@@ -387,6 +387,13 @@ export function DetailScreen() {
             <MediaLanguagesPanel item={libraryItem} isLoading={isLibraryItemLoading} />
           </div>
 
+          {/* No `--blur`: on a scrolled movie Detail, the fixed header
+              (`.pf-header--scrolled`) and the media-languages card both
+              already carry real `backdrop-filter`, so a third blurred
+              surface here would exceed the spec's ≤2-concurrent budget
+              (resolved ambiguity: spec's ≤2 wins over design's ≤3 - see
+              apply-progress notes). Stays `.pf-glass` for the look, minus
+              the GPU cost. */}
           <div className="pf-detail__info pf-glass">
             <h1 className="pf-detail__title">{detail.title}</h1>
 

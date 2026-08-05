@@ -28,6 +28,14 @@
   top: 0;
   left: 0;
   right: 0;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `clamp()`/`min()` value - see scripts/check-legacy-css.mjs rule b /
+     design.md D2 - so the declaration is dropped and the PRIOR one wins;
+     this app's TV/desktop-first target viewport is wide/tall enough that
+     these clamps mostly resolve to their cap already, so the static value
+     below is what modern browsers already render most of the time, not a
+     guess). Same technique for every other clamp()/min() in this file. */
+  height: 720px;
   height: clamp(420px, 68vh, 720px);
   background-size: cover;
   background-position: center 18%;
@@ -74,32 +82,29 @@
 }
 
 /* --- Shared "glass" card treatment ------------------------------------ */
-/* Translucent, blurred surface floating over the blurred backdrop. Falls
-   back to a near-opaque surface when `backdrop-filter` isn't supported (some
-   embedded/TV WebViews) so cards stay legible instead of turning see-through
-   with no blur to soften what's behind them. */
-.pf-glass {
-  background: rgba(18, 21, 27, 0.5);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--pf-radius-xl);
-  box-shadow: var(--pf-shadow-hero);
-}
-
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .pf-glass {
-    background: rgba(15, 18, 23, 0.92);
-  }
-}
+/* `.pf-glass`/`.pf-glass--blur` now live in `src/styles/primitives.css`
+   (design.md D1) - every consumer below adds both classes explicitly so
+   this screen, the arbiter for the whole redesign, renders byte-for-byte
+   the same as before the primitive moved up a layer. */
 
 .pf-detail__content {
   position: relative;
   z-index: 1;
   display: flex;
   align-items: flex-start;
+  gap: 48px;
   gap: clamp(24px, 4vw, 48px);
-  padding: clamp(240px, 38vh, 420px) var(--pf-gutter) var(--pf-space-lg);
+  /* Longhand instead of the shorthand this used to be: the shorthand mixed
+     a literal `clamp()` (top) with `var(--pf-gutter)` (left/right) in ONE
+     declaration, which Chrome 53 fails at COMPUTED-value time - declaration
+     doubling can't rescue that (design.md D2). Splitting into longhands
+     isolates the clamp()-only top (fixable via doubling, below) from the
+     var()-only sides (fine already). */
+  padding-top: 420px;
+  padding-top: clamp(240px, 38vh, 420px);
+  padding-right: var(--pf-gutter);
+  padding-bottom: var(--pf-space-lg);
+  padding-left: var(--pf-gutter);
   max-width: 1100px;
 }
 
@@ -108,6 +113,7 @@
    column - reused as-is for the series two-pane's own left rail. */
 .pf-detail__left {
   flex: 0 0 auto;
+  width: 280px;
   width: clamp(200px, 22vw, 280px);
   display: flex;
   flex-direction: column;
@@ -144,12 +150,14 @@
   flex-direction: column;
   gap: var(--pf-space-md);
   min-width: 0;
+  padding: 32px;
   padding: clamp(20px, 2.6vw, 32px);
 }
 
 .pf-detail__title {
   margin: 0;
   color: var(--pf-text);
+  font-size: 3rem;
   font-size: clamp(2rem, 3.6vw, 3rem);
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -381,16 +389,19 @@
 
 .pf-series-detail {
   display: flex;
+  gap: 48px;
   gap: clamp(24px, 4vw, 48px);
   width: 100%;
 }
 
 .pf-series-detail__left {
   flex: 0 0 auto;
+  width: 300px;
   width: clamp(220px, 24vw, 300px);
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-sm);
+  padding: 22px;
   padding: clamp(16px, 2vw, 22px);
 }
 
@@ -565,7 +576,14 @@
   cursor: pointer;
 }
 
-.pf-episode-row:focus-visible,
+/* Split from a combined `:hover, :focus-visible` list - Chrome 53/webOS 2018
+   drops the whole rule when one selector in a comma list is unsupported
+   (design.md D2 corrections table - this specific rule was the cited
+   evidence: `:hover` was silently lost too). */
+.pf-episode-row:focus-visible {
+  border-color: var(--pf-gold);
+}
+
 .pf-episode-row:hover {
   border-color: var(--pf-gold);
 }
@@ -660,6 +678,7 @@
 @media (max-width: 720px) {
   .pf-detail__content {
     flex-direction: column;
+    padding-top: 340px;
     padding-top: clamp(220px, 44vh, 340px);
   }
 

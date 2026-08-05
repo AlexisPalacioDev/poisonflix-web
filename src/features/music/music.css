@@ -333,7 +333,14 @@
   transition: background var(--pf-dur-fast, 0.16s) ease, color var(--pf-dur-fast, 0.16s) ease;
 }
 
-.pf-music__row-del:hover:not(:disabled),
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-music__row-del:hover:not(:disabled) {
+  background: rgba(255, 70, 70, 0.16);
+  color: #ff8a8a;
+}
+
 .pf-music__row-del:focus-visible {
   background: rgba(255, 70, 70, 0.16);
   color: #ff8a8a;
@@ -396,7 +403,10 @@
   background: linear-gradient(to left, rgba(0, 0, 0, 0.72), transparent);
 }
 
-.pf-music__rail-viewport:hover .pf-music__rail-nav,
+.pf-music__rail-viewport:hover .pf-music__rail-nav {
+  opacity: 1;
+}
+
 .pf-music__rail-nav:focus-visible {
   opacity: 1;
 }
@@ -405,7 +415,10 @@
   transition: transform var(--pf-dur-fast, 0.16s) ease;
 }
 
-.pf-music__rail-nav:hover > svg,
+.pf-music__rail-nav:hover > svg {
+  transform: scale(1.2);
+}
+
 .pf-music__rail-nav:focus-visible > svg {
   transform: scale(1.2);
 }
@@ -484,10 +497,20 @@
     background var(--pf-dur-fast, 0.16s) ease;
 }
 
-.pf-music__rec:hover .pf-music__rec-btn,
-.pf-music__rec-btn:focus-visible,
-/* The sounding card keeps its control visible: a pause button you can only
-   reach by hovering is a pause button the user cannot find. */
+/* Split from a combined `:hover, :focus-visible, --active` list - Chrome
+   53/webOS 2018 drops the whole rule when one selector in a comma list is
+   unsupported. The sounding card keeps its control visible: a pause button
+   you can only reach by hovering is a pause button the user cannot find. */
+.pf-music__rec:hover .pf-music__rec-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pf-music__rec-btn:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .pf-music__rec-btn--active {
   opacity: 1;
   transform: translateY(0);
@@ -851,7 +874,11 @@
   color: inherit;
 }
 
-.pf-music__row-link:focus-visible,
+.pf-music__row-link:focus-visible {
+  outline: 2px solid var(--pf-green, #1db954);
+  outline-offset: 2px;
+}
+
 .pf-music__track-link:focus-visible {
   outline: 2px solid var(--pf-green, #1db954);
   outline-offset: 2px;
@@ -1045,7 +1072,10 @@
   transition: background var(--pf-dur-fast, 0.16s) ease;
 }
 
-.pf-music__addpl-item:hover:not(:disabled),
+.pf-music__addpl-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .pf-music__addpl-item:focus-visible {
   background: rgba(255, 255, 255, 0.1);
 }

@@ -40,7 +40,14 @@
   cursor: pointer;
 }
 
-.pf-queue__close:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-queue__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
 .pf-queue__close:focus-visible {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
@@ -155,7 +162,11 @@
   cursor: pointer;
 }
 
-.pf-queue__remove:hover,
+.pf-queue__remove:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
 .pf-queue__remove:focus-visible {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;

@@ -52,7 +52,16 @@
   background: radial-gradient(120% 120% at 50% 0%, var(--pf-surface-2) 0%, var(--pf-surface) 70%);
 }
 
-.pf-poster-card:hover .pf-poster-card__art,
+/* Split from a combined `:hover, :focus-visible` selector list (Chrome
+   53/webOS 2018 error-handling: an unsupported pseudo-class inside a
+   comma-separated list invalidates the WHOLE rule, not just its own branch -
+   design.md D2/corrections table). Two independent rules instead. */
+.pf-poster-card:hover .pf-poster-card__art {
+  transform: translateY(-6px) scale(1.04);
+  box-shadow: var(--pf-shadow-card-hover);
+  outline-color: var(--pf-gold);
+}
+
 .pf-poster-card:focus-visible .pf-poster-card__art {
   transform: translateY(-6px) scale(1.04);
   box-shadow: var(--pf-shadow-card-hover);
@@ -105,7 +114,10 @@
   transition: color var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-poster-card:hover .pf-poster-card__title,
+.pf-poster-card:hover .pf-poster-card__title {
+  color: var(--pf-text);
+}
+
 .pf-poster-card:focus-visible .pf-poster-card__title {
   color: var(--pf-text);
 }

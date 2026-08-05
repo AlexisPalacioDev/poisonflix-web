@@ -57,7 +57,13 @@
   color: var(--pf-text);
 }
 
-.pf-confirm-overlay__button--dismiss:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-confirm-overlay__button--dismiss:hover {
+  background: var(--pf-surface-2);
+}
+
 .pf-confirm-overlay__button--dismiss:focus-visible {
   background: var(--pf-surface-2);
 }
@@ -68,7 +74,10 @@
   color: var(--pf-bg);
 }
 
-.pf-confirm-overlay__button--confirm:hover,
+.pf-confirm-overlay__button--confirm:hover {
+  background: var(--pf-gold-dim);
+}
+
 .pf-confirm-overlay__button--confirm:focus-visible {
   background: var(--pf-gold-dim);
 }
@@ -79,7 +88,10 @@
   color: var(--pf-text);
 }
 
-.pf-confirm-overlay__button--danger:hover,
+.pf-confirm-overlay__button--danger:hover {
+  background: rgba(229, 72, 77, 0.8);
+}
+
 .pf-confirm-overlay__button--danger:focus-visible {
   background: rgba(229, 72, 77, 0.8);
 }

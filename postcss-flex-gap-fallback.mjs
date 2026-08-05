@@ -14,7 +14,79 @@
 // separates items, in a column only the vertical one. Applying both would
 // shove every row item down by the gap amount.
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import postcss from 'postcss';
+
 const LENGTH = /^-?[\d.]+(px|rem|em|%|vw|vh|ch)$/;
+const VAR_REF = /^var\(\s*(--[\w-]+)\s*(?:,\s*([^)]+))?\s*\)$/;
+
+const THEME_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'src/styles/theme.css',
+);
+
+/**
+ * Reads the top-level `--*` custom property declarations out of a `:root`
+ * block, skipping any `:root` nested inside an at-rule (e.g.
+ * `@supports (...) { :root { ... } }`). Chrome 53/webOS 2018 - the browser
+ * this fallback exists for - never evaluates the `@supports` branch, so only
+ * the flat, static declarations are a valid source of truth for what that
+ * browser will actually compute (design.md D2). Accepts a CSS string so it
+ * stays a pure, directly-testable function independent of the filesystem.
+ */
+export function loadStaticTokens(css) {
+  const tokens = new Map();
+  const root = postcss.parse(css);
+  root.walkRules(':root', (rule) => {
+    if (rule.parent?.type === 'atrule') return;
+    rule.walkDecls((decl) => {
+      if (decl.prop.startsWith('--')) tokens.set(decl.prop, decl.value.trim());
+    });
+  });
+  return tokens;
+}
+
+/**
+ * Resolves a `gap`/`row-gap`/`column-gap` declaration value to a flat length
+ * string the fallback margin rule can use, or `null` if it can't be resolved
+ * to one. Handles three shapes: a literal length (`12px`), a `var()`
+ * reference into `tokens` (recursively, so a token that itself references
+ * another token still resolves), and a `var()` with an inline fallback
+ * (`var(--unknown, 8px)`) when the token isn't in the map at all. Anything
+ * else (an unresolvable var, or a token resolving to a non-length value like
+ * a color) returns `null` so the caller skips emitting a fallback rather than
+ * emitting a broken one.
+ */
+export function resolveLength(value, tokens, seen = new Set()) {
+  const trimmed = value.trim();
+  if (LENGTH.test(trimmed)) return trimmed;
+
+  const match = trimmed.match(VAR_REF);
+  if (!match) return null;
+
+  const [, name, fallback] = match;
+  if (tokens.has(name) && !seen.has(name)) {
+    return resolveLength(tokens.get(name), tokens, new Set(seen).add(name));
+  }
+  if (fallback) return resolveLength(fallback, tokens, seen);
+  return null;
+}
+
+let cachedTokens = null;
+
+function getStaticTokens() {
+  if (cachedTokens) return cachedTokens;
+  try {
+    cachedTokens = loadStaticTokens(readFileSync(THEME_PATH, 'utf8'));
+  } catch {
+    // theme.css missing/unreadable (e.g. a standalone unit test feeding this
+    // plugin isolated CSS) - degrade to literal-length-only resolution.
+    cachedTokens = new Map();
+  }
+  return cachedTokens;
+}
 
 /** `gap: 8px 16px` -> { row: '8px', column: '16px' }; `gap: 8px` -> both. */
 function parseGap(value) {
@@ -66,8 +138,13 @@ export default function flexGapFallback() {
         }
 
         const isColumn = direction.startsWith('column');
-        const value = isColumn ? row : column;
-        if (!value || !LENGTH.test(value)) return;
+        const rawValue = isColumn ? row : column;
+        if (!rawValue) return;
+        // `gap: var(--pf-space-md)` doesn't match LENGTH directly - resolve
+        // it against theme.css's static (non-`@supports`) branch first, the
+        // same branch Chrome 53 itself would compute (design.md D2).
+        const value = resolveLength(rawValue, getStaticTokens());
+        if (!value) return;
 
         // `> * + *` targets every child after the first, which is exactly the
         // set of internal gaps - no trailing margin on the last item.

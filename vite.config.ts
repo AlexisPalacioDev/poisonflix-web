@@ -2,16 +2,28 @@ import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import legacy from '@vitejs/plugin-legacy';
 import { VitePWA } from 'vite-plugin-pwa';
+import autoprefixer from 'autoprefixer';
 import flexGapFallback from './postcss-flex-gap-fallback.mjs';
 
 // https://vite.dev/config/
 export default defineConfig({
   css: {
-    // Generates `.no-flex-gap ... > * + *` margin rules beside every flex
-    // `gap`, for the 2018 TV browser that silently drops the property. The
-    // class is only applied when runtime detection fails, so modern browsers
-    // are unaffected. See postcss-flex-gap-fallback.mjs.
-    postcss: { plugins: [flexGapFallback()] },
+    postcss: {
+      plugins: [
+        // Generates `.no-flex-gap ... > * + *` margin rules beside every flex
+        // `gap`, for the 2018 TV browser that silently drops the property.
+        // The class is only applied when runtime detection fails, so modern
+        // browsers are unaffected. See postcss-flex-gap-fallback.mjs.
+        flexGapFallback(),
+        // Adds `-webkit-`/other vendor prefixes per the `browserslist` field
+        // in package.json (chrome >= 53, safari >= 10) - e.g.
+        // `-webkit-backdrop-filter`, `-webkit-mask-image`. This is PREFIXING
+        // only, never a value rewrite - it does not solve `clamp()`/`gap`/
+        // `:focus-visible` (design.md D2's corrections table on why
+        // `postcss-preset-env` was rejected for that job).
+        autoprefixer(),
+      ],
+    },
   },
   plugins: [
     react(),

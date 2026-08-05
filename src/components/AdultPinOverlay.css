@@ -101,7 +101,14 @@
   letter-spacing: 0.04em;
 }
 
-.pf-adult-pin__key:hover,
+/* Split from a combined `:hover, :focus-visible` list - Chrome 53/webOS 2018
+   drops the whole rule when one selector in a comma list is unsupported. */
+.pf-adult-pin__key:hover {
+  background: var(--pf-gold);
+  color: var(--pf-bg);
+  outline: none;
+}
+
 .pf-adult-pin__key:focus-visible {
   background: var(--pf-gold);
   color: var(--pf-bg);

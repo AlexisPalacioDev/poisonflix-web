@@ -76,7 +76,14 @@
     color var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-admin__button:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-admin__button:hover {
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
 .pf-admin__button:focus-visible {
   border-color: var(--pf-gold);
   color: var(--pf-gold);
@@ -93,7 +100,11 @@
   color: #0a0c10;
 }
 
-.pf-admin__button--primary:hover,
+.pf-admin__button--primary:hover {
+  background: var(--pf-gold-dim);
+  color: #0a0c10;
+}
+
 .pf-admin__button--primary:focus-visible {
   background: var(--pf-gold-dim);
   color: #0a0c10;
@@ -105,7 +116,10 @@
   background: transparent;
 }
 
-.pf-admin__button--danger:hover,
+.pf-admin__button--danger:hover {
+  background: rgba(229, 72, 77, 0.14);
+}
+
 .pf-admin__button--danger:focus-visible {
   background: rgba(229, 72, 77, 0.14);
 }

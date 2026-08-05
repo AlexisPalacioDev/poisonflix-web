@@ -111,7 +111,14 @@
   transition: color 0.1s ease, background 0.1s ease;
 }
 
-.pf-nowplaying__btn:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-nowplaying__btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .pf-nowplaying__btn:focus-visible {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
@@ -153,7 +160,10 @@
   transition: transform 0.1s ease;
 }
 
-.pf-nowplaying__toggle:hover,
+.pf-nowplaying__toggle:hover {
+  transform: scale(1.05);
+}
+
 .pf-nowplaying__toggle:focus-visible {
   transform: scale(1.05);
 }
@@ -226,7 +236,11 @@
   cursor: pointer;
 }
 
-.pf-nowplaying__seekbar:focus-visible,
+.pf-nowplaying__seekbar:focus-visible {
+  outline: 2px solid #1ed760;
+  outline-offset: 4px;
+}
+
 .pf-nowplaying__volume:focus-visible {
   outline: 2px solid #1ed760;
   outline-offset: 4px;
@@ -354,7 +368,10 @@
   cursor: pointer;
 }
 
-.pf-fullplayer__chevron:hover,
+.pf-fullplayer__chevron:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .pf-fullplayer__chevron:focus-visible {
   background: rgba(255, 255, 255, 0.12);
 }
@@ -428,7 +445,12 @@
   border-radius: 4px;
 }
 
-.pf-fullplayer__artist--link:hover,
+.pf-fullplayer__artist--link:hover {
+  color: #1ed760;
+  text-decoration: underline;
+  outline: none;
+}
+
 .pf-fullplayer__artist--link:focus-visible {
   color: #1ed760;
   text-decoration: underline;
@@ -515,7 +537,10 @@
   transition: background 0.1s ease;
 }
 
-.pf-fullplayer__queue-btn:hover,
+.pf-fullplayer__queue-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 .pf-fullplayer__queue-btn:focus-visible {
   background: rgba(255, 255, 255, 0.18);
 }

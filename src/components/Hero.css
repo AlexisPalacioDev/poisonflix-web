@@ -4,6 +4,14 @@
 .pf-hero {
   position: relative;
   width: 100%;
+  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
+     `min()`/`clamp()` value - see scripts/check-legacy-css.mjs rule b /
+     design.md D2 - so the declaration is dropped and the PRIOR one wins).
+     This app's TV/desktop-first target viewport is wide/tall enough that
+     `min(82vh, 760px)` resolves to its 760px cap in practice, so the static
+     value below is not a guess - it's what modern browsers already render
+     here most of the time. */
+  min-height: 760px;
   min-height: min(82vh, 760px);
   display: flex;
   align-items: flex-end;
@@ -38,7 +46,19 @@
 .pf-hero__content {
   position: relative;
   z-index: 1;
-  padding: 0 var(--pf-gutter) clamp(40px, 7vh, 88px);
+  /* Longhand instead of the shorthand this used to be: the shorthand mixed
+     `var(--pf-gutter)` with a literal `clamp()` in ONE declaration, which
+     Chrome 53 fails at COMPUTED-value time (not parse time) - declaration
+     doubling can't rescue that (design.md D2's support table). Splitting
+     into longhands isolates the var()-only sides (fine) from the
+     clamp()-only bottom (fixable via doubling, below). Formalized as
+     `--pf-hero-pad-b` in slice 2 (design.md D4) - 56px is that same value,
+     used early so the two slices don't disagree on the TV floor. */
+  padding-top: 0;
+  padding-right: var(--pf-gutter);
+  padding-bottom: 56px;
+  padding-bottom: clamp(40px, 7vh, 88px);
+  padding-left: var(--pf-gutter);
   max-width: 720px;
   display: flex;
   flex-direction: column;
@@ -56,6 +76,9 @@
 
 .pf-hero__title {
   margin: 0;
+  /* Static fallback first (see .pf-hero's min-height comment above for why -
+     same technique throughout this file). */
+  font-size: 4.4rem;
   font-size: clamp(2.2rem, 5.6vw, 4.4rem);
   font-weight: 800;
   color: var(--pf-text);
@@ -80,6 +103,7 @@
   max-width: 60ch;
   color: rgba(237, 239, 242, 0.86);
   line-height: 1.6;
+  font-size: 1.05rem;
   font-size: clamp(0.95rem, 1.2vw, 1.05rem);
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -94,62 +118,9 @@
   margin-top: var(--pf-space-xs);
 }
 
-/* --- Shared button primitive (hero + detail reuse) --- */
-.pf-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 26px;
-  border-radius: var(--pf-radius-pill);
-  font-size: 1rem;
-  font-weight: 700;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition:
-    transform var(--pf-dur-fast) var(--pf-ease),
-    background var(--pf-dur-fast) var(--pf-ease),
-    box-shadow var(--pf-dur-fast) var(--pf-ease);
-}
-
-.pf-btn:hover {
-  transform: translateY(-1px);
-}
-
-.pf-btn:active {
-  transform: translateY(0);
-}
-
-.pf-btn--play {
-  background: var(--pf-available);
-  color: #06210a;
-  box-shadow: 0 8px 24px rgba(140, 255, 90, 0.28);
-}
-
-.pf-btn--play:hover {
-  background: #9dff72;
-}
-
-.pf-btn--gold {
-  background: var(--pf-gold);
-  color: #241b03;
-  box-shadow: 0 8px 24px rgba(242, 193, 78, 0.26);
-}
-
-.pf-btn--gold:hover {
-  background: #f6cd6b;
-}
-
-.pf-btn--ghost {
-  background: rgba(237, 239, 242, 0.12);
-  color: var(--pf-text);
-  border-color: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(6px);
-}
-
-.pf-btn--ghost:hover {
-  background: rgba(237, 239, 242, 0.2);
-  border-color: rgba(255, 255, 255, 0.32);
-}
+/* `.pf-btn`/`.pf-btn--play/--gold/--ghost` now live in
+   `src/styles/primitives.css` (design.md D1) - identical values, just moved
+   up a layer so every other screen can reuse them too. */
 
 /* --- Skeleton --- */
 .pf-hero--skeleton {
@@ -157,18 +128,23 @@
 }
 
 .pf-hero__sk-title {
+  /* Static fallback first (see .pf-hero's min-height comment above). */
+  width: 420px;
   width: min(60%, 420px);
+  height: 72px;
   height: clamp(40px, 6vw, 72px);
   border-radius: var(--pf-radius-md);
 }
 
 .pf-hero__sk-line {
+  width: 560px;
   width: min(80%, 560px);
   height: 16px;
   border-radius: var(--pf-radius-sm);
 }
 
 .pf-hero__sk-line--short {
+  width: 360px;
   width: min(55%, 360px);
 }
 
@@ -186,6 +162,7 @@
 
 @media (max-width: 640px) {
   .pf-hero {
+    min-height: 600px;
     min-height: min(72vh, 600px);
   }
 

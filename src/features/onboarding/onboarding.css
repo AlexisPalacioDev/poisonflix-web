@@ -150,7 +150,13 @@
   text-decoration: none;
 }
 
-.pf-onboarding__link:hover,
+/* Split from a combined `:hover, :focus-visible` list - Chrome 53/webOS 2018
+   drops the whole rule when one selector in a comma list is unsupported. */
+.pf-onboarding__link:hover {
+  color: var(--pf-gold);
+  text-decoration: underline;
+}
+
 .pf-onboarding__link:focus-visible {
   color: var(--pf-gold);
   text-decoration: underline;

@@ -79,7 +79,14 @@
     transform var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-player-surface__icon-btn:hover,
+/* Split from combined `:hover, :focus-visible` lists throughout this file -
+   Chrome 53/webOS 2018 drops the whole rule when one selector in a comma
+   list is unsupported. */
+.pf-player-surface__icon-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
 .pf-player-surface__icon-btn:focus-visible {
   background: rgba(255, 255, 255, 0.14);
   color: #fff;
@@ -114,7 +121,11 @@
   backdrop-filter: blur(6px);
 }
 
-.pf-player-surface__back:hover,
+.pf-player-surface__back:hover {
+  background: rgba(242, 193, 78, 0.18);
+  color: var(--pf-gold);
+}
+
 .pf-player-surface__back:focus-visible {
   background: rgba(242, 193, 78, 0.18);
   color: var(--pf-gold);
@@ -295,7 +306,11 @@
   cursor: pointer;
 }
 
-.pf-player-surface__seek:focus-visible,
+.pf-player-surface__seek:focus-visible {
+  outline: 2px solid var(--pf-gold);
+  outline-offset: 4px;
+}
+
 .pf-player-surface__volume:focus-visible {
   outline: 2px solid var(--pf-gold);
   outline-offset: 4px;

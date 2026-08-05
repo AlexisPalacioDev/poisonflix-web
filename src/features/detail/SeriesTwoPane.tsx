@@ -126,7 +126,7 @@ export function SeriesTwoPane({
 
   return (
     <div className="pf-series-detail">
-      <div className="pf-glass pf-series-detail__left">
+      <div className="pf-glass pf-glass--blur pf-series-detail__left">
         <div className="pf-series-detail__poster">
           {posterUrl ? (
             <img src={posterUrl} alt="" />
