@@ -140,6 +140,23 @@
     </section>
 
     <section>
+      <h2>Test 7 — Deferred start, the way React does it</h2>
+      <p class="hint">
+        Tests 5 and 6 both survived, so the platform allows everything the app needs.
+        The one thing they did differently from the app: they called
+        <code>play()</code> straight from the native event handler. The app dispatches
+        to a reducer and lets a <code>useEffect</code> call it — and React schedules
+        passive effects through a <code>MessageChannel</code>, which is exactly the kind
+        of callback a suspended process stops running.
+        <br /><br />
+        This test defers the start the same way. If test 6 lives and this one dies,
+        the bug is the deferral, not the platform. Press start and lock immediately.
+      </p>
+      <button id="t7">Run test 7 — then lock immediately</button>
+      <div class="verdict" id="v7">Not run yet.</div>
+    </section>
+
+    <section>
       <h2>Log</h2>
       <button class="secondary" id="copy">Copy log</button>
       <button class="secondary" id="clear">Clear log</button>
@@ -518,6 +535,93 @@
         networkTest('v5', 'TEST 5: network audio, PRELOADED before lock', true);
       document.getElementById('t6').onclick = () =>
         networkTest('v6', 'TEST 6: network fetch WHILE locked', false);
+
+      // ── Test 7 — the deferral, isolated ──────────────────────────────────────
+      // Everything the platform allows, tests 1-6 already proved. The remaining
+      // difference between this page and the app is WHERE play() is called from:
+      // here it has been synchronous inside the native handler; the app routes it
+      // through a reducer dispatch and a useEffect. React schedules passive
+      // effects on a MessageChannel port, so this reproduces that hop exactly
+      // rather than approximating it with setTimeout (which is throttled by a
+      // different mechanism and would muddy the result).
+      function schedulerHop(fn) {
+        const ch = new MessageChannel();
+        ch.port1.onmessage = () => fn();
+        ch.port2.postMessage(null);
+      }
+
+      document.getElementById('t7').onclick = async () => {
+        log('=== TEST 7: start deferred through a MessageChannel, like React ===');
+        log('LOCK THE PHONE NOW.');
+        verdict('v7', 'Running — lock the phone now, unlock in ~45s.', null);
+        const bust = `?r=7-${Math.round(performance.now())}`;
+
+        const a = makeEl('A(net,220Hz)', TONE_A + bust);
+        const b = new Audio();
+        for (const ev of ['play', 'playing', 'pause', 'ended', 'waiting', 'error', 'canplaythrough']) {
+          b.addEventListener(ev, () => log(`B(net,660Hz): ${ev} (t=${b.currentTime.toFixed(2)} paused=${b.paused} rs=${b.readyState})`));
+        }
+        b.preload = 'auto';
+        b.src = TONE_B + bust;
+        b.load(); // preloaded, so this isolates the deferral and nothing else
+
+        let handedOff = false;
+        let requestedAt = null;
+        let startedAt = null;
+
+        a.addEventListener('timeupdate', () => {
+          if (handedOff || !a.duration) return;
+          if (a.duration - a.currentTime > 4) return;
+          handedOff = true;
+          requestedAt = performance.now();
+          log('handoff requested — deferring play() through the scheduler hop');
+          // Two hops: React needs one to render and one to flush passive effects.
+          schedulerHop(() => {
+            log(`hop 1 ran after ${((performance.now() - requestedAt) / 1000).toFixed(2)}s`);
+            schedulerHop(async () => {
+              const waited = ((performance.now() - requestedAt) / 1000).toFixed(2);
+              log(`hop 2 ran after ${waited}s — calling play() now`);
+              try {
+                await b.play();
+                startedAt = performance.now();
+                log(`B play() resolved ${((startedAt - requestedAt) / 1000).toFixed(2)}s after the handoff`);
+              } catch (e) {
+                log(`B play() REJECTED: ${e && e.name}: ${e && e.message}`);
+              }
+            });
+          });
+        });
+
+        try {
+          await a.play();
+        } catch (e) {
+          log(`A play() rejected: ${e && e.name}`);
+        }
+
+        let last = performance.now();
+        const poll = setInterval(() => {
+          const now = performance.now();
+          const drift = (now - last) / 1000;
+          if (drift > 2.5) log(`!! ${drift.toFixed(1)}s gap between samples — the process was suspended`);
+          last = now;
+          log(`poll A(t=${a.currentTime.toFixed(1)} paused=${a.paused}) B(t=${b.currentTime.toFixed(1)} paused=${b.paused} rs=${b.readyState})`);
+        }, 2000);
+
+        setTimeout(() => {
+          clearInterval(poll);
+          const survived = startedAt !== null && b.currentTime > 1;
+          log(`RESULT: B started=${startedAt !== null} B.currentTime=${b.currentTime.toFixed(2)} B.paused=${b.paused}`);
+          verdict(
+            'v7',
+            survived
+              ? 'Survived even when deferred. The scheduler hop is not the cause — report this, it rules the theory out.'
+              : 'Did NOT survive. Deferring play() off the native handler is what breaks it — this is the bug.',
+            survived ? 'pass' : 'fail'
+          );
+          a.pause();
+          b.pause();
+        }, 55000);
+      };
     </script>
   </body>
 </html>
