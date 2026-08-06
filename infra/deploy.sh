@@ -85,6 +85,15 @@ echo "  /radarr/api/v3/queue -> $arr"
 echo "==> public Funnel smoke test"
 fqdn=$(docker exec poisonflix-ts tailscale status --json 2>/dev/null \
   | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).Self?.DNSName||"").replace(/\.$/,""))}catch{}})')
+# The JSON path above is fragile — a schema change or a truncated read leaves
+# fqdn empty, and this check used to just skip while the script still printed
+# "deploy OK (local + public)". That is the exact lie the public smoke test
+# exists to prevent, so fall back to the human-readable funnel status.
+if [[ -z "$fqdn" ]]; then
+  fqdn=$(docker exec poisonflix-ts tailscale funnel status 2>/dev/null \
+    | grep -oE 'https://[a-zA-Z0-9._-]+\.ts\.net' | head -1 | sed 's#https://##')
+  [[ -n "$fqdn" ]] && echo "  (hostname from JSON failed; using funnel status: $fqdn)"
+fi
 pub=000
 if [[ -n "$fqdn" ]]; then
   for i in $(seq 1 12); do
@@ -98,7 +107,17 @@ if [[ -n "$fqdn" ]]; then
   echo "  https://$fqdn/ -> $pub"
   [[ "$pub" == "200" ]] || { echo "PUBLIC FUNNEL DOWN after deploy — up locally but NOT reachable by the family. Try: docker compose restart tailscale" >&2; ok=0; }
 else
-  echo "  (skipped: could not read funnel hostname from tailscale status)"
+  echo "  UNVERIFIED: could not read the funnel hostname, so the public path was never checked." >&2
+  echo "  The deploy may be live locally and dead for everyone else. Check by hand:" >&2
+  echo "    docker exec poisonflix-ts tailscale funnel status" >&2
+  pub=skipped
 fi
 
-[[ "$ok" == "1" ]] && echo "==> deploy OK (local + public)" || exit 1
+if [[ "$ok" != "1" ]]; then
+  exit 1
+elif [[ "$pub" == "skipped" ]]; then
+  # Never claim the public path is up when nothing proved it.
+  echo "==> deploy OK locally — PUBLIC PATH UNVERIFIED (see above)"
+else
+  echo "==> deploy OK (local + public)"
+fi
