@@ -112,6 +112,34 @@
     </section>
 
     <section>
+      <h2>Test 5 — Preloaded network audio, screen locked</h2>
+      <p class="hint">
+        Tests 3 and 4 both passed, but they cheated: the audio was generated in memory,
+        so nothing was ever fetched. These last two use real multi-megabyte files over
+        the network — which is what the app actually does.
+        <br /><br />
+        Here the second file is fully downloaded <strong>before</strong> the screen locks.
+        Press start, wait until it says <em>ready</em>, then lock the phone.
+      </p>
+      <button id="t5">Run test 5 — wait for “ready”, then lock</button>
+      <div class="verdict" id="v5">Not run yet.</div>
+    </section>
+
+    <section>
+      <h2>Test 6 — Network fetch while locked (today’s behaviour)</h2>
+      <p class="hint">
+        The decisive one. The second file is <strong>not</strong> fetched until the first
+        one ends — so the download has to happen with the phone already locked, exactly
+        like the app does today. Press start and lock immediately.
+        <br /><br />
+        If test 5 survives and this one dies, the bug is the background fetch, not the
+        audio gap, and preloading is the fix.
+      </p>
+      <button id="t6">Run test 6 — then lock immediately</button>
+      <div class="verdict" id="v6">Not run yet.</div>
+    </section>
+
+    <section>
       <h2>Log</h2>
       <button class="secondary" id="copy">Copy log</button>
       <button class="secondary" id="clear">Clear log</button>
@@ -380,6 +408,116 @@
         lockTest('v3', 'TEST 3: gapless handoff, 4s overlap', 4);
       document.getElementById('t4').onclick = () =>
         lockTest('v4', 'TEST 4: silent gap (today’s behaviour)', 0);
+
+      // ── Tests 5 & 6 — real files over the network ────────────────────────────
+      // Tests 3 and 4 used in-memory blobs, so they proved nothing about the one
+      // thing the app actually does at a track boundary: fetch the next track.
+      // A cache-buster keeps the browser from quietly serving test 6 from cache
+      // and hiding the very fetch under test.
+      const TONE_A = '/probe-tone-a.wav';
+      const TONE_B = '/probe-tone-b.wav';
+
+      async function networkTest(id, label, preload) {
+        log(`=== ${label} ===`);
+        const bust = `?r=${lines.length}-${Math.round(performance.now())}`;
+
+        const a = makeEl('A(net,220Hz)', TONE_A + bust);
+        const b = new Audio();
+        for (const ev of ['play', 'playing', 'pause', 'ended', 'stalled', 'waiting', 'error', 'suspend', 'abort', 'canplaythrough']) {
+          b.addEventListener(ev, () => log(`B(net,660Hz): ${ev} (t=${b.currentTime.toFixed(2)} paused=${b.paused} buffered=${b.buffered.length ? b.buffered.end(0).toFixed(1) : 0})`));
+        }
+
+        let bReady = false;
+        b.addEventListener('canplaythrough', () => { bReady = true; });
+
+        if (preload) {
+          verdict(id, 'Downloading the second file — wait for “ready” before locking.', null);
+          b.preload = 'auto';
+          b.src = TONE_B + bust;
+          b.load();
+        }
+
+        let handedOff = false;
+        let bStarted = null;
+        let fetchStartedAt = null;
+
+        const startB = async (why) => {
+          if (handedOff) return;
+          handedOff = true;
+          if (!preload) {
+            // Today's behaviour: the bytes are requested only now, with the
+            // screen already locked.
+            fetchStartedAt = performance.now();
+            log('requesting the second file NOW (screen is locked)');
+            b.preload = 'auto';
+            b.src = TONE_B + bust;
+            b.load();
+          }
+          log(`${why} — B.readyState=${b.readyState} preloaded=${preload} ready=${bReady}`);
+          try {
+            await b.play();
+            bStarted = performance.now();
+            const waited = fetchStartedAt ? ((bStarted - fetchStartedAt) / 1000).toFixed(2) : '0';
+            log(`B play() resolved after ${waited}s`);
+          } catch (e) {
+            log(`B play() REJECTED: ${e && e.name}: ${e && e.message}`);
+          }
+        };
+
+        a.addEventListener('timeupdate', () => {
+          if (handedOff || !a.duration) return;
+          if (a.duration - a.currentTime <= 4) startB('handoff at T-4s');
+        });
+        a.addEventListener('ended', () => startB('handoff at ended'));
+
+        try {
+          await a.play();
+        } catch (e) {
+          log(`A play() rejected: ${e && e.name}`);
+        }
+
+        if (preload) {
+          for (let i = 0; i < 60 && !bReady; i++) await wait(500);
+          log(bReady ? 'B fully buffered — READY, lock the phone now' : 'B never reported canplaythrough');
+          verdict(
+            id,
+            bReady ? 'READY — lock the phone now and come back in ~40s.' : 'The second file never finished downloading. Report this.',
+            null
+          );
+        } else {
+          log('LOCK THE PHONE NOW.');
+          verdict(id, 'Running — lock the phone now, unlock in ~45s.', null);
+        }
+
+        let last = performance.now();
+        const poll = setInterval(() => {
+          const now = performance.now();
+          const drift = (now - last) / 1000;
+          if (drift > 2.5) log(`!! ${drift.toFixed(1)}s gap between samples — the process was suspended`);
+          last = now;
+          log(`poll A(t=${a.currentTime.toFixed(1)} paused=${a.paused}) B(t=${b.currentTime.toFixed(1)} paused=${b.paused} rs=${b.readyState})`);
+        }, 2000);
+
+        setTimeout(() => {
+          clearInterval(poll);
+          const survived = bStarted !== null && b.currentTime > 1;
+          log(`RESULT: B started=${bStarted !== null} B.currentTime=${b.currentTime.toFixed(2)} B.paused=${b.paused} readyState=${b.readyState}`);
+          verdict(
+            id,
+            survived
+              ? 'Survived — B reached ' + b.currentTime.toFixed(1) + 's. Confirm you HEARD the second tone while locked.'
+              : 'Did NOT survive — B never really played. This reproduces the bug.',
+            survived ? 'pass' : 'fail'
+          );
+          a.pause();
+          b.pause();
+        }, 55000);
+      }
+
+      document.getElementById('t5').onclick = () =>
+        networkTest('v5', 'TEST 5: network audio, PRELOADED before lock', true);
+      document.getElementById('t6').onclick = () =>
+        networkTest('v6', 'TEST 6: network fetch WHILE locked', false);
     </script>
   </body>
 </html>
