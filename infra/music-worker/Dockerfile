@@ -22,9 +22,21 @@ RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -
 # pinned: YouTube breaks old extractors constantly, so a stale pin makes every
 # download fail ("Requested format is not available"). We install the latest at
 # build time AND self-update it on container start (see entrypoint.sh).
+#
+# ytmusicapi scrapes the same internal API and rots the same way — the 1.8.2 pin
+# proved it. YouTube reshaped the watch-next response and 1.8.2 started raising
+# KeyError: 'endpoint' from parsers/watch.py, so get_watch_playlist — the radio's
+# main source — threw on every call. The radio silently fell back to replaying
+# the listener's own history, which is exactly what it felt like from outside.
+# It stays pinned (an API change here breaks server.py, unlike a yt-dlp bump),
+# but the pin needs reviewing whenever the radio starts feeling stale. 1.12.1 was
+# verified against every call this worker makes: search, get_song,
+# get_song_related, get_watch_playlist, get_home, get_album, get_playlist.
+# Note: `limit` is a paging floor in 1.9+, not a hard cap — expect more results
+# than requested and slice where an exact count matters.
 RUN pip install --no-cache-dir \
     "yt-dlp" \
-    "ytmusicapi==1.8.2" \
+    "ytmusicapi==1.12.1" \
     "mutagen==1.47.0"
 
 WORKDIR /app
