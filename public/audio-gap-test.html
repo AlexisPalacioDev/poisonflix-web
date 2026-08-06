@@ -552,8 +552,10 @@
 
       document.getElementById('t7').onclick = async () => {
         log('=== TEST 7: start deferred through a MessageChannel, like React ===');
-        log('LOCK THE PHONE NOW.');
-        verdict('v7', 'Running — lock the phone now, unlock in ~45s.', null);
+        // Do NOT tell the tester to lock yet. Locking during the initial load
+        // aborts it (AbortError) and the run dies before the handoff it exists
+        // to measure — which is exactly what happened on the first attempt.
+        verdict('v7', 'Loading — do NOT lock yet. Wait until this says the audio is playing.', null);
         const bust = `?r=7-${Math.round(performance.now())}`;
 
         const a = makeEl('A(net,220Hz)', TONE_A + bust);
@@ -592,35 +594,46 @@
           });
         });
 
+        // Only once audio is genuinely producing is it safe to lock, and only
+        // then does the 55s result window start — otherwise a slow load eats it.
+        a.addEventListener('playing', function armed() {
+          a.removeEventListener('playing', armed);
+          log('A is producing audio — SAFE TO LOCK NOW');
+          verdict('v7', 'AUDIO IS PLAYING — lock the phone now, unlock in ~45s.', null);
+
+          let last = performance.now();
+          const poll = setInterval(() => {
+            const now = performance.now();
+            const drift = (now - last) / 1000;
+            if (drift > 2.5) log(`!! ${drift.toFixed(1)}s gap between samples — the process was suspended`);
+            last = now;
+            log(`poll A(t=${a.currentTime.toFixed(1)} paused=${a.paused}) B(t=${b.currentTime.toFixed(1)} paused=${b.paused} rs=${b.readyState})`);
+          }, 2000);
+
+          setTimeout(() => {
+            clearInterval(poll);
+            const survived = startedAt !== null && b.currentTime > 1;
+            log(`RESULT: B started=${startedAt !== null} B.currentTime=${b.currentTime.toFixed(2)} B.paused=${b.paused}`);
+            verdict(
+              'v7',
+              !handedOff
+                ? 'Inconclusive — the handoff never fired. Re-run and only lock once it says the audio is playing.'
+                : survived
+                  ? 'Survived even when deferred. The scheduler hop is NOT the cause — this rules the theory out.'
+                  : 'Did NOT survive. Deferring play() off the native handler is what breaks it — this is the bug.',
+              !handedOff ? null : survived ? 'pass' : 'fail'
+            );
+            a.pause();
+            b.pause();
+          }, 55000);
+        });
+
         try {
           await a.play();
         } catch (e) {
           log(`A play() rejected: ${e && e.name}`);
+          verdict('v7', `The first tone never started (${e && e.name}). Re-run without locking until it says the audio is playing.`, 'fail');
         }
-
-        let last = performance.now();
-        const poll = setInterval(() => {
-          const now = performance.now();
-          const drift = (now - last) / 1000;
-          if (drift > 2.5) log(`!! ${drift.toFixed(1)}s gap between samples — the process was suspended`);
-          last = now;
-          log(`poll A(t=${a.currentTime.toFixed(1)} paused=${a.paused}) B(t=${b.currentTime.toFixed(1)} paused=${b.paused} rs=${b.readyState})`);
-        }, 2000);
-
-        setTimeout(() => {
-          clearInterval(poll);
-          const survived = startedAt !== null && b.currentTime > 1;
-          log(`RESULT: B started=${startedAt !== null} B.currentTime=${b.currentTime.toFixed(2)} B.paused=${b.paused}`);
-          verdict(
-            'v7',
-            survived
-              ? 'Survived even when deferred. The scheduler hop is not the cause — report this, it rules the theory out.'
-              : 'Did NOT survive. Deferring play() off the native handler is what breaks it — this is the bug.',
-            survived ? 'pass' : 'fail'
-          );
-          a.pause();
-          b.pause();
-        }, 55000);
       };
     </script>
   </body>
