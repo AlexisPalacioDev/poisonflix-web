@@ -366,3 +366,126 @@ describe('MusicPlayerProvider — duration mismatch diagnostics (security-sensit
     expect(audio.getAttribute('src')).toBe(before.src);
   });
 });
+
+describe('MusicPlayerProvider — past-known-duration reporting on `timeupdate` (observe only)', () => {
+  // Reproduces the reported symptom: iOS never fires `ended` for a track whose
+  // element duration is doubled by the fMP4 defect, so the queue must advance
+  // from the native `timeupdate` tick instead — see design.md §A point 3 and
+  // spec `music-playback-engine`.
+  const guardTrack: MusicTrack = {
+    itemId: 'guard-a',
+    title: 'Duplicated Duration Track',
+    artist: null,
+    coverUrl: null,
+    durationSeconds: 200,
+  };
+
+  it('records, without advancing, once currentTime reaches the known real length', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow([guardTrack, tracks[1]], 0);
+    });
+    const audio = audioEl();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 400 }); // 2x defect shape
+    act(() => fireEvent.durationChange(audio));
+    clearRecordedFailures();
+
+    audio.currentTime = 200; // reached the known real length
+    act(() => fireEvent.timeUpdate(audio));
+
+    // Observation only: the queue must NOT move. Advancing here was reverted
+    // after review — it fired on a legitimate scrub past the known length,
+    // raced `ended` into a double NEXT that ate a track, and never rearmed
+    // under repeat-one. What survives is the measurement.
+    expect(api.currentIndex).toBe(0);
+    expect(api.isPlaying).toBe(true);
+    const seen = recordedFailures().filter((f) => f.scope === 'music.player.pastKnownDuration');
+    expect(seen.length).toBe(1);
+  });
+
+  it('reports telemetry when playback passes the known length on a mismatched track', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow([guardTrack, tracks[1]], 0);
+    });
+    const audio = audioEl();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 400 });
+    act(() => fireEvent.durationChange(audio));
+    clearRecordedFailures();
+
+    audio.currentTime = 200;
+    act(() => fireEvent.timeUpdate(audio));
+
+    const forced = recordedFailures().filter((f) => f.scope === 'music.player.pastKnownDuration');
+    expect(forced.length).toBe(1);
+    expect(JSON.stringify(forced[0]?.detail)).not.toContain('api_key');
+  });
+
+  it('stays silent on a healthy track even once currentTime passes its known duration', async () => {
+    const healthyTrack: MusicTrack = { ...guardTrack, itemId: 'healthy-a', durationSeconds: 200 };
+    renderProvider();
+    await act(async () => {
+      api.playNow([healthyTrack, tracks[1]], 0);
+    });
+    const audio = audioEl();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 202 }); // within tolerance
+    act(() => fireEvent.durationChange(audio));
+    clearRecordedFailures();
+
+    audio.currentTime = 205; // past the known length, but the element agrees on it
+    act(() => fireEvent.timeUpdate(audio));
+
+    expect(api.currentIndex).toBe(0); // unchanged — still waits for the real `ended`
+    const forced = recordedFailures().filter((f) => f.scope === 'music.player.pastKnownDuration');
+    expect(forced.length).toBe(0);
+  });
+
+  it('stays silent when the track has no known duration', async () => {
+    const noDurationTrack: MusicTrack = {
+      itemId: 'no-dur',
+      title: 'Unknown length',
+      artist: null,
+      coverUrl: null,
+    };
+    renderProvider();
+    await act(async () => {
+      api.playNow([noDurationTrack, tracks[1]], 0);
+    });
+    const audio = audioEl();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 400 });
+    act(() => fireEvent.durationChange(audio));
+    clearRecordedFailures();
+
+    audio.currentTime = 1000; // way past any plausible length
+    act(() => fireEvent.timeUpdate(audio));
+
+    expect(api.currentIndex).toBe(0); // no known duration -> no guard possible
+    const forced = recordedFailures().filter((f) => f.scope === 'music.player.pastKnownDuration');
+    expect(forced.length).toBe(0);
+  });
+
+  it('reports at most once per track even if timeupdate keeps firing past the threshold', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow([guardTrack], 0); // single-track queue, repeat off
+    });
+    const audio = audioEl();
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 400 });
+    act(() => fireEvent.durationChange(audio));
+    clearRecordedFailures();
+
+    audio.currentTime = 200;
+    act(() => fireEvent.timeUpdate(audio));
+    // Observation must not disturb playback at all: a single-track queue keeps
+    // running on the element's own (mistaken) timeline until `ended`, exactly
+    // as it did before this reporting existed.
+    expect(api.isPlaying).toBe(true);
+    expect(api.currentIndex).toBe(0);
+
+    audio.currentTime = 201;
+    act(() => fireEvent.timeUpdate(audio));
+
+    const seen = recordedFailures().filter((f) => f.scope === 'music.player.pastKnownDuration');
+    expect(seen.length).toBe(1); // did not refire on the same track
+  });
+});

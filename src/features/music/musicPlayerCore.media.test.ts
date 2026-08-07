@@ -3,6 +3,7 @@ import {
   durationMismatch,
   musicPlayerInitialState as initial,
   musicPlayerReducer as reducer,
+  shouldForceAdvance,
   visibleBuffering,
   type MusicPlayerState,
 } from './musicPlayerCore';
@@ -103,5 +104,60 @@ describe('durationMismatch', () => {
     expect(durationMismatch(200, Infinity)).toBe(false);
     expect(durationMismatch(200, 0)).toBe(false);
     expect(durationMismatch(200, -1)).toBe(false);
+  });
+});
+
+describe('shouldForceAdvance — timeupdate-based advance guard (Task 1)', () => {
+  // The iOS fMP4 duplicated-duration defect: the element believes the track is
+  // ~2x its real length, so `ended` never arrives until the phantom end. Once
+  // there IS a real duration disagreement (reused from `durationMismatch`, not
+  // duplicated), reaching the KNOWN real length is exactly the signal that
+  // `ended` won't come in time and playback must be forced forward.
+  it('fires once a real duration mismatch exists and playback reached the known real length', () => {
+    expect(shouldForceAdvance(386, 193.18, 193.18)).toBe(true); // exactly at the known length
+    expect(shouldForceAdvance(400, 200, 250)).toBe(true); // past it
+  });
+
+  it('does not fire before playback reaches the known length, even with a real mismatch', () => {
+    expect(shouldForceAdvance(400, 200, 100)).toBe(false);
+  });
+
+  // A healthy file never trips this, regardless of position: `durationMismatch`
+  // is false whenever the element and the known length agree within tolerance,
+  // so a sane track keeps relying on `ended` exactly as it does today.
+  it('never fires on a healthy track, even long after its known duration', () => {
+    expect(shouldForceAdvance(200, 193.18, 5000)).toBe(false); // within tolerance, huge overrun
+    expect(shouldForceAdvance(202, 200, 205)).toBe(false);
+  });
+
+  // The regression this guard could most easily cause: metadata that simply
+  // undershoots. `durationMismatch` is a symmetric 5%/2s band, so a track
+  // advertised at 3:00 that really runs 3:40 trips it — and without a ratio
+  // floor the guard would cut those 40 seconds off, every single play. Only a
+  // disagreement shaped like the doubling defect may override `ended`.
+  it('never truncates a track whose metadata merely undershoots the real length', () => {
+    expect(shouldForceAdvance(220, 180, 180)).toBe(false); // 1.22x — bad metadata, not the defect
+    expect(shouldForceAdvance(220, 180, 219)).toBe(false); // still playing real audio
+    expect(shouldForceAdvance(268, 180, 180)).toBe(false); // 1.49x — just under the floor
+  });
+
+  it('still fires for a disagreement shaped like the doubling defect', () => {
+    expect(shouldForceAdvance(270, 180, 180)).toBe(true); // 1.5x — at the floor
+    expect(shouldForceAdvance(360, 180, 180)).toBe(true); // the real 2x defect
+  });
+
+  it('never fires when the track has no reliable known duration (falls back to `ended`)', () => {
+    expect(shouldForceAdvance(400, undefined, 1000)).toBe(false);
+    expect(shouldForceAdvance(400, null, 1000)).toBe(false);
+    expect(shouldForceAdvance(400, 0, 1000)).toBe(false);
+    expect(shouldForceAdvance(400, -1, 1000)).toBe(false);
+    expect(shouldForceAdvance(400, Infinity, 1000)).toBe(false);
+  });
+
+  it('never fires when the element duration itself is non-finite, zero, or negative', () => {
+    expect(shouldForceAdvance(Infinity, 200, 1000)).toBe(false);
+    expect(shouldForceAdvance(NaN, 200, 1000)).toBe(false);
+    expect(shouldForceAdvance(0, 200, 1000)).toBe(false);
+    expect(shouldForceAdvance(-5, 200, 1000)).toBe(false);
   });
 });

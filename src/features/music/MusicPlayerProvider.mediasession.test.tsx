@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MusicPlayerProvider } from './MusicPlayerProvider';
 import { useMusicPlayer, type MusicPlayerContextValue, type MusicTrack } from './musicPlayerCore';
@@ -120,13 +120,33 @@ afterEach(() => {
 });
 
 describe('MusicPlayerProvider — MediaSession integration', () => {
-  it('registers the play/pause/next/prev (and seek) action handlers on mount', () => {
+  it('registers the play/pause/next/prev/stop (and seekto) action handlers on mount', () => {
     renderProvider();
     expect(typeof handlers.play).toBe('function');
     expect(typeof handlers.pause).toBe('function');
     expect(typeof handlers.nexttrack).toBe('function');
     expect(typeof handlers.previoustrack).toBe('function');
+    expect(typeof handlers.stop).toBe('function');
     expect(typeof handlers.seekto).toBe('function');
+  });
+
+  // Task 2: seekbackward/seekforward are podcast controls (±10s). iOS gives
+  // them priority over nexttrack/previoustrack and shows ±10s buttons on the
+  // lock screen instead — exactly the bug the owner reported a screenshot of.
+  it('does NOT register seekbackward/seekforward — they displace the next/prev buttons on the lock screen', () => {
+    renderProvider();
+    expect(handlers.seekbackward).toBeUndefined();
+    expect(handlers.seekforward).toBeUndefined();
+  });
+
+  it('the stop handler pauses playback', () => {
+    renderProvider();
+    act(() => api.playNow([track], 0));
+    expect(api.isPlaying).toBe(true);
+
+    act(() => handlers.stop?.({}));
+
+    expect(api.isPlaying).toBe(false);
   });
 
   it('publishes the current track metadata (title / artist / artwork) when a track plays', () => {
@@ -181,5 +201,72 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
     unmount();
     expect(handlers.play).toBeNull();
     expect(handlers.nexttrack).toBeNull();
+    expect(handlers.stop).toBeNull();
+  });
+});
+
+describe('MusicPlayerProvider — setPositionState honesty (Task 3)', () => {
+  const durationTrack: MusicTrack = { ...track, itemId: 'dur-track', durationSeconds: 180 };
+
+  it('publishes position 0 / the known duration immediately on load, before any timeupdate tick', () => {
+    renderProvider();
+    setPositionState.mockClear();
+
+    act(() => api.playNow([durationTrack], 0));
+
+    expect(setPositionState).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 180, position: 0 }),
+    );
+  });
+
+  it('reports playbackRate 0 with the frozen position when the audio actually pauses', () => {
+    renderProvider();
+    act(() => api.playNow([durationTrack], 0));
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 180 });
+    audio.currentTime = 42;
+    setPositionState.mockClear();
+
+    // A REAL pause from the media element, not the app-level toggle — this is
+    // what iOS fires when playback genuinely stops, and it's the exact case
+    // that used to leave the OS interpolating the position forever.
+    act(() => fireEvent.pause(audio));
+
+    expect(setPositionState).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 180, position: 42, playbackRate: 0 }),
+    );
+  });
+
+  it('reports playbackRate 0 immediately on a stall (waiting), without waiting for the buffering settle window', () => {
+    renderProvider();
+    act(() => api.playNow([durationTrack], 0));
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 180 });
+    audio.currentTime = 10;
+    setPositionState.mockClear();
+
+    act(() => fireEvent.waiting(audio));
+
+    expect(setPositionState).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 180, position: 10, playbackRate: 0 }),
+    );
+  });
+
+  it('does NOT report a frozen position for the ended-then-pause Safari sequence (that pause is not real)', () => {
+    renderProvider();
+    act(() => api.playNow([durationTrack], 0));
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 180 });
+    Object.defineProperty(audio, 'ended', { configurable: true, value: true });
+    setPositionState.mockClear();
+
+    act(() => {
+      fireEvent.ended(audio);
+      fireEvent.pause(audio);
+    });
+
+    expect(setPositionState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ playbackRate: 0 }),
+    );
   });
 });

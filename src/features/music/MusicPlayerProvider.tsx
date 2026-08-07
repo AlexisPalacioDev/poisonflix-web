@@ -19,6 +19,7 @@ import {
   initialState,
   naturalOrder,
   reducer,
+  shouldForceAdvance,
   shuffleOrder,
   visibleBuffering,
   type Action,
@@ -101,6 +102,11 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // The track key (itemId) a duration-mismatch report was already sent for —
   // at most one report per track load. Reset in the currentSrc effect below.
   const durationReportedRef = useRef<string | null>(null);
+  // The track key (itemId) already reported for having played past its known
+  // length — at most one report per track load (see `shouldForceAdvance` and
+  // the observe-only block below). Reset alongside `durationReportedRef` in
+  // the currentSrc effect.
+  const pastKnownDurationRef = useRef<string | null>(null);
 
   const currentIndex = currentIndexOf(state);
   const current = currentIndex >= 0 ? (state.queue[currentIndex] ?? null) : null;
@@ -191,6 +197,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     if (!currentSrc) {
       srcUrlRef.current = null;
       durationReportedRef.current = null;
+      pastKnownDurationRef.current = null;
       audio.removeAttribute('src');
       audio.load();
       return;
@@ -198,6 +205,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     if (srcUrlRef.current === currentSrc) return; // already loaded (e.g. by the gesture)
     srcUrlRef.current = currentSrc;
     durationReportedRef.current = null;
+    pastKnownDurationRef.current = null;
     audio.src = currentSrc;
     audio.load();
     // `isPlaying` is intentionally not a dep — the play/pause effect below owns it.
@@ -334,6 +342,27 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     [current],
   );
 
+  // Diagnostic-only, distinct from `reportDurationMismatch` above: that one
+  // measures how often the disagreement is DETECTED (once per track, on
+  // durationchange/ended); this measures how often the guard below actually
+  // has to ADVANCE the queue without `ended`. Both numbers matter — a track
+  // can show a mismatch and still end normally (e.g. a brief seek glitch).
+  const reportPastKnownDuration = useCallback(() => {
+    const audio = audioRef.current;
+    const track = current;
+    reportFailure(
+      'music.player.pastKnownDuration',
+      'advanced past a known-duration track without waiting for `ended`',
+      {
+        elementDuration: audio?.duration ?? null,
+        trackDuration: track?.durationSeconds ?? null,
+        currentTime: audio?.currentTime ?? null,
+        itemId: currentItemIdRef.current,
+        videoId: track?.videoId ?? null,
+      },
+    );
+  }, [current]);
+
   // Force the element to `position` whenever a seek/restart bumps the nonce.
   // Re-plays afterwards when playing so a repeat-one loop actually restarts.
   useEffect(() => {
@@ -372,8 +401,8 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     pause: () => {},
     next: () => {},
     prev: () => {},
+    stop: () => {},
     seekTo: (_seconds: number) => {},
-    seekBy: (_offset: number) => {},
   });
   mediaActionsRef.current = {
     play: () => {
@@ -384,14 +413,14 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     },
     next: () => runGesture({ type: 'NEXT' }),
     prev: () => runGesture({ type: 'PREV' }),
-    seekTo: (seconds: number) => dispatch({ type: 'SEEK', position: seconds }),
-    seekBy: (offset: number) => {
-      const { position, duration } = stateRef.current;
-      const target = position + offset;
-      const clamped =
-        duration > 0 ? Math.min(Math.max(target, 0), duration) : Math.max(target, 0);
-      dispatch({ type: 'SEEK', position: clamped });
+    // MediaSession's "stop" is a hard stop, not a pause — but the reducer has
+    // no distinct stop action, so this settles for the closest honest thing:
+    // actually stop the sound. Whether that should also reset position to 0
+    // is a product call outside this slice's scope.
+    stop: () => {
+      if (stateRef.current.isPlaying) dispatch({ type: 'SET_PLAYING', value: false });
     },
+    seekTo: (seconds: number) => dispatch({ type: 'SEEK', position: seconds }),
   };
 
   // Register the OS action handlers once; forward each to the ref so it always
@@ -399,11 +428,17 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
+    // `seekbackward`/`seekforward` are deliberately NOT registered: iOS gives
+    // them priority over `nexttrack`/`previoustrack` and shows ±10s buttons on
+    // the lock screen instead of next/prev — the exact bug this fixes (a
+    // podcast gesture on a song). `seekto` stays: the in-app scrubber drives
+    // it and it doesn't compete for a lock-screen button slot.
     const handlers: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
       ['play', () => mediaActionsRef.current.play()],
       ['pause', () => mediaActionsRef.current.pause()],
       ['previoustrack', () => mediaActionsRef.current.prev()],
       ['nexttrack', () => mediaActionsRef.current.next()],
+      ['stop', () => mediaActionsRef.current.stop()],
       [
         'seekto',
         (details) => {
@@ -412,8 +447,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           }
         },
       ],
-      ['seekbackward', (details) => mediaActionsRef.current.seekBy(-(details.seekOffset ?? 10))],
-      ['seekforward', (details) => mediaActionsRef.current.seekBy(details.seekOffset ?? 10)],
     ];
     for (const [action, handler] of handlers) {
       // Not every action is supported on every browser — ignore rejections.
@@ -461,6 +494,66 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         : 'paused'
       : 'none';
   }, [state.isPlaying, current]);
+
+  // Publish position/duration for a freshly-loaded track immediately, using
+  // the already-known length (the same `durationSeconds` seed `playImperative`
+  // uses for SET_DURATION) instead of waiting for the first throttled
+  // `timeupdate` tick below. Without this the lock-screen scrubber shows the
+  // PREVIOUS track's duration/position for up to ~1s after a track change —
+  // one of the reported lock-screen lies (spec `music-lockscreen-controls`).
+  useEffect(() => {
+    if (
+      !('mediaSession' in navigator) ||
+      typeof navigator.mediaSession.setPositionState !== 'function'
+    ) {
+      return;
+    }
+    if (!current) return;
+    const duration = current.durationSeconds;
+    if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        position: 0,
+        // Read from the ref, not `state.isPlaying` as a dependency: this
+        // effect must run exactly once per track load, not re-fire on every
+        // later play/pause toggle (that's `onPause`/`onPlaying`'s job).
+        playbackRate: stateRef.current.isPlaying ? 1 : 0,
+      });
+    } catch {
+      /* invalid position state — skip */
+    }
+  }, [current]);
+
+  // Tell the OS the reported position has stopped advancing. Media Session
+  // §4.5 has the OS INTERPOLATE position from the last reported
+  // (position, playbackRate) pair — with the existing `playbackRate: 1`
+  // always reported from `timeupdate`, the lock-screen counter kept counting
+  // up on its own for as long as the OS chose to interpolate, even once
+  // playback had actually stopped (the reported "−0:00 forever" symptom).
+  // Read live off `audioRef` rather than an event target so every caller
+  // (pause/waiting/stalled) can share this without threading the event through.
+  const publishFrozenPosition = useCallback(() => {
+    if (
+      !('mediaSession' in navigator) ||
+      typeof navigator.mediaSession.setPositionState !== 'function'
+    ) {
+      return;
+    }
+    const audio = audioRef.current;
+    if (!audio) return;
+    const duration = audio.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration,
+        position: Math.min(Math.max(audio.currentTime, 0), duration),
+        playbackRate: 0,
+      });
+    } catch {
+      /* invalid position state — skip */
+    }
+  }, []);
 
   const value = useMemo<MusicPlayerContextValue>(() => {
     const playNow = (tracks: MusicTrack[], startIndex = 0) => {
@@ -525,6 +618,47 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           if (Math.abs(now - lastTickRef.current) < 1) return;
           lastTickRef.current = now;
           dispatch({ type: 'SET_POSITION', position: now });
+
+          // The forced-advance guard: iOS's fMP4 defect duplicates the
+          // element's reported duration, so `ended` never arrives (or arrives
+          // ~2x too late) — see `shouldForceAdvance`'s docstring. Reusing it
+          // (not re-deriving the mismatch check here) is what keeps this from
+          // ever tripping on a healthy track. At most one forced advance per
+          // track load (`pastKnownDurationRef`), same guard shape as
+          // `durationReportedRef` above.
+          const track = current;
+          const itemKey = currentItemIdRef.current;
+          // OBSERVE ONLY — deliberately does not advance the queue.
+          //
+          // This started out as a fix: force the queue on when playback reaches
+          // the track's known length, so a doubled element duration could not
+          // strand it. An adversarial review took that apart. Advancing here
+          // fires on a legitimate scrub past the known length, races `ended`
+          // into a double NEXT that silently eats a track, and never rearms
+          // under repeat-one. Worse, it could not have fixed the reported
+          // symptom anyway: `durationSeconds` is only set by
+          // `searchResultToTrack`, so every library / favourites / history
+          // queue is outside it.
+          //
+          // And the premise itself is unproven. The owner's lock screen showed
+          // a FULL bar at 2:33 — if the element believed 5:06 we would have
+          // published 5:06 and the bar would have sat half empty. That reads
+          // like `ended` never arriving at a correct duration, which is a
+          // different bug with a different fix.
+          //
+          // So: measure first. This records how often the condition the fix
+          // assumed actually occurs on a real device, at zero risk to playback.
+          // Once `music.player.pastKnownDuration` reports (or doesn't) from the
+          // owner's phone, we will know whether that fix was ever the answer.
+          if (
+            itemKey &&
+            pastKnownDurationRef.current !== itemKey &&
+            shouldForceAdvance(e.currentTarget.duration, track?.durationSeconds, now)
+          ) {
+            pastKnownDurationRef.current = itemKey;
+            reportPastKnownDuration();
+          }
+
           // Feed the lock-screen scrubber (same throttle). setPositionState
           // throws on NaN/Infinity or position > duration, so guard the values.
           if (
@@ -582,10 +716,20 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           // Safari fires `pause` right after `ended`; that pause must not
           // undo the NEXT auto-advance the `ended` handler already dispatched.
           if (e.currentTarget.ended) return;
+          publishFrozenPosition(); // a real pause — stop the lock screen's clock now
           dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
         }}
-        onWaiting={armBufferingTimer}
-        onStalled={armBufferingTimer}
+        onWaiting={() => {
+          armBufferingTimer();
+          // A stall means the OS is about to start interpolating position from
+          // a value that has genuinely stopped moving — freeze it immediately
+          // rather than waiting for the (separate, UI-only) settle window.
+          publishFrozenPosition();
+        }}
+        onStalled={() => {
+          armBufferingTimer();
+          publishFrozenPosition();
+        }}
         onCanPlay={clearBuffering}
         onError={(e) => {
           // Nothing listened for this before, and the worker returns 502 for a

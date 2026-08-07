@@ -307,6 +307,48 @@ export function durationMismatch(
   return Math.abs(elementDuration - trackDuration) > tolerance;
 }
 
+/**
+ * True when the track must advance from a native `timeupdate` tick instead of
+ * waiting for `ended` — the fix for the iOS fMP4 defect that duplicates the
+ * element's reported duration (see `durationMismatch`'s docstring): audio
+ * genuinely stops at the real length, but the element believes it's ~2x that,
+ * so `ended` never arrives (or arrives ~2x too late).
+ *
+ * Deliberately the AND of three signals, not any one alone:
+ *  1. `durationMismatch` — there IS a real, tolerance-exceeding disagreement
+ *     between what the element reports and the track's known real length.
+ *  2. The element's duration is at least `FORCED_ADVANCE_MIN_RATIO` times the
+ *     known length, i.e. the disagreement has the SHAPE of the doubling
+ *     defect rather than merely being some disagreement.
+ *  3. `currentTime` has reached that known real length — playback has actually
+ *     gotten to where the track should be over.
+ *
+ * (2) is what keeps this from truncating music. `durationMismatch` is a
+ * symmetric 5%/2s band, so it also fires when metadata is simply a little off —
+ * and metadata that undershoots by more than 5% is common. Without the ratio
+ * check, a track whose metadata says 3:00 but which really runs 3:20 would be
+ * cut 20 seconds early, every time. The doubling defect is ~100% off, so a 1.5x
+ * floor separates the two with a wide margin in both directions: a track has to
+ * be at least half again as long as advertised before we stop trusting `ended`.
+ *
+ * `durationMismatch` already guards every degenerate input (missing/non-finite/
+ * zero/negative on either side), so the checks below can assume real numbers.
+ */
+const FORCED_ADVANCE_MIN_RATIO = 1.5;
+
+export function shouldForceAdvance(
+  elementDuration: number,
+  trackDurationSeconds: number | null | undefined,
+  currentTime: number,
+): boolean {
+  if (!durationMismatch(elementDuration, trackDurationSeconds)) return false;
+  // `durationMismatch` returning true already guarantees `trackDurationSeconds`
+  // is a finite, positive number here.
+  const known = trackDurationSeconds as number;
+  if (elementDuration < known * FORCED_ADVANCE_MIN_RATIO) return false;
+  return currentTime >= known;
+}
+
 export interface MusicPlayerContextValue {
   current: MusicTrack | null;
   queue: MusicTrack[];
