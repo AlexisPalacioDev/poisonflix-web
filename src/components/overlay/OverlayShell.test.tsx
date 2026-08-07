@@ -194,7 +194,10 @@ describe('OverlayShell - portal container', () => {
 // paint), so these tests assert the structural invariant that makes correct
 // stacking possible in a real browser - not the visual result itself.
 describe('OverlayShell - menu variant with an anchored panel', () => {
-  function Harness({ container }: { container?: Element | null } = {}) {
+  function Harness({
+    container,
+    className = 'backdrop',
+  }: { container?: Element | null; className?: string } = {}) {
     const anchorRef = useRef<HTMLButtonElement>(null);
     const [open, setOpen] = useState(false);
     return (
@@ -206,7 +209,7 @@ describe('OverlayShell - menu variant with an anchored panel', () => {
           <OverlayShell
             variant="menu"
             onDismiss={() => setOpen(false)}
-            className="backdrop"
+            className={className}
             ariaLabel="Cerrar menú"
             anchorRef={anchorRef}
             container={container}
@@ -235,6 +238,36 @@ describe('OverlayShell - menu variant with an anchored panel', () => {
     expect(panelWrapper?.parentElement).toBe(document.body);
     // eslint-disable-next-line no-bitwise
     expect(backdrop.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // DOM order alone is NOT what keeps the panel on top, and believing it was
+  // is how the very bug this component exists to fix came back: document order
+  // only breaks ties between equal z-indexes, and a backdrop carrying one from
+  // its class always outranks a wrapper left at `auto`. In a real browser that
+  // means a transparent backdrop over the whole panel — it looks perfect and
+  // every tap dismisses instead of activating. jsdom does no layout or paint,
+  // so it can never catch that visually; this asserts the arithmetic instead.
+  it('stacks the anchored panel one level above whatever z-index the backdrop has', () => {
+    const style = document.createElement('style');
+    style.textContent = '.test-backdrop { position: fixed; z-index: 100; }';
+    document.head.appendChild(style);
+
+    render(<Harness className="test-backdrop" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger' }));
+
+    const panelWrapper = screen.getByRole('menu', { name: 'Panel' }).parentElement;
+    expect(panelWrapper?.style.zIndex).toBe('101');
+
+    style.remove();
+  });
+
+  it('falls back to a positive z-index when the backdrop has none', () => {
+    render(<Harness />); // no stylesheet, so the backdrop computes to `auto`
+    fireEvent.click(screen.getByRole('button', { name: 'Trigger' }));
+
+    const panelWrapper = screen.getByRole('menu', { name: 'Panel' }).parentElement;
+    // Any positive value paints above `auto`; never leave it unset.
+    expect(Number(panelWrapper?.style.zIndex)).toBeGreaterThan(0);
   });
 
   it('honors a custom container for the anchored panel too', () => {

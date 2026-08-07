@@ -1068,11 +1068,12 @@
   cursor: default;
 }
 
-/* Position (`fixed`, anchored below the trigger) is computed and applied
-   inline by `OverlayShell` (portalled next to its backdrop, design D:
-   `sdd/mobile-music-overhaul`) - this rule only owns the visual surface. */
+/* Position (`fixed`), anchoring and stacking are computed and applied inline
+   by `OverlayShell`, which measures the backdrop and sits one level above it.
+   No z-index here on purpose: this element is static, so any z-index would be
+   inert, and a number that looks load-bearing but is ignored is worse than
+   none — that is how this menu silently ended up under its own backdrop. */
 .pf-music__addpl-menu {
-  z-index: 41;
   min-width: 220px;
   max-width: 280px;
   padding: 0.5rem;

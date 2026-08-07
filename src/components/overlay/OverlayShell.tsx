@@ -158,10 +158,32 @@ export function OverlayShell({
   useLayoutEffect(() => {
     if (variant !== 'menu' || !anchorRef?.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
+
+    // Sitting after the backdrop in the DOM is NOT enough. Document order only
+    // breaks ties between elements at the same z-index, and the backdrop always
+    // carries one from its own class (100 on the header, 40 in the music rows)
+    // while this wrapper would default to `auto`. A positive z-index paints in
+    // a later step than `auto`, so the backdrop covered the whole panel and
+    // every tap dismissed instead of activating — the exact bug this component
+    // was introduced to kill, reintroduced through a different mechanism.
+    //
+    // Measuring the backdrop and sitting one above it keeps the guarantee here
+    // instead of in each caller's stylesheet. A `panelClassName` the caller has
+    // to remember is a rule that gets forgotten; this one cannot be.
+    const backdropZ = backdropRef.current
+      ? Number.parseInt(window.getComputedStyle(backdropRef.current).zIndex, 10)
+      : Number.NaN;
+
     setPanelStyle({
       position: 'fixed',
       top: rect.bottom + panelOffset,
       right: window.innerWidth - rect.right,
+      zIndex: Number.isNaN(backdropZ) ? 1 : backdropZ + 1,
+      // A phone in landscape has room for about four rows; without this the
+      // last items overflow off-screen and the body scroll lock makes them
+      // unreachable, so the menu can hide "Cerrar sesión" with no way back.
+      maxHeight: `calc(100vh - ${Math.round(rect.bottom + panelOffset)}px - 8px)`,
+      overflowY: 'auto',
     });
   }, [variant, anchorRef, panelOffset]);
 
