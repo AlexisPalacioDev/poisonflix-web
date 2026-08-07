@@ -455,14 +455,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
-    // `stop` is deliberately NOT registered either, and this one was a real
-    // regression: handing the OS a stop handler is what lets it stop us.
-    // Android calls it when the media notification is dismissed or the app is
-    // backgrounded, which is what locking the screen does — the owner's music
-    // died on every lock, and had not before, because before there was no
-    // handler for the system to call. A pause the user did not ask for is
-    // worse than a missing button.
-    //
     // `seekbackward`/`seekforward` are deliberately NOT registered: iOS gives
     // them priority over `nexttrack`/`previoustrack` and shows ±10s buttons on
     // the lock screen instead of next/prev — the exact bug this fixes (a
@@ -473,6 +465,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       ['pause', () => mediaActionsRef.current.pause()],
       ['previoustrack', () => mediaActionsRef.current.prev()],
       ['nexttrack', () => mediaActionsRef.current.next()],
+      ['stop', () => mediaActionsRef.current.stop()],
       [
         'seekto',
         (details) => {
@@ -567,7 +560,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // playback had actually stopped (the reported "−0:00 forever" symptom).
   // Read live off `audioRef` rather than an event target so every caller
   // (pause/waiting/stalled) can share this without threading the event through.
-  // The iPhone reports what a lock actually does to playback; see the hook.
+  // Records what actually happens to playback around a lock; see the hook.
   useLockDiagnostics(audioRef);
 
   const publishFrozenPosition = useCallback(() => {
@@ -757,17 +750,15 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
         }}
         onWaiting={() => {
-          // Buffering is NOT stopping, and telling the OS otherwise is how the
-          // owner's iPhone lost the audio on every lock. `publishFrozenPosition`
-          // reports `playbackRate: 0`, which reads as "this session is not
-          // playing" — and a phone that just locked throttles the network, so
-          // `waiting`/`stalled` fire constantly right at that moment. The
-          // scrubber creeping for a second while bytes arrive is a far smaller
-          // problem than the track dying.
           armBufferingTimer();
+          // A stall means the OS is about to start interpolating position from
+          // a value that has genuinely stopped moving — freeze it immediately
+          // rather than waiting for the (separate, UI-only) settle window.
+          publishFrozenPosition();
         }}
         onStalled={() => {
           armBufferingTimer();
+          publishFrozenPosition();
         }}
         onCanPlay={clearBuffering}
         onError={(e) => {
