@@ -229,13 +229,18 @@ def _load_ratings():
 
 def _persist_ratings():
     # Called under _ratings_lock. Best-effort, mirrors _persist_jobs.
+    #
+    # Best-effort, but no longer silent: the caller still gets its 200 whatever
+    # happens here, so a swallowed write meant votes could vanish on the next
+    # restart with nothing anywhere to say so. A read-only volume, a full disk
+    # or a bad DATA_DIR now leaves a line in the log.
     try:
         tmp = RATINGS_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(_ratings, fh)
         os.replace(tmp, RATINGS_PATH)
-    except OSError:
-        pass
+    except OSError as exc:
+        print(f"[ratings] could not persist to {RATINGS_PATH}: {exc}", flush=True)
 
 
 def user_ratings(user_id):
@@ -280,6 +285,129 @@ def user_liked(user_id):
         })
     out.sort(key=lambda r: r.get("at") or 0, reverse=True)
     return out
+
+
+# How many bare likes a single pass repairs. Someone who liked two hundred
+# tracks on an older client would otherwise turn one screen into two hundred
+# upstream lookups; the remainder heal on the next read.
+LIKED_BACKFILL_PER_READ = 12
+
+# Wall clock for one pass. The per-call ceiling above bounds each lookup; this
+# bounds the pass, so a uniformly slow upstream cannot keep a worker thread
+# alive for minutes on end.
+LIKED_BACKFILL_BUDGET_S = 20
+
+# Users with a repair pass already running. One is plenty: `GET /ratings` is
+# refetched on mount and every five minutes, so without this a slow upstream
+# would stack a fresh set of lookups on top of the ones still in flight.
+_repair_inflight = set()
+_repair_inflight_lock = threading.Lock()
+
+
+def repair_liked_metadata(user_id):
+    """Kick off the repair without making the caller wait for YouTube.
+
+    This is called from the `GET /ratings` handler, which the app hits on
+    mount and every five minutes — not just when "Tus me gusta" is on screen.
+    Doing the lookups inline meant up to `LIKED_BACKFILL_PER_READ` sequential
+    requests to a scraped third party sat between the user and their own
+    ratings, and nothing downstream would have cut it short: `apiFetch` sends
+    no `AbortSignal` and the Caddyfile sets no timeout for `/bff/*`. A slow
+    upstream would simply hang the screen.
+
+    So the read answers immediately from what is already stored, and the
+    repair lands in the next refetch a few minutes later. A bare videoId
+    showing for one cycle is a far smaller defect than a stalled screen.
+    """
+    if not user_id:
+        return
+    with _repair_inflight_lock:
+        if user_id in _repair_inflight:
+            return
+        _repair_inflight.add(user_id)
+
+    def run():
+        try:
+            _repair_liked_metadata_now(user_id)
+        finally:
+            with _repair_inflight_lock:
+                _repair_inflight.discard(user_id)
+
+    threading.Thread(target=run, name="liked-repair", daemon=True).start()
+
+
+def _repair_liked_metadata_now(user_id):
+    """Fill in title/artist/thumbnail for likes that were stored without them.
+
+    `user_liked` falls back to the raw videoId when a row has no title, which
+    is exactly what put bare ids and "Desconocido" on the "Tus me gusta"
+    screen. Metadata normally rides along with the vote, but a row written by
+    an older client -- or by any caller that omits it -- has no other way back:
+    nothing in this worker ever resolved a bare id after the fact.
+
+    The answer is written back, so a repaired row costs one lookup ever rather
+    than one per page view.
+
+    Best-effort by design: an upstream failure leaves the old fallback in
+    place rather than raising. Runs on a background thread — see
+    `repair_liked_metadata`, which is what callers should use.
+    """
+    if not user_id:
+        return
+    with _ratings_lock:
+        bare = [
+            vid
+            for vid, row in _ratings.get(user_id, {}).items()
+            if row.get("v") == 1 and not row.get("title")
+        ][:LIKED_BACKFILL_PER_READ]
+    if not bare:
+        return
+
+    try:
+        yt = _get_ytmusic()
+    except Exception:  # noqa: BLE001
+        return
+
+    resolved = {}
+    deadline = time.monotonic() + LIKED_BACKFILL_BUDGET_S
+    for video_id in bare:
+        if time.monotonic() >= deadline:
+            # Whatever resolved so far still gets written; the rest are picked
+            # up by the next pass rather than held hostage to a slow upstream.
+            break
+        try:
+            watch = yt.get_watch_playlist(videoId=video_id, limit=1) or {}
+        except Exception:  # noqa: BLE001
+            # One dead id must not stop the others from healing.
+            continue
+        for track in watch.get("tracks", []) or []:
+            if track.get("videoId") != video_id:
+                continue
+            song = _map_song(track)
+            if song.get("title"):
+                resolved[video_id] = song
+            break
+
+    if not resolved:
+        return
+
+    with _ratings_lock:
+        votes = _ratings.get(user_id) or {}
+        for video_id, song in resolved.items():
+            row = votes.get(video_id)
+            if not row:
+                # Vote cleared while we were asking YouTube.
+                continue
+            # Only ever added, never blanked -- the same rule `set_rating`
+            # follows, so a repair can't overwrite something better.
+            for key, value in (
+                ("title", song.get("title")),
+                ("artist", song.get("artist")),
+                ("thumb", song.get("thumbnailUrl")),
+            ):
+                if isinstance(value, str) and value and not row.get(key):
+                    row[key] = value
+        _persist_ratings()
 
 
 def set_rating(user_id, video_id, rating, title=None, artist=None, thumb=None):
@@ -376,14 +504,17 @@ def _load_plays():
 
 
 def _persist_plays():
-    # Called under _plays_lock. Best-effort, mirrors _persist_ratings.
+    # Called under _plays_lock. Best-effort, mirrors _persist_ratings — and
+    # says so out loud when it fails, for the same reason: this tally is what
+    # seeds the whole personalised feed, so losing it silently reads to the
+    # user as "the app forgot everything I listened to".
     try:
         tmp = PLAYS_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(_plays, fh)
         os.replace(tmp, PLAYS_PATH)
-    except OSError:
-        pass
+    except OSError as exc:
+        print(f"[plays] could not persist to {PLAYS_PATH}: {exc}", flush=True)
 
 
 def user_plays(user_id):
@@ -516,12 +647,33 @@ def target_path(artist, album, title, video_id):
 # Search (ytmusicapi, unauthenticated) with yt-dlp fallback
 # ---------------------------------------------------------------------------
 
+# Ceiling for a single YouTube Music call. Generous — these are scraped
+# endpoints and a slow answer is still an answer — but finite.
+YTMUSIC_TIMEOUT_S = 15
+
+
 def _get_ytmusic():
     global _ytmusic
     if _ytmusic is None:
+        import requests
         from ytmusicapi import YTMusic
 
-        _ytmusic = YTMusic()
+        class _TimeoutSession(requests.Session):
+            """A session that refuses to wait forever.
+
+            `YTMusic(...)` exposes no timeout of its own — it only accepts a
+            prepared session — so an upstream that accepts the connection and
+            then stops talking hangs the calling thread for good. Every other
+            network call in this file is already bounded (`timeout=30` on the
+            Jellyfin and stream fetches, proportional ceilings on ffmpeg);
+            this closes the one hole left, for every ytmusicapi call at once.
+            """
+
+            def request(self, *args, **kwargs):
+                kwargs.setdefault("timeout", YTMUSIC_TIMEOUT_S)
+                return super().request(*args, **kwargs)
+
+        _ytmusic = YTMusic(requests_session=_TimeoutSession())
     return _ytmusic
 
 
@@ -2798,6 +2950,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/ratings":
             user_id = self._user_id()
+            # Heal any like stored without a title before reading it back, so
+            # "Tus me gusta" stops showing bare videoIds. Best-effort and
+            # capped; a failure here just leaves the old fallback in place.
+            repair_liked_metadata(user_id)
             # `ratings` keeps its old shape so every existing caller is
             # untouched; `liked` is the renderable list "Tus me gusta" needs.
             return self._send(200, {

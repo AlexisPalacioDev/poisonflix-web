@@ -82,6 +82,12 @@ export function MusicResultRow({
       <MusicRowMenu
         title={title}
         videoId={result.videoId}
+        // Ride along with a thumb vote. This row is the only place a track can
+        // be liked from a list, and the worker stores exactly what the vote
+        // carries — omitting these is what left "Tus me gusta" showing bare
+        // videoIds with "Desconocido" underneath.
+        artist={result.artist}
+        coverUrl={result.thumbnailUrl}
         itemId={playItemId}
         downloadParams={{
           videoId: result.videoId,
