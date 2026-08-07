@@ -83,8 +83,16 @@ export function MusicRowMenu({
   const myJams = (jamsQuery.data ?? []).filter((entry) => entry.myRole?.acceptedAt != null);
   const [addingToJam, setAddingToJam] = useState(false);
 
+  // Anything that can be played can be shared. A downloaded track needs no
+  // videoId at all: it goes into the queue as its Jellyfin item id, and every
+  // device in the room resolves that against ITS OWN session (see `trackSrc`
+  // in useJamPlayback). Requiring a videoId here was the wrong instinct — it
+  // hid the option on the whole library, which is most of what the owner
+  // actually listens to.
+  const shareable = Boolean(itemId || videoId);
+
   const addToJam = async (jamId: string) => {
-    if (!videoId || addingToJam) return;
+    if (!shareable || addingToJam) return;
     setAddingToJam(true);
     try {
       await addTracksToJam(jamId, [
@@ -93,11 +101,15 @@ export function MusicRowMenu({
           title,
           artist: artist ?? null,
           coverUrl: coverUrl ?? null,
-          videoId,
-          // A Jam plays on other people's devices, which have no claim on this
-          // user's Jellyfin session — so the queue carries the shared preview
-          // stream rather than a per-user library URL.
-          streamUrl: `/bff/music/stream?videoId=${encodeURIComponent(videoId)}&source=ytmusic`,
+          videoId: videoId ?? null,
+          // Only a not-yet-downloaded track needs the shared preview proxy.
+          // A library track deliberately carries NO streamUrl, so each
+          // listener builds their own Jellyfin URL rather than replaying a
+          // link signed for somebody else's account.
+          streamUrl:
+            itemId || !videoId
+              ? undefined
+              : `/bff/music/stream?videoId=${encodeURIComponent(videoId)}&source=ytmusic`,
         },
       ]);
       close();
@@ -315,7 +327,7 @@ export function MusicRowMenu({
                     through the API, so a room the owner created sat empty and
                     the feature looked broken. Adding from the song you are
                     already looking at is where it belongs. */}
-                {videoId && myJams.length > 0 && (
+                {shareable && myJams.length > 0 && (
                   <li>
                     <button
                       type="button"
