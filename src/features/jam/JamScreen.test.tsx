@@ -155,9 +155,10 @@ describe('JamScreen', () => {
 
     // The jam row's accessible name is the concatenation of its name AND
     // mode spans (both live inside the same <button>), so target it via its
-    // name text then walk up to the button — same pattern DownloadsScreen's
-    // tests use for a card whose accessible name isn't the plain title.
-    fireEvent.click((await screen.findByText('Sala escucha')).closest('button') as HTMLElement);
+    // By role, not by loose text: the jam's name now also appears as an
+    // <option> in the header's destination picker, so a bare findByText is
+    // ambiguous and lands on something that is not clickable.
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala escucha') }));
 
     const playButton = await screen.findByRole('button', { name: 'Reproducir' });
     expect(playButton).toBeDisabled();
@@ -183,7 +184,7 @@ describe('JamScreen', () => {
 
     renderJamScreen();
 
-    fireEvent.click((await screen.findByText('Sala líder')).closest('button') as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala líder') }));
 
     const playButton = await screen.findByRole('button', { name: 'Reproducir' });
     expect(playButton).toBeEnabled();
@@ -205,7 +206,7 @@ describe('JamScreen', () => {
 
     renderJamScreen();
 
-    fireEvent.click((await screen.findByText('Sala propia')).closest('button') as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala propia') }));
 
     expect(await screen.findByLabelText('Buscar usuarios para invitar')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Salir de la Jam' })).not.toBeInTheDocument();
@@ -227,7 +228,7 @@ describe('JamScreen', () => {
 
     renderJamScreen();
 
-    fireEvent.click((await screen.findByText('Sala ajena')).closest('button') as HTMLElement);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala ajena') }));
 
     expect(await screen.findByRole('button', { name: 'Salir de la Jam' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Buscar usuarios para invitar')).not.toBeInTheDocument();

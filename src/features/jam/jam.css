@@ -695,3 +695,20 @@
   outline-offset: 2px;
   border-radius: var(--pf-radius-sm);
 }
+
+/* Icon-only, and sized to the pill so nothing reflows when it appears. The
+   labelled version of this wrapped onto three lines and pushed the header
+   apart, for a fallback most people will never trigger. */
+.pf-jam-dest__unlock {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: var(--pf-radius-pill);
+  background: #1ed760;
+  color: #06170d;
+  cursor: pointer;
+}

@@ -83,20 +83,28 @@ export function JamDestinationPicker() {
           setJamDestination(event.target.value || null);
         }}
       >
-        <option value="">Sonar en este dispositivo</option>
+        <option value="">Este dispositivo</option>
         {jams.map((entry) => (
           <option key={entry.jam.id} value={entry.jam.id}>
-            Sonar en {entry.jam.name}
+            {entry.jam.name}
           </option>
         ))}
       </select>
+      {/* Rare: only when the browser refused to start audio without a touch.
+          An icon inside the pill rather than a labelled button beside it —
+          the label wrapped onto three lines and crowded the whole header for
+          a control most people will never see. */}
       {playback.needsGesture && (
         <button
           type="button"
           className="pf-jam-dest__unlock"
+          aria-label="Tocá para oír en este dispositivo"
+          title="Tocá para oír en este dispositivo"
           onClick={() => playback.unlock(audioRef.current)}
         >
-          Tocá para oír
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path d="M8 5v14l11-7z" fill="currentColor" />
+          </svg>
         </button>
       )}
     </label>
