@@ -2418,11 +2418,23 @@ def _interleave(sources, limit):
     return best
 
 
-def recommendations(seed, limit, user_id=None):
+def recommendations(seed, limit, user_id=None, pure=False):
     """A mixed radio for a seed videoId, personalised for `user_id`.
 
     Best-effort throughout: every source is allowed to fail on its own and the
     radio is built from whatever answered. A partial radio beats an error.
+
+    `pure=True` restricts the mix to sources that depend on the SEED
+    (`_src_seed`, `_src_related`) and drops the three sources that depend only
+    on `user_id` (`_src_your_artists`, `_src_your_likes`, `_src_history`).
+    This is what a "Porque escuchaste X" row needs: those three are identical
+    for every seed the same user has, which was the reported bug — four rows
+    sharing the same five tracks, because three of their five sources never
+    looked at the seed at all. `_src_history` made it worse, replaying the
+    user's own plays — which, for a "because you listened to X" row, includes
+    X itself. The default (`pure=False`, every existing caller's implicit
+    value) is unchanged: `useAutoplayRadio`'s "Mix para vos" wants exactly
+    this personalised blend.
     """
     try:
         yt = _get_ytmusic()
@@ -2432,7 +2444,7 @@ def recommendations(seed, limit, user_id=None):
     if not seed:
         seed = _recent_seed_video()
 
-    cache_key = (seed or "", user_id or "", limit)
+    cache_key = (seed or "", user_id or "", limit, bool(pure))
     cached = _radio_cached(cache_key)
     if cached is not None:
         return cached
@@ -2446,11 +2458,14 @@ def recommendations(seed, limit, user_id=None):
         except Exception:  # noqa: BLE001
             seed_tracks, related_id = [], None
 
-    jobs = {
-        "related": lambda: _src_related(yt, related_id, limit),
-        "artists": lambda: _src_your_artists(yt, user_id, limit),
-        "likes": lambda: _src_your_likes(yt, user_id, limit),
-    }
+    if pure:
+        jobs = {"related": lambda: _src_related(yt, related_id, limit)}
+    else:
+        jobs = {
+            "related": lambda: _src_related(yt, related_id, limit),
+            "artists": lambda: _src_your_artists(yt, user_id, limit),
+            "likes": lambda: _src_your_likes(yt, user_id, limit),
+        }
     gathered = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         futures = {pool.submit(fn): name for name, fn in jobs.items()}
@@ -2461,22 +2476,35 @@ def recommendations(seed, limit, user_id=None):
             except Exception:  # noqa: BLE001 — a dead source is not a dead radio
                 gathered[name] = []
 
-    # History last: it is the weakest signal (you have heard it already) and
-    # costs nothing, so it is the natural filler when the network sources come
-    # back thin.
-    sources = [
-        seed_tracks,
-        gathered.get("related") or [],
-        gathered.get("artists") or [],
-        gathered.get("likes") or [],
-        _src_history(user_id, limit),
-    ]
+    if pure:
+        # Seed-dependent sources only — no user-global filler, and no
+        # `_src_history`, since it can literally return the seed track.
+        sources = [seed_tracks, gathered.get("related") or []]
+    else:
+        # History last: it is the weakest signal (you have heard it already)
+        # and costs nothing, so it is the natural filler when the network
+        # sources come back thin.
+        sources = [
+            seed_tracks,
+            gathered.get("related") or [],
+            gathered.get("artists") or [],
+            gathered.get("likes") or [],
+            _src_history(user_id, limit),
+        ]
 
     results = _interleave(sources, limit)
 
-    # With no seed and nothing personal to go on there is nothing to mix, so
-    # fall back to YouTube's own home picks rather than returning an empty list.
-    if not results:
+    if pure:
+        # A seeded row must never surface its own seed as a "recommendation".
+        if seed:
+            results = [row for row in results if row.get("videoId") != seed]
+    elif not results:
+        # With no seed and nothing personal to go on there is nothing to mix,
+        # so fall back to YouTube's own home picks rather than an empty list.
+        # NOT done in pure mode: home picks are the same for every seed, which
+        # would silently reproduce the exact "every row looks the same" bug
+        # this mode exists to fix. An empty pure radio is left empty so the
+        # caller (the frontend's generic-feed fallback) can react honestly.
         try:
             results = _home_recommendations(yt, limit)
         except Exception:  # noqa: BLE001
@@ -2795,8 +2823,14 @@ class Handler(BaseHTTPRequestHandler):
             # Resolved BEFORE the call now: the radio is personalised (your
             # artists, your likes, your history), so it needs to know whose.
             user_id = self._user_id()
+            # `pure=1` restricts the mix to seed-dependent sources — used by
+            # the frontend's "Porque escuchaste X" rows so that two different
+            # seeds for the same user never share their global sources.
+            # Defaults to off: every other caller keeps today's personalised
+            # blend unchanged.
+            pure = (qs.get("pure", ["0"])[0]).strip() in ("1", "true")
             try:
-                results = recommendations(seed, limit, user_id)
+                results = recommendations(seed, limit, user_id, pure=pure)
             except Exception:  # noqa: BLE001 — recommendations are best-effort.
                 results = []
             # A radio that keeps serving what you rejected is the whole reason

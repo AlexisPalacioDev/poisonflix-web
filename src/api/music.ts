@@ -62,10 +62,25 @@ export type RadioSeed = { videoId: string } | { itemId: string };
 // The endless-radio feed behind autoplay: related tracks for whatever is
 // playing, so a queue never just stops. Same endpoint (and same `song` shape)
 // as the recommendations rail — only the seed differs.
-export async function getRadio(seed: RadioSeed, limit = 15): Promise<MusicResultItem[]> {
+//
+// `opts.pure` (mobile-music-overhaul: fix-seeded-rows) asks the worker to
+// restrict the mix to sources that depend on the seed itself (its own
+// autoplay queue plus "related"), dropping the three sources that depend
+// only on the signed-in user (their top artists, their likes, their play
+// history). Those three are identical for every seed the same user has, so
+// without this flag every "Porque escuchaste X" row on the personal feed
+// converged on the same handful of tracks — the reported bug. Omitted (the
+// default for every OTHER caller, notably `useAutoplayRadio`'s "Mix para
+// vos"), the worker keeps mixing in all five sources exactly as before.
+export async function getRadio(
+  seed: RadioSeed,
+  limit = 15,
+  opts?: { pure?: boolean },
+): Promise<MusicResultItem[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if ('videoId' in seed) params.set('seed', seed.videoId);
   else params.set('itemId', seed.itemId);
+  if (opts?.pure) params.set('pure', '1');
   const { results } = await apiFetch('bff', `/music/recommendations?${params.toString()}`, {
     schema: MusicRecommendationsResponseSchema,
   });

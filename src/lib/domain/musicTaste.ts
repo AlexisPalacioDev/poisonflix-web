@@ -1,5 +1,5 @@
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
-import type { MusicResultItem, MusicSongResult } from '../../api/schemas/music';
+import type { MusicPlay, MusicResultItem, MusicSongResult } from '../../api/schemas/music';
 
 // Turning "what this user played" into "what to show them", the way YouTube
 // Music's home works: a handful of *seeds* drawn from the history, each opening
@@ -36,6 +36,43 @@ export function pickSeedTracks(history: JellyfinItem[], max = MAX_SEEDS): Jellyf
     if (seenArtists.has(key)) continue;
     seenArtists.add(key);
     seeds.push(item);
+  }
+  return seeds;
+}
+
+/**
+ * Turns the worker's streaming-preview tally (`GET /plays`) into feed seeds.
+ *
+ * This is the PRIMARY seed source: an install with an empty Jellyfin music
+ * library (nothing ever downloaded) still has this, because it comes from
+ * previews streamed straight from YouTube Music, not from anything on disk.
+ * `pickSeedTracks` stays as the Jellyfin-history/library fallback for
+ * installs that do have a populated library — this is a sibling, not a
+ * replacement, since the two operate on different shapes (`MusicPlay` has no
+ * `Id`/`Artists`, so `pickSeedTracks` cannot be reused directly).
+ *
+ * Same "one per artist" rule as `pickSeedTracks`, for the same reason: the
+ * reported bug was every row echoing the same handful of tracks, and
+ * `MAX_SEEDS` seeds off one artist reproduce that just as surely as one seed
+ * reused `MAX_SEEDS` times.
+ *
+ * A play with neither a usable artist nor title cannot be named honestly —
+ * "Porque escuchaste " or a raw videoId as the row title is worse than
+ * skipping the row, so that play is dropped rather than falling back to id.
+ */
+export function pickPlaySeeds(plays: MusicPlay[], max = MAX_SEEDS): FeedSeed[] {
+  const seeds: FeedSeed[] = [];
+  const seenArtists = new Set<string>();
+  for (const play of plays) {
+    if (seeds.length >= max) break;
+    const artist = play.artist.trim() || null;
+    const title = play.title.trim() || null;
+    const label = artist ?? title;
+    if (!label) continue;
+    const key = artist?.toLowerCase() ?? `__unknown-${play.videoId}`;
+    if (seenArtists.has(key)) continue;
+    seenArtists.add(key);
+    seeds.push({ id: play.videoId, label });
   }
   return seeds;
 }
@@ -100,14 +137,27 @@ export interface FeedSeed {
  * the user did listen to X, and saying so is what makes the row feel earned.
  * A library seed has not been listened to at all, so claiming otherwise would
  * be a lie; those collapse into a single honestly-named mix instead.
+ *
+ * `perSeed` and `mixPerSeed` are deliberately separate (mobile-music-overhaul
+ * fix-seeded-rows). Each "Porque escuchaste X" row is built from `perSeed`,
+ * which the caller is expected to have fetched in the worker's `pure` mode —
+ * seed-dependent sources only, so two different seeds never share the three
+ * sources (your artists/likes/history) that are identical for every seed of
+ * the same user. "Mix para vos" is the opposite: it is SUPPOSED to blend in
+ * everything, so it is built from `mixPerSeed`, the worker's normal, fully
+ * personalised radios. `mixPerSeed` defaults to `perSeed` for callers that
+ * only have one data set (the library-sample fallback has no "pure" concept
+ * worth the extra round trip, since library seeds don't get per-seed rows at
+ * all — see the `source === 'library'` branch below).
  */
 export function buildFeedRows(
   seeds: FeedSeed[],
   perSeed: MusicSongResult[][],
   source: FeedSource,
   mixLimit: number,
+  mixPerSeed: MusicSongResult[][] = perSeed,
 ): FeedRow[] {
-  const mix = interleave(perSeed, mixLimit);
+  const mix = interleave(mixPerSeed, mixLimit);
   if (mix.length === 0) return [];
 
   if (source === 'library') {
@@ -115,9 +165,17 @@ export function buildFeedRows(
   }
 
   const rows: FeedRow[] = [{ key: 'mix', title: 'Mix para vos', items: mix }];
+  // Two seeds occasionally come back with the exact same radio (a shared
+  // upstream fallback, or two artists whose "related" set collapses to one
+  // list) — this is the mechanism behind the reported "same five songs in
+  // every row" bug, so an identical tracklist is shown once, not twice.
+  const seenTracklists = new Set<string>();
   seeds.forEach((seed, index) => {
     const items = perSeed[index] ?? [];
     if (items.length === 0) return;
+    const tracklist = items.map((item) => item.videoId).join('|');
+    if (seenTracklists.has(tracklist)) return;
+    seenTracklists.add(tracklist);
     rows.push({
       key: `seed-${seed.id}`,
       title: `Porque escuchaste ${seed.label}`,

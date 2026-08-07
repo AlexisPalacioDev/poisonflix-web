@@ -72,6 +72,21 @@ export const queryKeys = {
   musicLibrarySample: (userId: string) => ['music', 'librarySample', userId] as const,
   musicSeedRadio: (userId: string, seedItemId: string) =>
     ['music', 'seedRadio', userId, seedItemId] as const,
+  // Radio seeded by a streaming-preview videoId rather than a Jellyfin item id
+  // (mobile-music-overhaul: feed seeded from real plays). Kept as its own key
+  // so a preview-seeded radio never collides in cache with an itemId-seeded
+  // one — the two can carry the same string value for unrelated tracks.
+  musicSeedRadioByVideo: (userId: string, videoId: string) =>
+    ['music', 'seedRadioByVideo', userId, videoId] as const,
+  // Pure-mode radios (mobile-music-overhaul: fix-seeded-rows) — seed-only,
+  // no user-global sources mixed in. Kept as their own keys, never sharing a
+  // cache entry with the default-mode radios above: the two are genuinely
+  // different payloads for the same seed, and one feeds "Porque escuchaste
+  // X" rows while the other feeds "Mix para vos".
+  musicSeedRadioPure: (userId: string, seedItemId: string) =>
+    ['music', 'seedRadioPure', userId, seedItemId] as const,
+  musicSeedRadioByVideoPure: (userId: string, videoId: string) =>
+    ['music', 'seedRadioByVideoPure', userId, videoId] as const,
   // Usage monitor. `serverUsage` is admin-wide; `myMusicStats` is per user.
   serverUsage: (days: number) => ['usage', 'server', days] as const,
   activeSessions: () => ['usage', 'sessions'] as const,
