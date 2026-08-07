@@ -244,6 +244,102 @@ describe('Header mobile hamburger menu (< 899px)', () => {
     expect(screen.queryByRole('link', { name: 'Buscar' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Abrir menú' })).toHaveAttribute('aria-expanded', 'false');
   });
+
+  // Shared dismissal via OverlayShell (design D: `sdd/mobile-music-overhaul`).
+  // Header used to close the menu via a bare `document.addEventListener`
+  // ('mousedown') with no backdrop node at all - the pattern suspected of
+  // failing on iOS Safari, where a tap on "non-clickable" background can skip
+  // `mousedown` entirely.
+  it('clicking outside the open menu (the real backdrop node) closes it', async () => {
+    setCompactViewport(true);
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: 'Abrir menú' }));
+    const panel = screen.getByRole('menu', { name: 'Menú de navegación' });
+
+    // A real, clickable backdrop node - not a bare document listener.
+    const backdrop = screen.getByRole('button', { name: 'Cerrar menú (fondo)' });
+    await user.click(backdrop);
+
+    expect(panel).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Abrir menú' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('returns focus to the hamburger toggle after closing via the backdrop', async () => {
+    setCompactViewport(true);
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    const toggle = screen.getByRole('button', { name: 'Abrir menú' });
+    await user.click(toggle);
+
+    await user.click(screen.getByRole('button', { name: 'Cerrar menú (fondo)' }));
+
+    expect(toggle).toHaveFocus();
+  });
+
+  it('locks body scroll while the mobile menu is open', async () => {
+    setCompactViewport(true);
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: 'Abrir menú' }));
+    expect(document.body.style.position).toBe('fixed');
+
+    await user.keyboard('{Escape}');
+    expect(document.body.style.position).toBe('');
+  });
+
+  // Real-Chrome audit finding: `.pf-header` is `position: fixed`, so it
+  // always creates its own stacking context. The panel was rendered as a
+  // plain (non-portalled) sibling INSIDE that context while the backdrop
+  // portalled straight to `document.body` (outside it). Both ended up at the
+  // same z-index at the ROOT stacking context, and the backdrop - painted
+  // later in document order there - covered the entire panel: every tap on a
+  // menu item actually hit the backdrop and just closed the menu instead of
+  // navigating. The regression this test exists to catch is exactly that:
+  // clicking an item must NAVIGATE, not merely close the menu.
+  //
+  // jsdom does no layout/paint, so it cannot reproduce the actual mis-stack
+  // or prove a real tap lands on the right element - `fireEvent`/`userEvent`
+  // dispatch straight to the target node regardless of what visually
+  // overlaps it. What this test DOES verify (and what regressed): the link's
+  // own click handler runs end-to-end and produces real navigation. The
+  // structural side of the fix (panel portalled after the backdrop in the
+  // same container) is covered generically by `OverlayShell.test.tsx`.
+  it('clicking a nav item inside the mobile menu navigates (not just closes)', async () => {
+    setCompactViewport(true);
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: 'Abrir menú' }));
+    await user.click(screen.getByRole('link', { name: 'Buscar' }));
+
+    expect(screen.getByTestId('pathname')).toHaveTextContent('/search');
+    expect(screen.queryByRole('link', { name: 'Buscar' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Abrir menú' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  // Structural proxy for the same fix, since jsdom can't assert real paint
+  // order: backdrop and panel must share the SAME portal container, with the
+  // panel after the backdrop in document order - the exact invariant that
+  // makes the panel win the stacking comparison in a real browser regardless
+  // of `.pf-header`'s own `position: fixed` context.
+  it('portals the backdrop and the menu panel into the same container, panel after backdrop', async () => {
+    setCompactViewport(true);
+    const user = userEvent.setup();
+    renderHeaderWithLocation();
+
+    await user.click(screen.getByRole('button', { name: 'Abrir menú' }));
+
+    const backdrop = screen.getByRole('button', { name: 'Cerrar menú (fondo)' });
+    const panel = screen.getByRole('menu', { name: 'Menú de navegación' });
+
+    expect(backdrop.parentElement).toBe(panel.parentElement?.parentElement);
+    // eslint-disable-next-line no-bitwise
+    expect(backdrop.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
 
 describe('Header context-aware Música / "back to Netflix mode" button', () => {

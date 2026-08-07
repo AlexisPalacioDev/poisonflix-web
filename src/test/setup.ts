@@ -12,6 +12,14 @@ if (!('ResizeObserver' in globalThis)) {
   globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
 }
 
+// jsdom doesn't implement window.scrollTo (it logs "Not implemented" and
+// leaves it non-functional). Overlay scroll-lock restores the pre-lock
+// scroll position via `window.scrollTo` on unlock, so stub it here once
+// instead of mocking it in every overlay test file.
+if (typeof window !== 'undefined') {
+  window.scrollTo = (() => {}) as typeof window.scrollTo;
+}
+
 // jsdom doesn't implement matchMedia, which `useMediaQuery` (NowPlayingBar's
 // mobile/desktop switch) relies on. Default to "no match" (desktop layout) so
 // components mount cleanly; individual tests override it to force the compact

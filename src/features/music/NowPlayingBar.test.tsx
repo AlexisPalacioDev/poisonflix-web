@@ -272,6 +272,67 @@ describe('NowPlayingBar — compact mobile layout', () => {
     expect(screen.getByRole('button', { name: 'Abrir reproductor: Track A' })).toBeInTheDocument();
   });
 
+  // Shared dismissal via OverlayShell (design D: `sdd/mobile-music-overhaul`).
+  // FullPlayer is full-bleed and has no "outside" concept, so it opts out of
+  // backdrop-click dismissal - only Escape and its own chevron close it.
+  describe('full player — shared dismissal (OverlayShell)', () => {
+    afterEach(() => {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+    });
+
+    it('collapses on Escape', () => {
+      renderBar();
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Track A' }));
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByRole('dialog', { name: 'Reproduciendo' })).not.toBeInTheDocument();
+    });
+
+    it('clicking inside the full player does not collapse it (no backdrop-click dismiss)', () => {
+      renderBar();
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Track A' }));
+      const dialog = screen.getByRole('dialog', { name: 'Reproduciendo' });
+
+      fireEvent.click(dialog);
+      expect(screen.getByRole('dialog', { name: 'Reproduciendo' })).toBeInTheDocument();
+    });
+
+    it('locks body scroll while expanded and releases it on collapse', () => {
+      renderBar();
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Track A' }));
+      expect(document.body.style.position).toBe('fixed');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Contraer reproductor' }));
+      expect(document.body.style.position).toBe('');
+    });
+
+    it('returns focus to the expand trigger once collapsed', () => {
+      renderBar();
+      const trigger = screen.getByRole('button', { name: 'Abrir reproductor: Track A' });
+      trigger.focus();
+      fireEvent.click(trigger);
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(trigger).toHaveFocus();
+    });
+
+    // Opening the queue from inside the full player collapses it first
+    // (`onOpenQueue` calls `setExpanded(false)` then `setQueueOpen(true)` -
+    // they are sibling overlays, never simultaneously open in this app), so
+    // there is no FullPlayer+QueueDrawer nested-stack scenario to cover here.
+    // `OverlayShell.test.tsx` already covers nested-overlay Escape ownership
+    // generically (only the topmost overlay reacts).
+    it('the full player is gone once its own queue button hands off to the queue drawer', () => {
+      renderBar();
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Track A' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cola' }));
+
+      expect(screen.getByRole('dialog', { name: 'Cola de reproducción' })).toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: 'Reproduciendo' })).not.toBeInTheDocument();
+    });
+  });
+
   // Reliability change: thumbs up/down reachable from the mobile full-screen
   // player too, mirroring the desktop bar's `current.videoId` guard.
   describe('full player — thumbs (music-track-feedback)', () => {

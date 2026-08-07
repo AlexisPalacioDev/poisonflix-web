@@ -1,3 +1,4 @@
+import { OverlayShell } from '../../components/overlay/OverlayShell';
 import { CoverImage } from './CoverImage';
 import { useMusicPlayer } from './musicPlayerCore';
 import './QueueDrawer.css';
@@ -28,79 +29,81 @@ export function QueueDrawer({ onClose }: { onClose: () => void }) {
     useMusicPlayer();
 
   return (
-    <div className="pf-queue" role="dialog" aria-label="Cola de reproducción">
-      <div className="pf-queue__header">
-        <h2 className="pf-queue__heading">Cola</h2>
-        <button type="button" className="pf-queue__close" onClick={onClose} aria-label="Cerrar cola">
-          <CloseIcon />
-        </button>
-      </div>
+    <OverlayShell variant="dialog" onDismiss={onClose} className="pf-queue__backdrop">
+      <div className="pf-queue" role="dialog" aria-modal="true" aria-label="Cola de reproducción">
+        <div className="pf-queue__header">
+          <h2 className="pf-queue__heading">Cola</h2>
+          <button type="button" className="pf-queue__close" onClick={onClose} aria-label="Cerrar cola">
+            <CloseIcon />
+          </button>
+        </div>
 
-      {/* Autoplay lives here, the way YouTube Music puts it at the end of the
-          queue: it's a statement about what happens when this list runs out. */}
-      <div className="pf-queue__autoplay">
-        <span className="pf-queue__autoplay-text">
-          <span className="pf-queue__autoplay-label">Autoplay</span>
-          <span className="pf-queue__autoplay-hint">
-            {autoplay ? 'Sigue con temas similares' : 'La música para al final de la cola'}
+        {/* Autoplay lives here, the way YouTube Music puts it at the end of the
+            queue: it's a statement about what happens when this list runs out. */}
+        <div className="pf-queue__autoplay">
+          <span className="pf-queue__autoplay-text">
+            <span className="pf-queue__autoplay-label">Autoplay</span>
+            <span className="pf-queue__autoplay-hint">
+              {autoplay ? 'Sigue con temas similares' : 'La música para al final de la cola'}
+            </span>
           </span>
-        </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={autoplay}
-          aria-label="Autoplay"
-          className={`pf-queue__switch${autoplay ? ' pf-queue__switch--on' : ''}`}
-          onClick={() => setAutoplay(!autoplay)}
-        >
-          <span className="pf-queue__knob" aria-hidden="true" />
-        </button>
-      </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoplay}
+            aria-label="Autoplay"
+            className={`pf-queue__switch${autoplay ? ' pf-queue__switch--on' : ''}`}
+            onClick={() => setAutoplay(!autoplay)}
+          >
+            <span className="pf-queue__knob" aria-hidden="true" />
+          </button>
+        </div>
 
-      {queue.length === 0 ? (
-        <p className="pf-queue__empty">La cola está vacía.</p>
-      ) : (
-        <ul className="pf-queue__list">
-          {queue.map((track, index) => {
-            const active = index === currentIndex;
-            return (
-              <li
-                key={`${track.itemId}-${index}`}
-                className={`pf-queue__row${active ? ' pf-queue__row--active' : ''}`}
-              >
-                <button
-                  type="button"
-                  className="pf-queue__play"
-                  onClick={() => jumpTo(index)}
-                  aria-label={`Reproducir ${track.title}`}
-                  aria-current={active ? 'true' : undefined}
+        {queue.length === 0 ? (
+          <p className="pf-queue__empty">La cola está vacía.</p>
+        ) : (
+          <ul className="pf-queue__list">
+            {queue.map((track, index) => {
+              const active = index === currentIndex;
+              return (
+                <li
+                  key={`${track.itemId}-${index}`}
+                  className={`pf-queue__row${active ? ' pf-queue__row--active' : ''}`}
                 >
-                  <span className="pf-queue__art" aria-hidden="true">
-                    <CoverImage src={track.coverUrl} />
-                  </span>
-                  <span className="pf-queue__info">
-                    <span className="pf-queue__title">{track.title}</span>
-                    <span className="pf-queue__artist">{track.artist ?? 'Desconocido'}</span>
-                  </span>
-                  {active && (
-                    <span className="pf-queue__badge" aria-hidden="true">
-                      ♪
+                  <button
+                    type="button"
+                    className="pf-queue__play"
+                    onClick={() => jumpTo(index)}
+                    aria-label={`Reproducir ${track.title}`}
+                    aria-current={active ? 'true' : undefined}
+                  >
+                    <span className="pf-queue__art" aria-hidden="true">
+                      <CoverImage src={track.coverUrl} />
                     </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="pf-queue__remove"
-                  onClick={() => removeFromQueue(index)}
-                  aria-label={`Quitar ${track.title} de la cola`}
-                >
-                  <RemoveIcon />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+                    <span className="pf-queue__info">
+                      <span className="pf-queue__title">{track.title}</span>
+                      <span className="pf-queue__artist">{track.artist ?? 'Desconocido'}</span>
+                    </span>
+                    {active && (
+                      <span className="pf-queue__badge" aria-hidden="true">
+                        ♪
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="pf-queue__remove"
+                    onClick={() => removeFromQueue(index)}
+                    aria-label={`Quitar ${track.title} de la cola`}
+                  >
+                    <RemoveIcon />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </OverlayShell>
   );
 }

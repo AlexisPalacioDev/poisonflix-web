@@ -1,11 +1,20 @@
 /* Audio/subtitle track picker overlay (player spec §8, ← `TrackMenu.kt`'s
    sheet). Centered card over a dimmed backdrop, consistent with the rest of
-   the player's dark/gold visual language (theme.css tokens). */
+   the player's dark/gold visual language (theme.css tokens).
 
+   `OverlayShell` portals this element (design D: `sdd/mobile-music-overhaul`)
+   into `VideoSurface`'s fullscreen surface (`container` prop, NOT
+   `document.body` - a real-Chrome audit found the menu was invisible in real
+   Fullscreen, whose spec only paints descendants of `fullscreenElement`, and
+   hidden behind the pseudo-fullscreen surface's `z-index: 9999` on iOS
+   Safari), so it must be viewport-relative (`position: fixed`, not
+   `absolute` anchored to a player ancestor) and sit above both that surface
+   AND the rest of the app's overlay stack (QueueDrawer is 95,
+   Confirm/AdultPin/FullPlayer are 100 - this is a dialog like those two). */
 .pf-track-menu {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 10;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;

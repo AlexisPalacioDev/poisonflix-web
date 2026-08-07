@@ -296,6 +296,28 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     expect(screen.getByRole('button', { name: 'Subtítulos' })).toBeInTheDocument();
   });
 
+  // Real-Chrome audit finding: the track menu used to portal unconditionally
+  // to `document.body`, which put it OUTSIDE the real Fullscreen API's
+  // element (never rendered while fullscreen) and behind the pseudo-
+  // fullscreen surface's `z-index: 9999` on iOS Safari (rendered, but hidden
+  // behind the black video). `VideoSurface` now passes its own surface as
+  // the menu's portal `container`, so the dialog stays inside it regardless
+  // of fullscreen state. jsdom implements neither the Fullscreen API nor
+  // real paint, so this only proves the portal TARGET - real on-screen
+  // visibility in either fullscreen mode is an on-device acceptance check.
+  it('portals the track menu inside the player surface, not document.body', async () => {
+    renderPlayer('jf-item-tracks');
+    await screen.findByTestId('pf-video');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Audio' });
+    const surface = document.querySelector('.pf-player-surface');
+
+    expect(surface).not.toBeNull();
+    expect(surface).toContainElement(dialog);
+    expect(dialog.parentElement).not.toBe(document.body);
+  });
+
   it('opening the subtitle menu lists "Ninguno", the primary languages, and folds the rest behind "Más subtítulos"', async () => {
     renderPlayer('jf-item-tracks');
     await screen.findByTestId('pf-video');

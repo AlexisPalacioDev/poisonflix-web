@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getAdultPin, tryUnlock } from '../lib/domain/adultSettings';
-import { trapTabKey } from '../lib/dom/focusTrap';
+import { OverlayShell } from './overlay/OverlayShell';
 import './AdultPinOverlay.css';
 
 // PIN gate for the +18 section (projector-feature-map.md §3, ported from
@@ -26,7 +26,6 @@ export function AdultPinOverlay({ open, onClose }: AdultPinOverlayProps) {
   const [entered, setEntered] = useState('');
   const [error, setError] = useState(false);
   const firstKeyRef = useRef<HTMLButtonElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
   const pinLength = getAdultPin().length;
 
   // Reset entry state each time the overlay (re)opens, and focus the first
@@ -64,15 +63,14 @@ export function AdultPinOverlay({ open, onClose }: AdultPinOverlayProps) {
     }
   }
 
-  // BACK/Escape dismisses (`AdultPinOverlay.kt`'s `onPreviewKeyEvent` Back/Escape
-  // branch), plus number keys + Backspace also drive the pad from a real keyboard.
+  // Number keys + Backspace drive the pad from a real keyboard (BACK/Escape
+  // dismissal is now owned by the shared `OverlayShell` below, design D:
+  // `sdd/mobile-music-overhaul`).
   useEffect(() => {
     if (!open) return;
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
-      } else if (event.key === 'Backspace') {
+      if (event.key === 'Backspace') {
         press('BACKSPACE');
       } else if (/^[0-9]$/.test(event.key)) {
         press(event.key);
@@ -88,22 +86,16 @@ export function AdultPinOverlay({ open, onClose }: AdultPinOverlayProps) {
 
   if (!open) return null;
 
+  // Dismissal (backdrop click, Escape, focus trap/return, scroll-lock) is
+  // owned by the shared `OverlayShell` - `.pf-adult-pin` keeps its existing
+  // dim/flex-center CSS as OverlayShell's backdrop class.
   return (
-    <div
-      className="pf-adult-pin"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
+    <OverlayShell variant="dialog" onDismiss={onClose} className="pf-adult-pin">
       <div
-        ref={cardRef}
         className="pf-adult-pin__card"
         role="dialog"
         aria-modal="true"
         aria-label="Contenido +18"
-        onKeyDown={(event) => {
-          if (cardRef.current) trapTabKey(cardRef.current, event);
-        }}
       >
         <p className="pf-adult-pin__heading">CONTENIDO +18</p>
         <h2 className="pf-adult-pin__subheading">Ingresá el PIN</h2>
@@ -153,6 +145,6 @@ export function AdultPinOverlay({ open, onClose }: AdultPinOverlayProps) {
           </div>
         </div>
       </div>
-    </div>
+    </OverlayShell>
   );
 }

@@ -1,0 +1,235 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { trapTabKey } from '../../lib/dom/focusTrap';
+import {
+  isTopOverlay,
+  lockScroll,
+  nextOverlaySequence,
+  popOverlay,
+  pushOverlay,
+  unlockScroll,
+} from './overlayStack';
+
+// Shared dismissal primitive for every overlay in the app (design D:
+// `sdd/mobile-music-overhaul`). Renders a REAL, clickable backdrop DOM node in
+// a portal rather than a `document` listener - the four overlays that already
+// worked on touch (ConfirmOverlay, AdultPinOverlay, MusicRowMenu,
+// AddToPlaylistButton) all had a real DOM node catching the tap; the one that
+// used a bare `document.addEventListener('mousedown')` (Header) is the one
+// suspected of failing on iOS Safari, where a tap on "non-clickable"
+// background can skip `mousedown` entirely.
+//
+// Two shapes, chosen by `variant`:
+//  - 'dialog': backdrop is a `<div>` that also HOSTS the nested content
+//    (a centered card, a slide-in sidebar, a full-bleed sheet...). Dismissal
+//    on backdrop click relies on `event.target === event.currentTarget` so a
+//    click bubbling up from inside the content never closes it.
+//  - 'menu': backdrop is a standalone `<button>` catcher. When `anchorRef` +
+//    `children` are given, the anchored dropdown panel is portalled TOGETHER
+//    with the backdrop (panel after backdrop in DOM order) instead of being
+//    left as a separate, non-portalled sibling next to the trigger. Without
+//    `anchorRef`, it stays backdrop-only (a caller can still render its own
+//    sibling panel, matching the older pattern) for backward compatibility.
+//
+// Why the anchored panel had to move into the SAME portal as the backdrop
+// (post-mortem, real-Chrome audit): a `position: fixed` ancestor of the
+// trigger (Header) - or even just a hover `transform` on an ancestor row
+// (MusicRowMenu/AddToPlaylistButton) - creates its OWN stacking context.
+// A panel left in place stays trapped INSIDE that context while a backdrop
+// portalled straight to `document.body` escapes to the root one. If the two
+// contexts tie or the root one wins, the backdrop paints OVER the entire
+// panel and every item in it becomes unclickable - tapping any item just
+// closes the menu instead of acting on it. Portalling both together, with
+// the panel placed after the backdrop in the SAME container, makes the
+// panel's position in the paint order deterministic regardless of what any
+// ancestor's CSS does.
+//
+// Testing gotcha: jsdom does no layout and no paint, so it can neither
+// reproduce this bug nor prove the fix visually. The tests around this
+// module assert the STRUCTURAL invariant that makes correct stacking
+// possible in a real browser (same portal container, panel after backdrop in
+// DOM order) - real hit-testing/CSS-stacking verification is an on-device
+// acceptance step, not something faked here as automated coverage.
+//
+// Behavior owned centrally, once, for both shapes:
+//  - Escape closes the overlay, but ONLY if it is the topmost one on the
+//    shared `overlayStack` (so a dialog opened from inside a drawer doesn't
+//    also close the drawer underneath it).
+//  - Tab/Shift+Tab is trapped inside the backdrop subtree for the 'dialog'
+//    variant only (reuses `trapTabKey` from `lib/dom/focusTrap` - never
+//    duplicated).
+//  - The element that had focus right before the overlay opened regains
+//    focus when the overlay unmounts, regardless of which dismissal path
+//    triggered the close (backdrop click, Escape, or a close button inside
+//    the content - they all unmount this component the same way).
+//  - Body scroll is locked (refcounted via `overlayStack`) while at least one
+//    overlay is open.
+
+export type OverlayVariant = 'dialog' | 'menu';
+
+export interface OverlayShellProps {
+  variant: OverlayVariant;
+  onDismiss: () => void;
+  children?: ReactNode;
+  /** Class name applied to the backdrop node itself - this is where callers
+   *  keep their existing dimming/positioning CSS (e.g. `pf-confirm-overlay`,
+   *  `pf-track-menu`, `pf-fullplayer`). */
+  className?: string;
+  ariaLabel?: string;
+  /** Set when the backdrop node IS the dialog surface (TrackMenu,
+   *  FullPlayer). Omit when a nested child owns its own `role="dialog"`
+   *  (ConfirmOverlay, AdultPinOverlay, QueueDrawer). */
+  role?: 'dialog';
+  ariaModal?: boolean;
+  /** Defaults to true. Set false for overlays with no "outside" concept
+   *  (FullPlayer: full-bleed, dismissed only via Escape/its own controls). */
+  dismissOnBackdropClick?: boolean;
+  /** Portal target. Defaults to `document.body`. Needed when the overlay
+   *  must stay inside a specific subtree instead - e.g. the player's
+   *  fullscreen surface, so `TrackMenu` still renders inside the real
+   *  Fullscreen API's element (otherwise never painted at all) and above a
+   *  pseudo-fullscreen surface's high z-index (otherwise painted behind the
+   *  video). */
+  container?: Element | null;
+  /** 'menu' variant only. Ref to the trigger element the panel (`children`)
+   *  should be anchored below. When given, OverlayShell measures the
+   *  trigger's on-screen position and portals the panel as a
+   *  `position: fixed` sibling of the backdrop, in the SAME container -
+   *  see the module doc comment above for why. Omit to keep the older
+   *  backdrop-only shape (caller renders its own sibling panel). */
+  anchorRef?: RefObject<HTMLElement | null>;
+  /** Class name applied to the anchored panel's positioning wrapper (menu
+   *  variant + `anchorRef` only). The wrapper only carries position - visual
+   *  styling (background, padding, radius...) stays on the caller's own
+   *  element passed as `children`. */
+  panelClassName?: string;
+  /** Gap, in pixels, between the trigger's bottom edge and the anchored
+   *  panel. Defaults to 8. */
+  panelOffset?: number;
+}
+
+export function OverlayShell({
+  variant,
+  onDismiss,
+  children,
+  className,
+  ariaLabel,
+  role,
+  ariaModal,
+  dismissOnBackdropClick = true,
+  container,
+  anchorRef,
+  panelClassName,
+  panelOffset = 8,
+}: OverlayShellProps) {
+  // Lazy initializers run once, synchronously, during THIS component's own
+  // render - before any child's mount effect can run (React commits effects
+  // bottom-up). That ordering matters: some content (e.g. TrackMenuScaffold)
+  // moves focus to its first option on mount, and if we captured
+  // `document.activeElement` in an effect instead, we'd wrongly capture that
+  // first option as "the opener" rather than the button that actually opened
+  // the overlay.
+  const [id] = useState<symbol>(() => Symbol('overlay'));
+  // Grabbed once, at render time (parent-before-child), so nesting order
+  // survives even though effects that actually register the overlay commit
+  // child-before-parent - see `nextOverlaySequence`'s doc comment.
+  const [sequence] = useState<number>(() => nextOverlaySequence());
+  const [opener] = useState<HTMLElement | null>(() => document.activeElement as HTMLElement | null);
+  const backdropRef = useRef<HTMLDivElement | HTMLButtonElement>(null);
+  const [panelStyle, setPanelStyle] = useState<CSSProperties | undefined>(undefined);
+
+  // Measured once, synchronously before paint, from the trigger's actual
+  // on-screen position - the panel is portalled away from wherever it sits
+  // in the React tree, so it can no longer rely on a local
+  // `position: relative` ancestor to anchor itself. Body scroll is locked
+  // for the overlay's whole lifetime (below), so the trigger cannot move
+  // under the user while the panel is open and a one-time measurement is
+  // enough - no scroll/resize tracking needed.
+  useLayoutEffect(() => {
+    if (variant !== 'menu' || !anchorRef?.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    setPanelStyle({
+      position: 'fixed',
+      top: rect.bottom + panelOffset,
+      right: window.innerWidth - rect.right,
+    });
+  }, [variant, anchorRef, panelOffset]);
+
+  useEffect(() => {
+    pushOverlay(id, sequence);
+    lockScroll();
+    return () => {
+      popOverlay(id);
+      unlockScroll();
+      opener?.focus?.();
+    };
+    // `id`, `sequence`, and `opener` are stable for the lifetime of this instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isTopOverlay(id)) {
+        onDismiss();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [id, onDismiss]);
+
+  const handleBackdropClick = (event: ReactMouseEvent) => {
+    if (dismissOnBackdropClick && event.target === event.currentTarget) {
+      onDismiss();
+    }
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent) => {
+    if (variant === 'dialog' && backdropRef.current) {
+      trapTabKey(backdropRef.current, event);
+    }
+  };
+
+  const node =
+    variant === 'menu' ? (
+      <>
+        <button
+          ref={backdropRef as React.Ref<HTMLButtonElement>}
+          type="button"
+          className={className}
+          aria-label={ariaLabel}
+          onClick={handleBackdropClick}
+        />
+        {/* Panel after the backdrop in DOM order on purpose - see the module
+            doc comment for why this ordering is load-bearing, not cosmetic. */}
+        {children && anchorRef ? (
+          <div className={panelClassName} style={panelStyle}>
+            {children}
+          </div>
+        ) : null}
+      </>
+    ) : (
+      <div
+        ref={backdropRef as React.Ref<HTMLDivElement>}
+        className={className}
+        role={role}
+        aria-modal={role === 'dialog' && ariaModal ? 'true' : undefined}
+        aria-label={ariaLabel}
+        onClick={handleBackdropClick}
+        onKeyDown={handleKeyDown}
+      >
+        {children}
+      </div>
+    );
+
+  return createPortal(node, container ?? document.body);
+}

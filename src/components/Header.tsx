@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { AdultPinOverlay } from './AdultPinOverlay';
+import { OverlayShell } from './overlay/OverlayShell';
 import { PoisonMark } from '../features/onboarding/PoisonMark';
 import { useAdultUnlocked } from '../hooks/useAdultUnlocked';
 import { useAuth } from '../hooks/useAuth';
@@ -46,9 +47,12 @@ export function Header() {
   // `useMediaQuery` hook for a single source of truth on that breakpoint.
   const isMobile = useMediaQuery('(max-width: 899px)');
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const hamburgerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  // Anchor for the portalled dropdown panel (see the OverlayShell import
+  // below) - `.pf-header` is `position: fixed`, its own stacking context, so
+  // the panel can no longer rely on a local `position: relative` ancestor
+  // once it's portalled away from this subtree.
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
 
   // Growing to the desktop width auto-closes the menu so its dropdown never
   // lingers over the now-inline row.
@@ -56,29 +60,24 @@ export function Header() {
     if (!isMobile) setMenuOpen(false);
   }, [isMobile]);
 
-  // Dismiss the open menu on an outside click or Escape (Escape returns focus
-  // to the toggle). Native listeners so it works regardless of which control
-  // spatial navigation currently has focused.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMenuOpen(false);
-        hamburgerRef.current?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [menuOpen]);
+  // Dismissal (outside click, Escape, returning focus to the toggle, and
+  // locking body scroll while open) is owned by the shared `OverlayShell`
+  // (design D: `sdd/mobile-music-overhaul`) rather than a bare
+  // `document.addEventListener('mousedown')` with no backdrop node - that
+  // pattern is the one suspected of failing on iOS Safari, where a tap on
+  // "non-clickable" background can skip `mousedown` entirely.
+  //
+  // The panel is portalled TOGETHER with the backdrop (via `anchorRef`),
+  // not rendered as a separate local sibling: `.pf-header` is
+  // `position: fixed`, so it always creates its own stacking context. A
+  // panel left in place would stay trapped inside that context while a
+  // backdrop portalled alone to `document.body` escaped to the root one -
+  // same z-index there, and the backdrop (later in that context's document
+  // order) painted OVER the whole panel. Every tap on a menu item hit the
+  // backdrop instead and just closed the menu without navigating (real-
+  // Chrome audit finding; jsdom's hit-testing-free event dispatch could not
+  // catch it). See `OverlayShell`'s module doc comment for the general fix.
+  const closeMenu = () => setMenuOpen(false);
 
   // Move focus into the panel when it opens so keyboard / D-pad users land on
   // the first item instead of being stranded on the toggle.
@@ -301,10 +300,10 @@ export function Header() {
       </Link>
 
       {isMobile ? (
-        <div className="pf-header__menu" ref={menuRef}>
+        <div className="pf-header__menu">
           <button
-            type="button"
             ref={hamburgerRef}
+            type="button"
             className="pf-header__search pf-header__hamburger"
             aria-label={menuOpen ? 'Cerrar menú' : 'Abrir menú'}
             aria-haspopup="true"
@@ -324,15 +323,23 @@ export function Header() {
           </button>
 
           {menuOpen && (
-            <div
-              id="pf-header-menu-panel"
-              ref={panelRef}
-              className="pf-header__menu-panel"
-              role="menu"
-              aria-label="Menú de navegación"
+            <OverlayShell
+              variant="menu"
+              onDismiss={closeMenu}
+              className="pf-header__menu-backdrop"
+              ariaLabel="Cerrar menú (fondo)"
+              anchorRef={hamburgerRef}
             >
-              {renderControls(() => setMenuOpen(false))}
-            </div>
+              <div
+                id="pf-header-menu-panel"
+                ref={panelRef}
+                className="pf-header__menu-panel"
+                role="menu"
+                aria-label="Menú de navegación"
+              >
+                {renderControls(() => setMenuOpen(false))}
+              </div>
+            </OverlayShell>
           )}
         </div>
       ) : (

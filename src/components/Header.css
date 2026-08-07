@@ -121,11 +121,24 @@
   padding: 0;
 }
 
+/* Real, clickable backdrop behind the mobile nav dropdown (design D:
+   `sdd/mobile-music-overhaul`) - replaces the old bare
+   `document.addEventListener('mousedown')` listener, which had no DOM node
+   to catch a tap at all and was suspected of failing on iOS Safari. */
+.pf-header__menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+/* Position (`fixed`, anchored below the hamburger) is computed and applied
+   inline by `OverlayShell` (the panel is portalled next to its backdrop,
+   design D: `sdd/mobile-music-overhaul`) - this rule only owns the visual
+   surface. */
 .pf-header__menu-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 101;
   display: flex;
   flex-direction: column;
   gap: 8px;

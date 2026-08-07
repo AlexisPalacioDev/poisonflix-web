@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +8,9 @@ import { DEFAULT_ADULT_PIN, isAdultUnlocked, lockAdult, setAdultPin } from '../l
 afterEach(() => {
   lockAdult();
   setAdultPin(DEFAULT_ADULT_PIN);
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.width = '';
 });
 
 function filledDotCount() {
@@ -122,5 +126,36 @@ describe('AdultPinOverlay', () => {
 
     await user.click(screen.getByRole('dialog').parentElement as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // Shared dismissal via OverlayShell (design D: `sdd/mobile-music-overhaul`).
+  it('locks body scroll while open and releases it when closed', () => {
+    const { rerender } = render(<AdultPinOverlay open onClose={() => {}} />);
+    expect(document.body.style.position).toBe('fixed');
+
+    rerender(<AdultPinOverlay open={false} onClose={() => {}} />);
+    expect(document.body.style.position).toBe('');
+  });
+
+  it('returns focus to the element that opened it once closed', () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <AdultPinOverlay open={open} onClose={() => setOpen(false)} />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Open' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(opener).toHaveFocus();
   });
 });

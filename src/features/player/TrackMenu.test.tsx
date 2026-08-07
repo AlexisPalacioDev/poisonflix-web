@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AudioTrackMenu } from './TrackMenu';
 import type { MediaStreamTrack } from './mediaStreamTracks';
 
@@ -38,6 +39,131 @@ describe('TrackMenu (TrackMenuScaffold)', () => {
 
     fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
     expect(last).toHaveFocus();
+  });
+});
+
+describe('TrackMenu — shared dismissal (OverlayShell, design D)', () => {
+  afterEach(() => {
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.width = '';
+  });
+
+  it('has aria-modal="true" alongside role="dialog"', () => {
+    render(<AudioTrackMenu tracks={tracks} selectedIndex={1} onSelect={() => {}} onDismiss={() => {}} />);
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true');
+  });
+
+  it('clicking the backdrop (outside the sheet) dismisses', () => {
+    const onDismiss = vi.fn();
+    render(<AudioTrackMenu tracks={tracks} selectedIndex={1} onSelect={() => {}} onDismiss={onDismiss} />);
+
+    fireEvent.click(screen.getByRole('dialog'));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('clicking inside the sheet does not dismiss', () => {
+    const onDismiss = vi.fn();
+    render(<AudioTrackMenu tracks={tracks} selectedIndex={1} onSelect={() => {}} onDismiss={onDismiss} />);
+
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('locks body scroll while open and releases it on unmount', () => {
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return open ? (
+        <AudioTrackMenu
+          tracks={tracks}
+          selectedIndex={1}
+          onSelect={() => {}}
+          onDismiss={() => setOpen(false)}
+        />
+      ) : null;
+    }
+
+    const { unmount } = render(<Harness />);
+    expect(document.body.style.position).toBe('fixed');
+
+    unmount();
+    expect(document.body.style.position).toBe('');
+  });
+
+  it('returns focus to the element that opened it', () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          {open && (
+            <AudioTrackMenu
+              tracks={tracks}
+              selectedIndex={1}
+              onSelect={() => {}}
+              onDismiss={() => setOpen(false)}
+            />
+          )}
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Open' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(opener).toHaveFocus();
+  });
+});
+
+describe('TrackMenu — portal container (fullscreen blocker)', () => {
+  // Real-Chrome audit finding: `OverlayShell` always portalled to
+  // `document.body`, which took the track menu OUT of the real Fullscreen
+  // API's element subtree entirely (per spec, only descendants of
+  // `fullscreenElement` are shown - the menu simply never rendered) and
+  // behind the pseudo-fullscreen surface's `z-index: 9999` on iOS Safari (the
+  // menu's own z-index of 100 lost to it, painting behind the black
+  // `<video>`). `container` lets the caller keep the menu inside the
+  // player's fullscreen surface on both routes.
+  //
+  // jsdom implements neither the Fullscreen API nor real paint/stacking, so
+  // this only verifies the portal TARGET is respected - not that a real
+  // browser then shows the menu on top in either fullscreen mode. That part
+  // is an on-device acceptance check, not something fakeable here.
+  afterEach(() => {
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.width = '';
+  });
+
+  it('portals into document.body by default', () => {
+    render(<AudioTrackMenu tracks={tracks} selectedIndex={1} onSelect={() => {}} onDismiss={() => {}} />);
+    expect(screen.getByRole('dialog').parentElement).toBe(document.body);
+  });
+
+  it('portals into the given container instead, e.g. the player fullscreen surface', () => {
+    const surface = document.createElement('div');
+    document.body.appendChild(surface);
+
+    render(
+      <AudioTrackMenu
+        tracks={tracks}
+        selectedIndex={1}
+        onSelect={() => {}}
+        onDismiss={() => {}}
+        container={surface}
+      />,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.parentElement).toBe(surface);
+    expect(dialog.parentElement).not.toBe(document.body);
+
+    surface.remove();
   });
 });
 

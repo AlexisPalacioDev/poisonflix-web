@@ -1,3 +1,14 @@
+/* Real, clickable backdrop behind the sidebar (design D:
+   `sdd/mobile-music-overhaul`) - a plain `<div>` so `OverlayShell` can nest
+   the drawer inside it and dismiss on `target === currentTarget`. Sits just
+   under `.pf-queue`'s z-index so the sidebar itself stays on top. */
+.pf-queue__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 94;
+  background: rgba(0, 0, 0, 0.35);
+}
+
 .pf-queue {
   position: fixed;
   right: 0;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ThumbButtons } from './ThumbButtons';
 import { useQueryClient } from '@tanstack/react-query';
+import { OverlayShell } from '../../components/overlay/OverlayShell';
 import { useUserPlaylists } from '../../hooks/useUserPlaylists';
 import { addToPlaylist, createPlaylist } from '../../api/playlists';
 import { setFavorite } from '../../api/jellyfin';
@@ -83,6 +84,10 @@ export function MusicRowMenu({
   const nameInputRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
   useEffect(() => () => void (mountedRef.current = false), []);
+  // Anchor for the portalled dropdown panel - see the comment above `close`
+  // for why the panel can no longer rely on this row's own local
+  // `position: relative` wrapper once it's portalled away from it.
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = () => {
     setOpen(false);
@@ -91,14 +96,21 @@ export function MusicRowMenu({
     setName('');
   };
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  // Escape, backdrop click, focus return, and body scroll-lock are owned by
+  // the shared `OverlayShell` below (design D: `sdd/mobile-music-overhaul`),
+  // replacing the local `window` listener this component used to have.
+  //
+  // The panel is portalled TOGETHER with the backdrop (via `anchorRef`), not
+  // left as a separate local sibling: this row's own `:hover` state applies a
+  // `transform` (`.pf-music__row:hover`), which creates its OWN stacking
+  // context for the whole row - a panel left in place would stay trapped
+  // inside it while a backdrop portalled alone to `document.body` escaped to
+  // the root context. A transform-created context behaves as z-index: 0
+  // there, so the backdrop (an explicit positive z-index) would paint OVER
+  // the entire row - including the panel - while it's hovered, hiding every
+  // item behind it. See `OverlayShell`'s module doc comment for the general
+  // fix (unconfirmed suspicion from the audit that found the Header blocker;
+  // fixed the same way as a precaution since it's the same root cause).
 
   useEffect(() => {
     if (creating) nameInputRef.current?.focus();
@@ -219,6 +231,7 @@ export function MusicRowMenu({
   return (
     <div className="pf-music__addpl">
       <button
+        ref={triggerRef}
         type="button"
         className="pf-music__addpl-btn"
         onClick={() => setOpen((v) => !v)}
@@ -230,13 +243,13 @@ export function MusicRowMenu({
       </button>
 
       {open && (
-        <>
-          <button
-            type="button"
-            className="pf-music__addpl-backdrop"
-            aria-label="Cerrar menú"
-            onClick={close}
-          />
+        <OverlayShell
+          variant="menu"
+          onDismiss={close}
+          className="pf-music__addpl-backdrop"
+          ariaLabel="Cerrar menú"
+          anchorRef={triggerRef}
+        >
           <div className="pf-music__addpl-menu" role="menu" aria-label={`Opciones para ${title}`}>
             {view === 'menu' ? (
               <ul className="pf-music__addpl-list">
@@ -391,7 +404,7 @@ export function MusicRowMenu({
               </>
             )}
           </div>
-        </>
+        </OverlayShell>
       )}
 
       <span className="pf-music__addpl-status" role="status" aria-live="polite">

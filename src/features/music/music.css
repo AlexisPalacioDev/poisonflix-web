@@ -1068,10 +1068,10 @@
   cursor: default;
 }
 
+/* Position (`fixed`, anchored below the trigger) is computed and applied
+   inline by `OverlayShell` (portalled next to its backdrop, design D:
+   `sdd/mobile-music-overhaul`) - this rule only owns the visual surface. */
 .pf-music__addpl-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
   z-index: 41;
   min-width: 220px;
   max-width: 280px;

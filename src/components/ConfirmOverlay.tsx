@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
-import { trapTabKey } from '../lib/dom/focusTrap';
+import { OverlayShell } from './overlay/OverlayShell';
 import './ConfirmOverlay.css';
 
 // Shared destructive-action confirm dialog (design.md §2
@@ -33,7 +33,6 @@ export function ConfirmOverlay({
 }: ConfirmOverlayProps) {
   const titleId = useId();
   const dismissRef = useRef<HTMLButtonElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
 
   // The safe/dismiss button takes initial focus on open (mirrors BACK ==
   // dismiss on the projector: the default action is always the non-destructive
@@ -44,43 +43,21 @@ export function ConfirmOverlay({
     }
   }, [open]);
 
-  // BACK/Escape dismisses the overlay (`ConfirmOverlay.kt:56`).
-  useEffect(() => {
-    if (!open) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onDismiss();
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, onDismiss]);
-
   if (!open) return null;
 
+  // Dismissal (backdrop click, Escape, focus trap/return, scroll-lock) is
+  // owned by the shared `OverlayShell` (design D: `sdd/mobile-music-overhaul`)
+  // instead of a component-local `document` listener + manual `trapTabKey`
+  // wiring - `.pf-confirm-overlay` keeps its existing dim/flex-center CSS as
+  // OverlayShell's backdrop class.
   return (
-    <div
-      className="pf-confirm-overlay"
-      onClick={(event) => {
-        // Only the backdrop itself dismisses - clicks inside the card must
-        // not bubble into this handler (the card stops propagation below).
-        if (event.target === event.currentTarget) {
-          onDismiss();
-        }
-      }}
-    >
+    <OverlayShell variant="dialog" onDismiss={onDismiss} className="pf-confirm-overlay">
       <div
-        ref={cardRef}
         className="pf-confirm-overlay__card"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (cardRef.current) trapTabKey(cardRef.current, event);
-        }}
       >
         <h2 id={titleId} className="pf-confirm-overlay__title">
           {title}
@@ -106,6 +83,6 @@ export function ConfirmOverlay({
           </button>
         </div>
       </div>
-    </div>
+    </OverlayShell>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ThumbButtons } from './ThumbButtons';
 import { Link, useLocation } from 'react-router-dom';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { OverlayShell } from '../../components/overlay/OverlayShell';
 import { CoverImage } from './CoverImage';
 import { useOptionalMusicPlayer, type MusicTrack, type RepeatMode } from './musicPlayerCore';
 import { QueueDrawer } from './QueueDrawer';
@@ -414,16 +415,6 @@ function FullPlayer({
     toggleShuffle,
   } = player;
 
-  // Collapse on the hardware/keyboard Back (Escape) — webOS remotes map Back to
-  // Escape, and it's the natural gesture for a slide-up overlay.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCollapse();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCollapse]);
-
   const artistNode = current.artist ? (
     current.artistId ? (
       <Link
@@ -439,8 +430,21 @@ function FullPlayer({
     )
   ) : null;
 
+  // Dismissal is owned by the shared `OverlayShell` (design D:
+  // `sdd/mobile-music-overhaul`): Escape (only when topmost), focus trap +
+  // return, and body scroll-lock. FullPlayer is full-bleed with no "outside"
+  // concept, so it opts out of backdrop-click dismissal - only Escape and its
+  // own chevron button close it.
   return (
-    <div className="pf-fullplayer" role="dialog" aria-modal="true" aria-label="Reproduciendo">
+    <OverlayShell
+      variant="dialog"
+      onDismiss={onCollapse}
+      className="pf-fullplayer"
+      role="dialog"
+      ariaModal
+      ariaLabel="Reproduciendo"
+      dismissOnBackdropClick={false}
+    >
       <header className="pf-fullplayer__header">
         <button
           type="button"
@@ -559,7 +563,7 @@ function FullPlayer({
           <span>Cola</span>
         </button>
       </div>
-    </div>
+    </OverlayShell>
   );
 }
 

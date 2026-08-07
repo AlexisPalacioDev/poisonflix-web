@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { OverlayShell } from '../../components/overlay/OverlayShell';
 import { useAuth } from '../../hooks/useAuth';
 import { useUserPlaylists } from '../../hooks/useUserPlaylists';
 import { addToPlaylist, createPlaylist } from '../../api/playlists';
@@ -8,8 +9,20 @@ import { queryKeys } from '../../hooks/queryKeys';
 // "Agregar a playlist" control for a song row / track detail: a "+" button that
 // opens a small menu listing the user's playlists (add on click) plus a "Crear
 // nueva…" inline-name path. Everything is a native <button>/<input> so it's
-// reachable by keyboard and the webOS D-pad; Escape and a click-outside backdrop
-// close it. A brief Spanish confirmation is announced via an aria-live region.
+// reachable by keyboard and the webOS D-pad. Escape and the click-outside
+// backdrop are owned by the shared `OverlayShell` (design D:
+// `sdd/mobile-music-overhaul`) rather than a local `window` listener. A brief
+// Spanish confirmation is announced via an aria-live region.
+//
+// The panel is portalled TOGETHER with the backdrop (via `anchorRef`), not
+// left as a separate local sibling: the parent row's `:hover` state applies a
+// `transform` (`.pf-music__row:hover`), which creates its OWN stacking
+// context for the whole row - a panel left in place would stay trapped
+// inside it while a backdrop portalled alone to `document.body` escaped to
+// the root context, letting the backdrop paint OVER the entire row while
+// hovered (transform-created contexts behave as z-index: 0). See
+// `OverlayShell`'s module doc comment for the general fix - same root cause
+// as the confirmed Header hamburger-menu blocker.
 //
 // The playlists query is gated on `open`, so a closed menu costs nothing.
 
@@ -46,22 +59,16 @@ export function AddToPlaylistButton({ songId, songTitle }: AddToPlaylistButtonPr
 
   const { items: playlists, isLoading } = useUserPlaylists(open);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  // Anchor for the portalled dropdown panel - see the comment above `close`
+  // for why the panel can no longer rely on a local `position: relative`
+  // wrapper once it's portalled away from it.
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = () => {
     setOpen(false);
     setCreating(false);
     setName('');
   };
-
-  // Close on Escape (webOS Back maps to Escape) while the menu is open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
 
   // Focus the name field when the create form opens.
   useEffect(() => {
@@ -114,6 +121,7 @@ export function AddToPlaylistButton({ songId, songTitle }: AddToPlaylistButtonPr
   return (
     <div className="pf-music__addpl">
       <button
+        ref={triggerRef}
         type="button"
         className="pf-music__addpl-btn"
         onClick={() => setOpen((v) => !v)}
@@ -125,14 +133,13 @@ export function AddToPlaylistButton({ songId, songTitle }: AddToPlaylistButtonPr
       </button>
 
       {open && (
-        <>
-          {/* Click-outside backdrop (transparent). */}
-          <button
-            type="button"
-            className="pf-music__addpl-backdrop"
-            aria-label="Cerrar menú"
-            onClick={close}
-          />
+        <OverlayShell
+          variant="menu"
+          onDismiss={close}
+          className="pf-music__addpl-backdrop"
+          ariaLabel="Cerrar menú"
+          anchorRef={triggerRef}
+        >
           <div className="pf-music__addpl-menu" role="menu" aria-label="Agregar a playlist">
             <p className="pf-music__addpl-heading">Agregar a playlist</p>
 
@@ -193,7 +200,7 @@ export function AddToPlaylistButton({ songId, songTitle }: AddToPlaylistButtonPr
               </button>
             )}
           </div>
-        </>
+        </OverlayShell>
       )}
 
       <span className="pf-music__addpl-status" role="status" aria-live="polite">

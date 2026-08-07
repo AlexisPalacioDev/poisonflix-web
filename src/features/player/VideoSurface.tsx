@@ -764,12 +764,24 @@ export function VideoSurface({
         </div>
       </div>
 
+      {/* `container={containerRef.current}` (not the OverlayShell default of
+          `document.body`) keeps the menu inside this surface: in real
+          Fullscreen, `containerRef.current` IS `fullscreenElement` (see
+          `toggleFullscreen` above), so the menu renders inside the subtree
+          the Fullscreen API actually paints; in pseudo-fullscreen it's the
+          `z-index: 9999` surface itself, so the menu - now a DOM descendant
+          - is compared against `<video>` and the controls WITHIN that local
+          stacking context instead of losing to it from the outside. Fixes a
+          real-Chrome audit finding: the menu used to portal to
+          `document.body` unconditionally and disappeared entirely in real
+          fullscreen, or rendered behind the black video in pseudo-fullscreen. */}
       {activeMenu === 'audio' ? (
         <AudioTrackMenu
           tracks={audioTracks}
           selectedIndex={selectedAudioIndex}
           onSelect={handleSelectAudio}
           onDismiss={() => setActiveMenu(null)}
+          container={containerRef.current}
         />
       ) : null}
       {activeMenu === 'subtitle' ? (
@@ -778,6 +790,7 @@ export function VideoSurface({
           selectedIndex={selectedSubtitleIndex}
           onSelect={handleSelectSubtitle}
           onDismiss={() => setActiveMenu(null)}
+          container={containerRef.current}
         />
       ) : null}
     </div>

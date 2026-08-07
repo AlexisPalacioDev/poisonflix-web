@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -89,5 +90,54 @@ describe('ConfirmOverlay', () => {
 
     fireEvent.keyDown(dismissBtn, { key: 'Tab', shiftKey: true });
     expect(confirmBtn).toHaveFocus();
+  });
+
+  // Shared dismissal via OverlayShell (design D: `sdd/mobile-music-overhaul`).
+  it('locks body scroll while open and releases it when closed', () => {
+    const { rerender } = renderOverlay();
+    expect(document.body.style.position).toBe('fixed');
+
+    rerender(
+      <ConfirmOverlay
+        open={false}
+        title="Eliminar título"
+        message="Esta acción no se puede deshacer."
+        confirmLabel="Eliminar"
+        dismissLabel="Cancelar"
+        onConfirm={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(document.body.style.position).toBe('');
+  });
+
+  it('returns focus to the element that opened it once closed', () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <ConfirmOverlay
+            open={open}
+            title="Eliminar título"
+            message="Esta acción no se puede deshacer."
+            confirmLabel="Eliminar"
+            dismissLabel="Cancelar"
+            onConfirm={() => {}}
+            onDismiss={() => setOpen(false)}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Open' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(opener).toHaveFocus();
   });
 });
