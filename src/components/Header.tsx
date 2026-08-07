@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { buildLabel } from '../lib/obs/build';
+import { SECTION_HOME } from '../lib/domain/lastSection';
 import { JamDestinationPicker } from '../features/jam/JamDestinationPicker';
 import { JamNotifications } from '../features/jam/JamNotifications';
 import { AdultPinOverlay } from './AdultPinOverlay';
@@ -320,7 +321,14 @@ export function Header() {
     <header
       className={`pf-header${scrolled ? ' pf-header--scrolled' : ''}${inMusic ? ' pf-header--music' : ''}`}
     >
-      <Link to="/" className="pf-header__brand" aria-label="PoisonFlix - Inicio">
+      {/* Home of the section you are IN, not always cinema. Someone who uses
+          this as a music player was being thrown out of Música by the one
+          control everyone presses to get back to the top. */}
+      <Link
+        to={inMusic ? SECTION_HOME.musica : SECTION_HOME.cine}
+        className="pf-header__brand"
+        aria-label={inMusic ? 'PoisonFy - Inicio' : 'PoisonFlix - Inicio'}
+      >
         <PoisonMark className="pf-header__mark" variant={inMusic ? 'music' : 'default'} />
         <span className="pf-header__title">{inMusic ? 'PoisonFy' : 'PoisonFlix'}</span>
       </Link>
