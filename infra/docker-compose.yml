@@ -10,8 +10,19 @@ services:
       - "8600:8600"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # ./www is the built web app (git-ignored build output). Regenerate it with:
-      #   npm run build && rm -rf infra/www && cp -r dist infra/www
+      # ./www is the built web app (git-ignored build output). Deploy it with
+      # infra/deploy.sh — do NOT hand-roll the swap.
+      #
+      # This comment used to read `npm run build && rm -rf infra/www && cp -r
+      # dist infra/www`, and following it silently does nothing. Docker
+      # resolves a bind mount to the inode it found at container start, so
+      # replacing the directory leaves this container serving the deleted one
+      # while the new files sit on disk unread. Measured: a browser on a fresh
+      # profile was served the previous bundle for as long as the container
+      # kept running — indistinguishable from a browser cache, and not one.
+      # deploy.sh force-recreates Caddy for exactly this reason, then restarts
+      # the Tailscale sidecar, which recreating Caddy would otherwise leave
+      # pointing at a container that no longer exists.
       - ./www:/srv:ro
       # ./updates hosts the native APK self-update channel (version.json + apk),
       # served at /updates/*. Published by poisonflix's release.sh.
