@@ -650,3 +650,48 @@
   border-color: var(--pf-green-bright);
   background: color-mix(in srgb, var(--pf-green-bright) 12%, var(--pf-surface));
 }
+
+/* --- Output picker --- */
+
+.pf-jam-dest {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 46vw;
+  padding: 0 8px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-dim);
+}
+
+/* Sending your music somewhere else is a state worth seeing without reading:
+   the control lights up while a room is selected. */
+.pf-jam-dest--on {
+  background: color-mix(in srgb, #1ed760 18%, var(--pf-surface-2));
+  color: #1ed760;
+}
+
+.pf-jam-dest__icon {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.pf-jam-dest__select {
+  max-width: 100%;
+  padding: 8px 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+  text-overflow: ellipsis;
+}
+
+.pf-jam-dest__select:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: var(--pf-radius-sm);
+}

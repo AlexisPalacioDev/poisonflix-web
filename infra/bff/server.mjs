@@ -1105,7 +1105,10 @@ async function handleJam(req, res, subPath, url, user) {
     case 'mode':
       return sendJam(res, await setMode(jamId, userId, body.mode));
     case 'queue':
-      return sendJam(res, await addTracks(jamId, userId, Array.isArray(body.tracks) ? body.tracks : []));
+      return sendJam(
+        res,
+        await addTracks(jamId, userId, Array.isArray(body.tracks) ? body.tracks : [], body.replace === true),
+      );
     case 'unqueue':
       return sendJam(res, await removeTrack(jamId, userId, body.index));
     case 'transport':

@@ -370,10 +370,21 @@ export function setMode(jamId, byUserId, mode) {
   });
 }
 
-export function addTracks(jamId, userId, tracks) {
+/**
+ * `replace` is what "play" means when a Jam is the chosen output: the room
+ * stops what it was doing and starts this instead. That is a transport act,
+ * not a queue act, so it takes transport rights — anyone may add to the end of
+ * what everyone is hearing, but replacing it is the same power as pressing
+ * next, and is gated the same way.
+ */
+export function addTracks(jamId, userId, tracks, replace = false) {
   return mutate(jamId, (jam, present) => {
     if (!canQueue(jam, userId)) return { ok: false, reason: 'forbidden' };
-    if (jam.queue.length + tracks.length > MAX_QUEUE) return { ok: false, reason: 'queue_full' };
+    if (replace && !canControlTransport(jam, present, userId)) {
+      return { ok: false, reason: 'forbidden' };
+    }
+    const already = replace ? 0 : jam.queue.length;
+    if (already + tracks.length > MAX_QUEUE) return { ok: false, reason: 'queue_full' };
     const staged = tracks.map((track) => ({
       // Every string is capped. `itemId` and `videoId` were not, and that was
       // enough on its own: one member could push a megabyte-long id, and since
@@ -393,8 +404,14 @@ export function addTracks(jamId, userId, tracks) {
     // A count limit is not a size limit: 500 tracks of capped-but-large
     // strings still add up, and the file is shared. Measure what will actually
     // be written rather than trusting the per-field caps to compose.
-    const projected = JSON.stringify([...jam.queue, ...staged]).length;
+    const base = replace ? [] : jam.queue;
+    const projected = JSON.stringify([...base, ...staged]).length;
     if (projected > MAX_QUEUE_BYTES) return { ok: false, reason: 'queue_full' };
+    if (replace) {
+      jam.queue = staged;
+      jam.current = { index: 0, positionMs: 0, isPlaying: true, at: Date.now() };
+      return;
+    }
     jam.queue.push(...staged);
   });
 }

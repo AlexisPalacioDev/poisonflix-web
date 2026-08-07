@@ -66,8 +66,12 @@ export function setJamMode(jamId: string, mode: JamMode) {
   return write(`/jam/${encodeURIComponent(jamId)}/mode`, { mode });
 }
 
-export function addTracksToJam(jamId: string, tracks: unknown[]) {
-  return write(`/jam/${encodeURIComponent(jamId)}/queue`, { tracks });
+/** `replace` is what pressing play means when a Jam is the chosen output: the
+ *  room drops what it was doing and starts this. It needs transport rights,
+ *  since it is the same power as pressing next. Appending needs only
+ *  membership. */
+export function addTracksToJam(jamId: string, tracks: unknown[], replace = false) {
+  return write(`/jam/${encodeURIComponent(jamId)}/queue`, { tracks, replace });
 }
 
 export function removeTrackFromJam(jamId: string, index: number) {

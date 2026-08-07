@@ -11,6 +11,8 @@ import { useAuth } from '../../hooks/useAuth';
 import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/musicPrefs';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { useLockDiagnostics } from './useLockDiagnostics';
+import { jamDestination } from '../jam/destination';
+import { addTracksToJam } from '../../api/jam';
 import { reportFailure } from '../../lib/obs/report';
 import {
   BUFFERING_SETTLE_MS,
@@ -586,8 +588,40 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<MusicPlayerContextValue>(() => {
+    // When a Jam is the chosen output, playback is not a local act. Every
+    // caller in the app already funnels through `playNow`/`enqueue`, so this
+    // is the one place that has to know — rather than teaching every screen,
+    // every row and every menu about Jam.
+    //
+    // A track sent to a room deliberately carries no per-user Jellyfin URL: a
+    // downloaded track travels as its item id and each listener resolves it
+    // against their own session, and only a not-yet-downloaded one needs the
+    // shared preview proxy.
+    const toJamTrack = (track: MusicTrack) => ({
+      itemId: track.itemId,
+      title: track.title,
+      artist: track.artist ?? null,
+      coverUrl: track.coverUrl ?? null,
+      videoId: track.videoId ?? null,
+      durationSeconds: track.durationSeconds ?? null,
+      streamUrl: track.streamUrl ?? undefined,
+    });
+
+    const sendToJam = (tracks: MusicTrack[], replace: boolean): boolean => {
+      const jamId = jamDestination();
+      if (!jamId || tracks.length === 0) return false;
+      void addTracksToJam(jamId, tracks.map(toJamTrack), replace).catch((cause: unknown) => {
+        // Losing a track into a room that refused it, silently, would look
+        // exactly like the button not working.
+        reportFailure('jam.destination.send', cause, { jamId, replace, count: tracks.length });
+      });
+      return true;
+    };
+
     const playNow = (tracks: MusicTrack[], startIndex = 0) => {
       if (tracks.length === 0) return;
+      // Play replaces what the room is hearing; the owner's rule.
+      if (sendToJam(tracks.slice(startIndex), true)) return;
       const index = Math.min(Math.max(startIndex, 0), tracks.length - 1);
       const order = state.shuffle
         ? shuffleOrder(tracks.length, index)
@@ -615,8 +649,12 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       },
       playNow,
       playQueue: playNow,
-      enqueue: (tracks) =>
-        runGesture({ type: 'ENQUEUE', tracks: Array.isArray(tracks) ? tracks : [tracks] }),
+      enqueue: (tracks) => {
+        const list = Array.isArray(tracks) ? tracks : [tracks];
+        // Adding to the queue appends, the same as it does locally.
+        if (sendToJam(list, false)) return;
+        runGesture({ type: 'ENQUEUE', tracks: list });
+      },
       toggle: () => runGesture({ type: 'TOGGLE' }),
       next: () => runGesture({ type: 'NEXT' }),
       prev: () => runGesture({ type: 'PREV' }),
