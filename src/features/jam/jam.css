@@ -764,7 +764,12 @@
 }
 
 .pf-jam-card__pick {
-  display: block;
+  /* Column, not block: the title and subtitle used to be direct children of
+     the card and inherited its layout. Moving them inside this button left
+     them running together on one line ("Xx1 integrante"). */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   width: 100%;
   border: 0;
   padding: 0;

@@ -1418,7 +1418,9 @@
    --------------------------------------------------------------------------- */
 
 .pf-fullplayer {
-  position: relative;
+  /* NO `position` here. The overlay is already fixed and full-bleed; setting
+     it to relative made the dialog render inline and disappear. `isolation`
+     is enough to give the blurred wash a stacking context to sit behind. */
   isolation: isolate;
 }
 
