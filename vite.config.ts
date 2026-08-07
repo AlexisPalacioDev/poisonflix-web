@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import legacy from '@vitejs/plugin-legacy';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -165,5 +165,18 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // `infra/` holds the BFF and the music worker — separate services with
+    // their own runners. The BFF's suite is written for `node --test` (that
+    // server has no dependencies and is not going to grow one just to be
+    // tested) and the worker's for Python's unittest. Vitest's default glob
+    // picks up `infra/bff/*.test.mjs` and reports a passing suite as a
+    // failure, so it is excluded here.
+    //
+    // Excluding infra rather than narrowing the include to `src/**`: two real
+    // vitest suites live outside src (`postcss-flex-gap-fallback.test.mjs` and
+    // `scripts/check-legacy-css.test.mjs`, 31 tests between them), and a
+    // src-only include drops them silently — the run still says all green,
+    // just about less.
+    exclude: [...configDefaults.exclude, 'infra/**'],
   },
 });
