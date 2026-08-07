@@ -148,6 +148,7 @@ export function OverlayShell({
   const backdropRef = useRef<HTMLDivElement | HTMLButtonElement>(null);
   const [panelStyle, setPanelStyle] = useState<CSSProperties | undefined>(undefined);
   const panelBoxRef = useRef<HTMLDivElement>(null);
+  const corrected = useRef(false);
 
   // Measured once, synchronously before paint, from the trigger's actual
   // on-screen position - the panel is portalled away from wherever it sits
@@ -207,7 +208,11 @@ export function OverlayShell({
   // width depends on its longest label, which the caller owns.
   useLayoutEffect(() => {
     const panel = panelBoxRef.current;
-    if (variant !== 'menu' || !panel || !panelStyle) return;
+    // Depends on `panelStyle` so it runs AFTER the first pass has produced one
+    // — keyed off a ref instead, it fired once before any style existed and
+    // then never again, which is why the clamp silently did nothing. A
+    // one-shot flag is what keeps it from re-running on its own output.
+    if (variant !== 'menu' || !panel || !panelStyle || corrected.current) return;
     const MARGIN = 8;
     const rect = panel.getBoundingClientRect();
     if (rect.left >= MARGIN && rect.right <= window.innerWidth - MARGIN) return;
@@ -215,11 +220,9 @@ export function OverlayShell({
       Math.max(MARGIN, window.innerWidth - rect.width - MARGIN),
       Math.max(MARGIN, window.innerWidth - rect.right + Number(panelStyle.right ?? 0)),
     );
+    corrected.current = true;
     setPanelStyle((previous) => (previous ? { ...previous, right } : previous));
-    // `panelStyle` is deliberately not a dependency: this runs to correct the
-    // first measurement, and re-running on its own output would loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant, panelBoxRef]);
+  }, [variant, panelStyle]);
 
   useEffect(() => {
     pushOverlay(id, sequence);

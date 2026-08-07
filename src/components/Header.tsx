@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { buildLabel } from '../lib/obs/build';
 import { SECTION_HOME } from '../lib/domain/lastSection';
-import { JamDestinationPicker } from '../features/jam/JamDestinationPicker';
+import { JamPlaybackHost } from '../features/jam/JamPlaybackHost';
 import { JamNotifications } from '../features/jam/JamNotifications';
 import { AdultPinOverlay } from './AdultPinOverlay';
 import { OverlayShell } from './overlay/OverlayShell';
@@ -339,7 +339,7 @@ export function Header() {
               behind a menu notifies nobody, and the output picker is the
               control the whole Jam feature turns on — it has to be one glance
               away from wherever you press play. */}
-          <JamDestinationPicker />
+          <JamPlaybackHost />
           <JamNotifications />
           <button
             ref={hamburgerRef}
@@ -390,7 +390,7 @@ export function Header() {
         </div>
       ) : (
         <div className="pf-header__actions">
-          <JamDestinationPicker />
+          <JamPlaybackHost />
           <JamNotifications />
           {renderControls()}
           <span className="pf-header__build" title="Versión desplegada">

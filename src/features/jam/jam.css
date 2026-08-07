@@ -755,3 +755,60 @@
   color: #1ed760;
   font-weight: 700;
 }
+
+/* Card as selector. The card already shows the room; a dropdown in the header
+   was the same choice with less information, so it is gone and this is the
+   control. */
+.pf-jam-card {
+  position: relative;
+}
+
+.pf-jam-card__pick {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Where your music is going right now, visible without reading. */
+.pf-jam-card--on .pf-jam-card__art,
+.pf-jam-card--on .pf-jam-card__art--solo {
+  box-shadow: 0 0 0 2px var(--pf-green-bright);
+}
+
+.pf-jam-card--on .pf-music__rec-sub {
+  color: var(--pf-green-bright);
+}
+
+.pf-jam-card__art--solo {
+  border: 1px solid color-mix(in srgb, var(--pf-text-dim) 25%, transparent);
+  background: var(--pf-surface);
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.pf-jam-card__manage {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.pf-jam-card__manage:hover {
+  opacity: 1;
+}
