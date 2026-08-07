@@ -1,5 +1,6 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { OverlayShell } from '../../components/overlay/OverlayShell';
 import { listJams } from '../../api/jam';
 import { queryKeys } from '../../hooks/queryKeys';
 import { useAuth } from '../../hooks/useAuth';
@@ -36,6 +37,8 @@ export function JamDestinationPicker() {
   // the room — everyone else heard it, you did not. The output is a property
   // of the app, so what follows the output has to be too.
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
 
   const jamsQuery = useQuery({
     queryKey: queryKeys.jamList(),
@@ -63,37 +66,40 @@ export function JamDestinationPicker() {
   const value = known ? (destination ?? '') : '';
   if (destination && !known) setJamDestination(null);
 
+  const activeName = jams.find((entry) => entry.jam.id === value)?.jam.name ?? 'Este dispositivo';
+
+  const choose = (jamId: string | null) => {
+    // Synchronously, inside the tap: the only gesture the app is guaranteed to
+    // get before a room starts playing on its own, and iOS refuses a play()
+    // that no touch asked for.
+    void unlockAudioElement(audioRef.current);
+    setJamDestination(jamId);
+    setOpen(false);
+  };
+
   return (
-    <label className={`pf-jam-dest${value ? ' pf-jam-dest--on' : ''}`}>
-      {/* Lives alongside the picker so it is never unmounted by navigation,
-          and so the change event below — a real user gesture — can unlock it
-          for iOS, which refuses a play() that no touch asked for. */}
+    <div className={`pf-jam-dest${value ? ' pf-jam-dest--on' : ''}`}>
+      {/* Lives alongside the picker so navigation never unmounts it. */}
       <audio ref={audioRef} hidden preload="none" />
-      <span className="pf-jam-dest__icon" aria-hidden="true">
-        {value ? '👥' : '📱'}
-      </span>
-      <select
-        className="pf-jam-dest__select"
-        aria-label="Dónde suena la música"
-        value={value}
-        onChange={(event) => {
-          // Synchronously, inside the gesture: this is the only touch the app
-          // is guaranteed to get before a room starts playing on its own.
-          void unlockAudioElement(audioRef.current);
-          setJamDestination(event.target.value || null);
-        }}
+
+      {/* A native <select> was the obvious choice and the wrong one: the OS
+          paints its list with its own colours — white on a dark app — and
+          positions it itself, so on a phone it spilled past the edge of the
+          screen and got clipped. This is the same OverlayShell the header
+          menu uses, which stays inside the viewport and looks like the app. */}
+      <button
+        ref={pillRef}
+        type="button"
+        className="pf-jam-dest__pill"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Dónde suena la música: ${activeName}`}
+        onClick={() => setOpen((was) => !was)}
       >
-        <option value="">Este dispositivo</option>
-        {jams.map((entry) => (
-          <option key={entry.jam.id} value={entry.jam.id}>
-            {entry.jam.name}
-          </option>
-        ))}
-      </select>
-      {/* Rare: only when the browser refused to start audio without a touch.
-          An icon inside the pill rather than a labelled button beside it —
-          the label wrapped onto three lines and crowded the whole header for
-          a control most people will never see. */}
+        <span className="pf-jam-dest__icon" aria-hidden="true">{value ? '👥' : '📱'}</span>
+        <span className="pf-jam-dest__name">{activeName}</span>
+      </button>
+
       {playback.needsGesture && (
         <button
           type="button"
@@ -107,6 +113,42 @@ export function JamDestinationPicker() {
           </svg>
         </button>
       )}
-    </label>
+
+      {open && (
+        <OverlayShell
+          variant="menu"
+          onDismiss={() => setOpen(false)}
+          ariaLabel="Cerrar selector de salida (fondo)"
+          anchorRef={pillRef}
+        >
+          <ul className="pf-jam-dest__list" role="listbox" aria-label="Dónde suena la música">
+            <li>
+              <button
+                type="button"
+                role="option"
+                aria-selected={!value}
+                className={`pf-jam-dest__opt${!value ? ' pf-jam-dest__opt--on' : ''}`}
+                onClick={() => choose(null)}
+              >
+                📱 Este dispositivo
+              </button>
+            </li>
+            {jams.map((entry) => (
+              <li key={entry.jam.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={value === entry.jam.id}
+                  className={`pf-jam-dest__opt${value === entry.jam.id ? ' pf-jam-dest__opt--on' : ''}`}
+                  onClick={() => choose(entry.jam.id)}
+                >
+                  👥 {entry.jam.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </OverlayShell>
+      )}
+    </div>
   );
 }

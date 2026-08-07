@@ -676,25 +676,7 @@
   line-height: 1;
 }
 
-.pf-jam-dest__select {
-  max-width: 100%;
-  padding: 8px 2px;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 600;
-  cursor: pointer;
-  appearance: none;
-  text-overflow: ellipsis;
-}
 
-.pf-jam-dest__select:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
-  border-radius: var(--pf-radius-sm);
-}
 
 /* Icon-only, and sized to the pill so nothing reflows when it appears. The
    labelled version of this wrapped onto three lines and pushed the header
@@ -711,4 +693,65 @@
   background: #1ed760;
   color: #06170d;
   cursor: pointer;
+}
+
+.pf-jam-dest__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 40vw;
+  padding: 7px 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-jam-dest__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Anchored by OverlayShell, which keeps it inside the viewport — the thing a
+   native <select> would not do, and the reason it was spilling off the edge
+   of the phone. */
+.pf-jam-dest__list {
+  min-width: 200px;
+  max-width: min(280px, 88vw);
+  margin: 0;
+  padding: var(--pf-space-2xs);
+  list-style: none;
+  border-radius: var(--pf-radius-md);
+  background: var(--pf-surface);
+  box-shadow: var(--pf-shadow-card-hover);
+}
+
+.pf-jam-dest__opt {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--pf-radius-sm);
+  background: none;
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-jam-dest__opt:hover {
+  background: var(--pf-surface-2);
+}
+
+.pf-jam-dest__opt--on {
+  color: #1ed760;
+  font-weight: 700;
 }
