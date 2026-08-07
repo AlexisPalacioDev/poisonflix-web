@@ -631,3 +631,22 @@
   color: var(--pf-text-dim);
   font-size: 0.85rem;
 }
+
+.pf-jam__add-music {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--pf-space-sm);
+  padding: var(--pf-space-sm);
+  border: 1px dashed color-mix(in srgb, var(--pf-green-bright) 45%, transparent);
+  border-radius: var(--pf-radius-md);
+  background: color-mix(in srgb, var(--pf-green-bright) 6%, var(--pf-surface));
+  color: var(--pf-green-bright);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-jam__add-music:hover {
+  border-color: var(--pf-green-bright);
+  background: color-mix(in srgb, var(--pf-green-bright) 12%, var(--pf-surface));
+}

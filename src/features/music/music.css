@@ -1354,3 +1354,20 @@
     animation-duration: 2.4s;
   }
 }
+
+/* The rail card's caption row: text on the left, the ⋮ menu on the right.
+   Those cards had no menu at all, so the feed — the part of Música people
+   actually look at — offered no way to like a track, queue it, or send it to
+   a Jam. */
+.pf-music__rec-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+
+.pf-music__rec-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}

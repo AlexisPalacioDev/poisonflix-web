@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmOverlay } from '../../components/ConfirmOverlay';
 import { Header } from '../../components/Header';
@@ -298,6 +299,7 @@ function JamRoom({
   onConfirmTransfer,
   onCancelTransfer,
 }: JamRoomProps) {
+  const navigate = useNavigate();
   const { snapshot, connected, denied } = useJamStream(jamId);
   const playback = useJamPlayback(snapshot, ownUserId, audioRef);
 
@@ -456,8 +458,22 @@ function JamRoom({
 
       <section className="pf-jam__section" aria-label="Cola">
         <h2 className="pf-jam__section-title">Cola</h2>
+        {/* The way in has to be HERE. It lived only in each song's ⋮ menu over
+            in Música, which is where someone already browsing would find it —
+            but not where someone standing in an empty room looks. The owner
+            asked how to add music while inside the room, which is the answer. */}
+        <button
+          type="button"
+          className="pf-jam__add-music"
+          onClick={() => navigate('/musica')}
+        >
+          + Buscar música para agregar
+        </button>
+
         {jam.queue.length === 0 ? (
-          <p className="pf-jam__status">La cola está vacía.</p>
+          <p className="pf-jam__status">
+            La cola está vacía. Buscá una canción y usá su menú ⋮ → «Agregar a {jam.name}».
+          </p>
         ) : (
           <ol className="pf-jam__queue">
             {jam.queue.map((track, index) => (

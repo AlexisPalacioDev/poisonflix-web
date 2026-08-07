@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { AuthProvider } from '../../auth/AuthContext';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecommendationsRow, type RecommendationsRowProps } from './RecommendationsRow';
 import type { MusicResultItem } from '../../api/schemas/music';
@@ -18,14 +20,22 @@ const items: MusicResultItem[] = Array.from({ length: 8 }, (_, i) => ({
 }));
 
 function renderRow(overrides: Partial<RecommendationsRowProps> = {}) {
+  // Each card now embeds MusicRowMenu, which talks to react-query — the rails
+  // had no per-song menu at all before, so there was no way from the feed to
+  // like a track, queue it, or send it to a Jam.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <RecommendationsRow
-      items={items}
-      isLoading={false}
-      onPlay={() => {}}
-      onPreview={() => {}}
-      {...overrides}
-    />,
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+      <RecommendationsRow
+        items={items}
+        isLoading={false}
+        onPlay={() => {}}
+        onPreview={() => {}}
+        {...overrides}
+      />
+      </AuthProvider>
+    </QueryClientProvider>,
   );
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MusicResultItem, MusicSearchResult } from '../../api/schemas/music';
 import { CoverImage } from './CoverImage';
+import { MusicRowMenu } from './MusicRowMenu';
 import { MusicCollectionCard } from './MusicCollectionCard';
 import { isRowActive } from '../../lib/domain/musicTrack';
 import type { MusicTrack } from './musicPlayerCore';
@@ -182,8 +183,31 @@ export function RecommendationsRow({
                       {active && isPlaying ? <PauseGlyph /> : <PlayGlyph />}
                     </button>
                   </div>
-                  <span className="pf-music__rec-title">{title}</span>
-                  <span className="pf-music__rec-sub">{result.artist ?? 'Desconocido'}</span>
+                  <div className="pf-music__rec-foot">
+                    <span className="pf-music__rec-text">
+                      <span className="pf-music__rec-title">{title}</span>
+                      <span className="pf-music__rec-sub">{result.artist ?? 'Desconocido'}</span>
+                    </span>
+                    {/* The feed rails had no ⋮ at all — no thumbs, no queue, no
+                        way into a Jam — while the library list below them did.
+                        So every instruction that started "open the song's menu"
+                        was wrong for the part of the screen people actually
+                        look at. */}
+                    <MusicRowMenu
+                      videoId={result.videoId}
+                      title={title}
+                      artist={result.artist ?? null}
+                      coverUrl={result.thumbnailUrl ?? null}
+                      itemId={playItemId}
+                      downloadParams={{
+                        videoId: result.videoId,
+                        title: result.title ?? undefined,
+                        artist: result.artist ?? undefined,
+                        album: result.album ?? undefined,
+                      }}
+                      onEnqueue={(id) => (id ? onPlay(result, id) : onPreview(result))}
+                    />
+                  </div>
                 </div>
               );
             })}
