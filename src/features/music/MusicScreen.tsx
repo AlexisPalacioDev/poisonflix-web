@@ -21,6 +21,7 @@ import { CoverImage } from './CoverImage';
 import { MusicResultRow } from './MusicResultRow';
 import { MusicCollectionCard } from './MusicCollectionCard';
 import { RecommendationsRow } from './RecommendationsRow';
+import { JamRow } from '../jam/JamRow';
 import { GenresPanel } from './GenresPanel';
 import { PlaylistsPanel } from './PlaylistsPanel';
 import { PlayButton } from './PlayButton';
@@ -334,6 +335,12 @@ export function MusicScreen() {
         </section>
       ) : (
         <>
+          {/* Jam sits above the feed, not behind the hamburger menu it used to
+              live in: listening together belongs where the listening is, and
+              the owner could not find his own feature from seven items down a
+              dropdown. */}
+          <JamRow />
+
           {/* One rail per reason: the mix first, then a row per artist the
               history says they're into. While the first load is in flight the
               generic-looking single rail keeps the layout from jumping. */}

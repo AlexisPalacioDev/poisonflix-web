@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmOverlay } from '../../components/ConfirmOverlay';
 import { Header } from '../../components/Header';
+import { CoverImage } from '../music/CoverImage';
 import { queryKeys } from '../../hooks/queryKeys';
 import {
   createJam,
@@ -400,42 +401,52 @@ function JamRoom({
 
       <section className="pf-jam__section" aria-label="Integrantes">
         <h2 className="pf-jam__section-title">Integrantes</h2>
-        <ul className="pf-jam__members">
-          {/* Pending invitations are listed too, greyed out. Hiding them made
-              "Agregar a la Jam" look like it did nothing: the server had the
-              invitation, the screen showed no trace of it, and the only way to
-              tell it had worked was to invite the same person again. */}
+        {/* Faces, not a table of names and states. Spotify Jam shows who is
+            in the room as a strip of avatars, and it reads instantly: a ring
+            means listening now, dimmed means invited and not here yet. The
+            previous three-column text layout made a room of two people look
+            like a spreadsheet. */}
+        <ul className="pf-jam__people">
           {jam.members.map((member) => {
             const pending = member.acceptedAt === null;
+            const here = presentSet.has(member.userId);
+            const isLeader = leaderId === member.userId;
             return (
-              <li
-                key={member.userId}
-                className={`pf-jam__member-row${pending ? ' pf-jam__member-row--pending' : ''}`}
-              >
-                <span className="pf-jam__member-name">{member.name}</span>
-                <span className="pf-jam__member-role">{pending ? 'invitado' : member.role}</span>
-                <span className="pf-jam__member-presence">
-                  {pending
-                    ? 'Invitación pendiente'
-                    : presentSet.has(member.userId)
-                      ? 'Presente'
-                      : 'Ausente'}
+              <li key={member.userId} className="pf-jam__person">
+                <span
+                  className={
+                    'pf-jam__avatar' +
+                    (here ? ' pf-jam__avatar--here' : '') +
+                    (pending ? ' pf-jam__avatar--pending' : '')
+                  }
+                  aria-hidden="true"
+                >
+                  {member.name.slice(0, 2).toUpperCase()}
+                  {isLeader && <span className="pf-jam__crown" title="Manda la sala" />}
+                </span>
+                <span className="pf-jam__person-name">{member.name}</span>
+                <span className="pf-jam__person-state">
+                  {pending ? 'Invitado' : here ? (isLeader ? 'Manda' : 'Escuchando') : 'Fuera'}
                 </span>
                 {isOwner && !pending && member.userId !== ownUserId && (
-                  <div className="pf-jam__member-actions">
-                    {member.role === 'controller' ? (
-                      <button type="button" onClick={() => onSetRole(member.userId, 'listener')}>
-                        Quitar control
-                      </button>
-                    ) : (
-                      <button type="button" onClick={() => onSetRole(member.userId, 'controller')}>
-                        Dar control
-                      </button>
-                    )}
-                    <button type="button" onClick={() => onRequestTransfer(member)}>
-                      Transferir liderazgo
+                  <span className="pf-jam__person-actions">
+                    <button
+                      type="button"
+                      className="pf-jam__chip"
+                      onClick={() =>
+                        onSetRole(member.userId, member.role === 'controller' ? 'listener' : 'controller')
+                      }
+                    >
+                      {member.role === 'controller' ? 'Quitar control' : 'Dar control'}
                     </button>
-                  </div>
+                    <button
+                      type="button"
+                      className="pf-jam__chip"
+                      onClick={() => onRequestTransfer(member)}
+                    >
+                      Pasarle la sala
+                    </button>
+                  </span>
                 )}
               </li>
             );
@@ -454,8 +465,22 @@ function JamRoom({
                 key={`${track.itemId}-${index}`}
                 className={`pf-jam__track${index === jam.current.index ? ' pf-jam__track--current' : ''}`}
               >
-                <span className="pf-jam__track-title">{track.title}</span>
-                {track.artist && <span className="pf-jam__track-artist">{track.artist}</span>}
+                {/* Artwork, like every other list of songs in this app. The
+                    queue was rendering bare titles while each track carries a
+                    coverUrl, which is what made this screen read as a form
+                    rather than as part of Música. */}
+                <span className="pf-jam__track-art">
+                  <CoverImage src={track.coverUrl} loading="lazy" />
+                </span>
+                <span className="pf-jam__track-text">
+                  <span className="pf-jam__track-title">{track.title}</span>
+                  {track.artist && <span className="pf-jam__track-artist">{track.artist}</span>}
+                </span>
+                {index === jam.current.index && (
+                  <span className="pf-jam__track-now" aria-label="Sonando ahora">
+                    <span /><span /><span />
+                  </span>
+                )}
               </li>
             ))}
           </ol>
