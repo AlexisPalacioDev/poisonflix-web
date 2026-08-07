@@ -1410,3 +1410,120 @@
 .pf-thumbs--art .pf-thumbs__btn:hover {
   opacity: 1;
 }
+
+/* ---------------------------------------------------------------------------
+   Full-screen player, rebuilt to the reference the owner supplied: the artwork
+   lights the room, the type is thin and large, and everything else gets out of
+   the way. The old version was a stack of controls on a flat dark panel.
+   --------------------------------------------------------------------------- */
+
+.pf-fullplayer {
+  position: relative;
+  isolation: isolate;
+}
+
+/* Atmosphere, not decoration: the screen takes its colour from whatever is
+   playing. Blurred past recognition and dimmed hard, so text over it never
+   has to fight for contrast. */
+.pf-fullplayer__wash {
+  position: absolute;
+  inset: -12%;
+  z-index: -1;
+  background-position: center;
+  background-size: cover;
+  filter: blur(56px) saturate(1.25) brightness(0.5);
+  transform: scale(1.15);
+}
+
+.pf-fullplayer__wash::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 12, 16, 0.45) 0%, rgba(10, 12, 16, 0.86) 100%);
+}
+
+.pf-fullplayer__meta {
+  order: -1;
+  padding: 0 var(--pf-space-lg);
+  text-align: left;
+}
+
+/* Large, light, generous. The reference's title is the loudest thing on the
+   screen and it is still thin — weight would make it shout. */
+.pf-fullplayer__title {
+  margin: 0 0 var(--pf-space-md);
+  font-size: clamp(1.4rem, 6vw, 2rem);
+  font-weight: 300;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.pf-fullplayer__who {
+  font-weight: 400;
+}
+
+.pf-fullplayer__sub {
+  padding: 0 var(--pf-space-lg);
+  margin-top: calc(var(--pf-space-sm) * -1);
+  font-size: 0.95rem;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* Left-aligned and square, not a centred hero: the reference sits it against
+   the same margin as the type, which is what makes the layout read as a
+   composed page rather than a dialog. */
+.pf-fullplayer__art {
+  align-self: flex-start;
+  width: min(62vw, 320px);
+  margin: 0 var(--pf-space-lg) var(--pf-space-lg);
+  aspect-ratio: 1;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+.pf-fullplayer__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A hairline, not a slider. The dot is the only thing that grows on touch. */
+.pf-fullplayer .pf-nowplaying__seekbar {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 2px;
+}
+
+.pf-fullplayer .pf-nowplaying__seekbar::-webkit-slider-thumb {
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border: 0;
+  border-radius: 50%;
+}
+
+.pf-fullplayer .pf-nowplaying__seekbar::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border: 0;
+  border-radius: 50%;
+}
+
+.pf-fullplayer .pf-nowplaying__time {
+  font-size: 0.78rem;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.pf-fullplayer__eyebrow {
+  font-weight: 300;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.55);
+}

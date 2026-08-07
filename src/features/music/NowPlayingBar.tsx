@@ -459,14 +459,34 @@ function FullPlayer({
         <span className="pf-fullplayer__chevron" aria-hidden="true" />
       </header>
 
+      {/* The artwork, blurred, as the room's own light. Taken from the
+          reference the owner asked for: the screen is coloured by whatever is
+          playing rather than by a fixed palette, so every track feels like its
+          own place. Heavily blurred and dimmed, so it reads as atmosphere and
+          never competes with the text over it. */}
+      {current.coverUrl && (
+        <div
+          className="pf-fullplayer__wash"
+          style={{ backgroundImage: `url(${current.coverUrl})` }}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Artist and title above the cover, on one line, as in the reference.
+          It reads as a sentence — who, then what — instead of as a stacked
+          label under an image. */}
+      <div className="pf-fullplayer__meta">
+        <h2 className="pf-fullplayer__title">
+          {current.artist && <span className="pf-fullplayer__who">{current.artist} — </span>}
+          {current.title}
+        </h2>
+      </div>
+
       <div className="pf-fullplayer__art">
         <CoverImage src={current.coverUrl} placeholderClassName="pf-nowplaying__art-placeholder" />
       </div>
 
-      <div className="pf-fullplayer__meta">
-        <h2 className="pf-fullplayer__title">{current.title}</h2>
-        {artistNode}
-      </div>
+      {artistNode && <div className="pf-fullplayer__sub">{artistNode}</div>}
 
       <div className="pf-fullplayer__seek">
         <input
