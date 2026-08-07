@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmOverlay } from '../../components/ConfirmOverlay';
 import { Header } from '../../components/Header';
@@ -18,6 +18,7 @@ import {
 import type { JamListEntry, JamMember, JamMode } from '../../api/schemas/jam';
 import { canControlTransport } from '../../lib/domain/jam';
 import { useJamStream } from './useJamStream';
+import { useJamPlayback, unlockAudioElement } from './useJamPlayback';
 import './jam.css';
 
 // Jam: collaborative listening (see `lib/domain/jam.ts` for the leadership
@@ -53,6 +54,13 @@ export function JamScreen() {
   const [newMode, setNewMode] = useState<JamMode>('everyone');
   const [directoryQuery, setDirectoryQuery] = useState('');
   const [pendingTransfer, setPendingTransfer] = useState<JamMember | null>(null);
+
+  // The Jam's own audio element lives HERE, not in the room, because the
+  // gesture that unlocks it for iOS is the click that opens a jam — and at
+  // that instant the room has not rendered yet. Entering the Jam is the button
+  // to start listening, so entering is where the element earns the right to
+  // play without another touch.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const jamsQuery = useQuery({ queryKey: queryKeys.jamList(), queryFn: listJams });
 
@@ -117,11 +125,18 @@ export function JamScreen() {
       sendJamTransport(jamId, command),
   });
 
+  // Rendered above the branch so the element survives the switch from list to
+  // room. Unmounting it would throw away the very gesture that unlocked it.
+  const audioElement = <audio ref={audioRef} hidden preload="none" />;
+
   if (selectedJamId) {
     return (
+      <>
+      {audioElement}
       <JamRoom
         jamId={selectedJamId}
         ownUserId={ownUserId}
+        audioRef={audioRef}
         onBack={() => setSelectedJamId(null)}
         directoryQuery={directoryQuery}
         onDirectoryQueryChange={setDirectoryQuery}
@@ -138,11 +153,13 @@ export function JamScreen() {
         }}
         onCancelTransfer={() => setPendingTransfer(null)}
       />
+      </>
     );
   }
 
   return (
     <main className="pf-jam">
+      {audioElement}
       <Header />
 
       <div className="pf-jam__header">
@@ -228,7 +245,10 @@ export function JamScreen() {
         <ul className="pf-jam__list">
           {myJams.map((entry: JamListEntry) => (
             <li key={entry.jam.id}>
-              <button type="button" className="pf-jam__jam-row" onClick={() => setSelectedJamId(entry.jam.id)}>
+              <button type="button" className="pf-jam__jam-row" onClick={() => {
+                  void unlockAudioElement(audioRef.current);
+                  setSelectedJamId(entry.jam.id);
+                }}>
                 <span className="pf-jam__jam-name">{entry.jam.name}</span>
                 <span className="pf-jam__jam-mode">{MODE_LABEL[entry.jam.mode]}</span>
               </button>
@@ -243,6 +263,9 @@ export function JamScreen() {
 interface JamRoomProps {
   jamId: string;
   ownUserId: string | null;
+  /** Owned by JamScreen so it outlives the switch into this room, and so the
+   *  click that opened the room could unlock it for iOS. */
+  audioRef: React.RefObject<HTMLAudioElement | null>;
   onBack: () => void;
   directoryQuery: string;
   onDirectoryQueryChange: (value: string) => void;
@@ -260,6 +283,7 @@ interface JamRoomProps {
 function JamRoom({
   jamId,
   ownUserId,
+  audioRef,
   onBack,
   directoryQuery,
   onDirectoryQueryChange,
@@ -274,6 +298,7 @@ function JamRoom({
   onCancelTransfer,
 }: JamRoomProps) {
   const { snapshot, connected, denied } = useJamStream(jamId);
+  const playback = useJamPlayback(snapshot, ownUserId, audioRef);
 
   const isOwner = ownUserId != null && snapshot?.jam.ownerId === ownUserId;
 
@@ -329,6 +354,24 @@ function JamRoom({
         <p className="pf-jam__status pf-jam__status--error" role="alert">
           Sala desconectada. Reconectando…
         </p>
+      )}
+
+      {/* iOS refuses a play() that did not come from a touch. Entering the Jam
+          normally provides it, but a reload lands straight in the room with no
+          gesture behind it — so offer one instead of staying silent while
+          everyone else hears the song. */}
+      {playback.needsGesture && (
+        <button
+          type="button"
+          className="pf-jam__listen"
+          onClick={() => playback.unlock(audioRef.current)}
+        >
+          Tocá acá para escuchar en este dispositivo
+        </button>
+      )}
+
+      {playback.active && jam.mode === 'king' && (
+        <p className="pf-jam__status">Este dispositivo es el que suena.</p>
       )}
 
       <div className="pf-jam__room-header">

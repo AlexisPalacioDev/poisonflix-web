@@ -35,6 +35,9 @@ vi.mock('../../api/jam', () => ({
   transferJamOwnership: vi.fn(),
   setJamMode: vi.fn(),
   sendJamTransport: vi.fn(),
+  // Measuring the clock offset is a real round trip; the room mounts the
+  // playback follower, which asks for it on mount.
+  measureJamClockOffset: vi.fn().mockResolvedValue(0),
 }));
 vi.mock('./useJamStream', () => ({ useJamStream: vi.fn() }));
 

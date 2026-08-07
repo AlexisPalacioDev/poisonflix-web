@@ -76,6 +76,7 @@ export type JamMode = z.infer<typeof JamModeSchema>;
 export type JamRole = z.infer<typeof JamRoleSchema>;
 export type JamMember = z.infer<typeof JamMemberSchema>;
 export type JamTrack = z.infer<typeof JamTrackSchema>;
+export type JamPlayhead = z.infer<typeof JamPlayheadSchema>;
 export type Jam = z.infer<typeof JamSchema>;
 export type JamSnapshot = z.infer<typeof JamSnapshotSchema>;
 export type JamListEntry = z.infer<typeof JamListEntrySchema>;
