@@ -27,12 +27,18 @@ export function AppLayout() {
   const landed = useRef(false);
   const shouldResume = !landed.current && location.pathname === '/' && lastSection() === 'musica';
   landed.current = true;
-  if (shouldResume) return <Navigate to={SECTION_HOME.musica} replace />;
 
+  // Every hook runs before the redirect can return. Bailing out above them
+  // made these two conditional, which is not a style rule: React matches hook
+  // state by call order, so a render that skips them corrupts the state of
+  // whatever hooks follow on the next one.
+  //
   // Keeps the queue going once it runs out, from whichever screen built it.
   useAutoplayRadio();
   // Feeds Jellyfin the per-user listening history the recommendations read.
   useMusicScrobble();
+
+  if (shouldResume) return <Navigate to={SECTION_HOME.musica} replace />;
 
   return (
     <>
