@@ -1,10 +1,17 @@
-"""Tests for the library maintenance tool (Task 4): sample-based verification
-(Task 3) and the bounded, resumable repair pass.
+"""Tests for the library maintenance tool: sample-based fragmentation
+verification and a purely diagnostic defect report.
+
+ROUND 2 MENOR fixes: an audit found the previous `--write` repair path
+(1) discarded embedded cover art (`-map 0:a:0` drops every non-audio stream)
+and (2) replaced the original file in place with `os.replace` and no backup.
+Per the audit's own suggested simplification ("if it's simpler, make --write
+not exist yet and have the tool be diagnostic-only"), the actual re-encode
+path (`repair_file`, `RepairState`, `--write`, `--concurrency`) has been
+removed entirely rather than patched — there is no code path left in this
+tool that can touch a file in MUSIC_DIR. `run_repair` only ever reports.
 """
 
-import json
 import os
-import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -103,168 +110,59 @@ class SampleFragmentationReportTests(unittest.TestCase):
         self.assertEqual(report["sampled"], 3)
 
 
-class RepairFileTests(unittest.TestCase):
-    def test_successful_repair_replaces_the_original(self):
-        ok_proc = subprocess.CompletedProcess(args=["ffmpeg"], returncode=0, stdout="", stderr="")
-        with mock.patch.object(media_repair.subprocess, "run", return_value=ok_proc), \
-             mock.patch.object(media_repair.os.path, "exists", return_value=True), \
-             mock.patch.object(media_repair.os.path, "getsize", return_value=4096), \
-             mock.patch.object(
-                 media_repair.server, "_validate_audio_output", return_value="audio/mp4"
-             ), \
-             mock.patch.object(media_repair, "is_fragmented_mp4", return_value=False), \
-             mock.patch.object(media_repair.os, "replace") as replace:
-            ok, err = media_repair.repair_file("/music/x.m4a")
-
-        self.assertTrue(ok)
-        self.assertIsNone(err)
-        replace.assert_called_once()
-
-    def test_ffmpeg_failure_does_not_touch_the_original(self):
-        bad_proc = subprocess.CompletedProcess(args=["ffmpeg"], returncode=1, stdout="", stderr="x")
-        with mock.patch.object(media_repair.subprocess, "run", return_value=bad_proc), \
-             mock.patch.object(media_repair.os.path, "exists", return_value=False), \
-             mock.patch.object(media_repair.os, "replace") as replace:
-            ok, err = media_repair.repair_file("/music/x.m4a")
-
-        self.assertFalse(ok)
-        self.assertIsNotNone(err)
-        replace.assert_not_called()
-
-    def test_repaired_output_still_fragmented_is_rejected(self):
-        ok_proc = subprocess.CompletedProcess(args=["ffmpeg"], returncode=0, stdout="", stderr="")
-        with mock.patch.object(media_repair.subprocess, "run", return_value=ok_proc), \
-             mock.patch.object(media_repair.os.path, "exists", return_value=True), \
-             mock.patch.object(media_repair.os.path, "getsize", return_value=4096), \
-             mock.patch.object(
-                 media_repair.server, "_validate_audio_output", return_value="audio/mp4"
-             ), \
-             mock.patch.object(media_repair, "is_fragmented_mp4", return_value=True), \
-             mock.patch.object(media_repair.os, "replace") as replace:
-            ok, err = media_repair.repair_file("/music/x.m4a")
-
-        self.assertFalse(ok)
-        self.assertIn("fragmented", err)
-        replace.assert_not_called()
-
-
-class RepairStateTests(unittest.TestCase):
-    def test_marks_are_persisted_and_reloadable(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state_path = os.path.join(tmp, "state.json")
-            state = media_repair.RepairState(state_path)
-            self.assertFalse(state.is_done("/a.m4a"))
-            state.mark("/a.m4a", "ok")
-            self.assertTrue(state.is_done("/a.m4a"))
-
-            reloaded = media_repair.RepairState(state_path)
-            self.assertTrue(reloaded.is_done("/a.m4a"))
-            with open(state_path, encoding="utf-8") as fh:
-                self.assertEqual(json.load(fh), {"/a.m4a": "ok"})
-
-    def test_corrupt_state_file_starts_clean_instead_of_crashing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state_path = os.path.join(tmp, "state.json")
-            with open(state_path, "w", encoding="utf-8") as fh:
-                fh.write("{not json")
-            state = media_repair.RepairState(state_path)
-            self.assertFalse(state.is_done("/a.m4a"))
-
-
 class RunRepairTests(unittest.TestCase):
-    def test_already_marked_done_is_skipped_entirely(self):
+    """`run_repair` is now a pure report: no `repair_file`, no `RepairState`,
+    no `--write`. Nothing it does can touch a file under MUSIC_DIR or write
+    anything to DATA_DIR — there is no attribute left to patch to prove
+    otherwise, which is itself the guarantee the previous `write=False`
+    dry-run only achieved by convention (and got wrong once already: `ok`
+    marks were written to state.json regardless of the flag)."""
+
+    def test_reports_defective_files_without_touching_anything(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "x.m4a")
             _write(path)
-            state_path = os.path.join(tmp, "state.json")
-            with open(state_path, "w", encoding="utf-8") as fh:
-                json.dump({path: "ok"}, fh)
-
-            with mock.patch.object(media_repair, "needs_repair") as needs, \
-                 mock.patch.object(media_repair, "repair_file") as repair:
-                results = media_repair.run_repair(tmp, state_path=state_path)
-
-        needs.assert_not_called()
-        repair.assert_not_called()
-        self.assertEqual(results["candidates"], 0)
-
-    def test_good_file_is_marked_ok_and_not_repaired(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "x.m4a")
-            _write(path)
-            state_path = os.path.join(tmp, "state.json")
-
-            with mock.patch.object(media_repair, "needs_repair", return_value=(False, None)), \
-                 mock.patch.object(media_repair, "repair_file") as repair:
-                results = media_repair.run_repair(tmp, state_path=state_path)
-
-            repair.assert_not_called()
-            self.assertEqual(results["candidates"], 0)
-            state = media_repair.RepairState(state_path)
-            self.assertEqual(state.data[path], "ok")
-
-    def test_bad_file_is_sent_to_repair_and_recorded_when_write_is_requested(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "x.m4a")
-            _write(path)
-            state_path = os.path.join(tmp, "state.json")
 
             with mock.patch.object(
                 media_repair, "needs_repair", return_value=(True, "unexpected codec(s) ['opus']")
-            ), mock.patch.object(media_repair, "repair_file", return_value=(True, None)):
-                results = media_repair.run_repair(tmp, state_path=state_path, write=True)
+            ):
+                results = media_repair.run_repair(tmp)
 
             self.assertEqual(results["candidates"], 1)
-            self.assertEqual(results["repaired"], 1)
-            self.assertEqual(results["failed"], 0)
-            state = media_repair.RepairState(state_path)
-            self.assertEqual(state.data[path], "fixed")
+            self.assertEqual(results["would_repair"], [{"path": path, "reason": "unexpected codec(s) ['opus']"}])
+            # No state file, no repair artifact — this run wrote nothing at all.
+            self.assertEqual(os.listdir(tmp), ["x.m4a"])
+
+    def test_good_files_produce_an_empty_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "x.m4a")
+            _write(path)
+
+            with mock.patch.object(media_repair, "needs_repair", return_value=(False, None)):
+                results = media_repair.run_repair(tmp)
+
+            self.assertEqual(results["candidates"], 0)
+            self.assertEqual(results["would_repair"], [])
 
     def test_limit_caps_how_many_candidates_are_collected(self):
         with tempfile.TemporaryDirectory() as tmp:
             for i in range(5):
                 _write(os.path.join(tmp, f"x{i}.m4a"))
-            state_path = os.path.join(tmp, "state.json")
 
-            with mock.patch.object(media_repair, "needs_repair", return_value=(True, "bad")), \
-                 mock.patch.object(media_repair, "repair_file", return_value=(True, None)):
-                results = media_repair.run_repair(tmp, limit=2, state_path=state_path, write=True)
+            with mock.patch.object(media_repair, "needs_repair", return_value=(True, "bad")):
+                results = media_repair.run_repair(tmp, limit=2)
 
             self.assertEqual(results["candidates"], 2)
 
-    def test_default_is_dry_run_and_never_calls_repair_file(self):
-        """The default invocation must be safe: `--repair` alone, with no
-        explicit `write=True`, reports what it WOULD do and touches nothing —
-        no re-encode, no replace, no state mutation for the defective files."""
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "x.m4a")
-            _write(path)
-            state_path = os.path.join(tmp, "state.json")
+    def test_repair_file_and_write_mode_no_longer_exist(self):
+        """Regression guard: the destructive path must be gone, not merely
+        unreachable — same discipline this codebase already applied to the
+        removed fragmented-bytes fallback in server.py."""
+        self.assertFalse(hasattr(media_repair, "repair_file"))
+        self.assertFalse(hasattr(media_repair, "RepairState"))
+        import inspect
 
-            with mock.patch.object(
-                media_repair, "needs_repair", return_value=(True, "unexpected codec(s) ['opus']")
-            ), mock.patch.object(media_repair, "repair_file") as repair:
-                results = media_repair.run_repair(tmp, state_path=state_path)
-
-            repair.assert_not_called()
-            self.assertTrue(results["dry_run"])
-            self.assertEqual(results["candidates"], 1)
-            state = media_repair.RepairState(state_path)
-            self.assertFalse(state.is_done(path))
-
-    def test_dry_run_lists_the_candidates_it_would_repair(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "x.m4a")
-            _write(path)
-            state_path = os.path.join(tmp, "state.json")
-
-            with mock.patch.object(
-                media_repair, "needs_repair", return_value=(True, "unexpected codec(s) ['opus']")
-            ), mock.patch.object(media_repair, "repair_file"):
-                results = media_repair.run_repair(tmp, state_path=state_path)
-
-            self.assertEqual(len(results["would_repair"]), 1)
-            self.assertEqual(results["would_repair"][0]["path"], path)
+        self.assertNotIn("write", inspect.signature(media_repair.run_repair).parameters)
 
 
 if __name__ == "__main__":

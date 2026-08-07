@@ -300,6 +300,26 @@ class RealFfmpegValidationTests(unittest.TestCase):
         content_type = server._validate_audio_output("vid", out)
         self.assertIsNone(content_type)
 
+    def test_fast_aac_coder_output_is_still_valid(self):
+        """ROUND 2 BLOQUEANTE fix: `-aac_coder fast` (used by
+        `_aac_transcode_args`, ~34-42% faster than the default `twoloop`
+        search — measured separately, see engram) must still produce a file
+        `_validate_audio_output` accepts. Speed is worthless if it breaks
+        correctness."""
+        opus_src = self._path("opus_for_fast_coder.webm")
+        out = self._path("fast_coder.m4a")
+        self._run(
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+            "-c:a", "libopus", "-b:a", "96k", opus_src, "-loglevel", "error",
+        )
+        self._run(
+            "ffmpeg", "-y", "-i", opus_src, "-map", "0:a:0",
+            "-c:a", "aac", "-aac_coder", "fast", "-b:a", "192k",
+            "-movflags", "+faststart", "-f", "mp4", out, "-loglevel", "error",
+        )
+        content_type = server._validate_audio_output("vid", out, raw_path=opus_src)
+        self.assertEqual(content_type, "audio/mp4")
+
     def test_fully_downloaded_fragmented_source_does_not_false_positive_the_duplicate_ratio(self):
         """SOSPECHA: a fragmented (DASH-style) raw file that only exposed a
         partial/init-segment duration to ffprobe would make a perfectly good

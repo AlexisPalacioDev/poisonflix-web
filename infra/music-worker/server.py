@@ -854,8 +854,26 @@ _STREAM_UA = (
 
 def _resolve_stream_url(video_id, source="auto", force=False):
     """Resolve a directly-playable googlevideo audio URL for a videoId via yt-dlp,
-    cached (STREAM_URL_TTL). Prefers a progressive m4a (clean Content-Type +
-    seekable), falling back to whatever bestaudio yt-dlp finds."""
+    cached (STREAM_URL_TTL). Prefers AAC (avoids the transcode in
+    `_build_stream_cache` entirely — see ROUND 2 BLOQUEANTE notes there),
+    falling back to whatever bestaudio yt-dlp finds when nothing AAC-coded is
+    available.
+
+    The format selector matches by `acodec^=mp4a` (the actual declared codec
+    family, "mp4a.40.2" for AAC-LC) as the FIRST choice, ahead of the
+    `ext=m4a` container-extension match that used to be the only AAC
+    criterion — insisting on the real codec rather than a proxy for it, per
+    the audit's request to reach for AAC more aggressively before falling
+    back to Opus. Verified empirically against real, current YouTube
+    responses (a well-known video plus 5 videos uploaded the same week this
+    was written, both as plain youtube.com and music.youtube.com watch URLs):
+    every one of them exposed itag 140 (`mp4a.40.2`, 130kbps) alongside the
+    Opus itags, and this selector picked it. No opus-only video was found in
+    that sample, so the case this worker's transcode path exists for could
+    not be reproduced live — the selector is hardened defensively, but the
+    transcode path (with its own fast-coder + proportional-timeout fix, see
+    below) remains the real safety net for whatever videos DO lack an AAC
+    format."""
     now = time.monotonic()
     if not force:
         with _stream_lock:
@@ -872,7 +890,7 @@ def _resolve_stream_url(video_id, source="auto", force=False):
             [
                 "yt-dlp",
                 "-f",
-                "bestaudio[ext=m4a]/bestaudio",
+                "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/bestaudio",
                 "-g",
                 "--no-playlist",
                 "--no-warnings",
@@ -927,10 +945,88 @@ def _resolve_stream_url(video_id, source="auto", force=False):
 STREAM_CACHE_DIR = os.path.join(DATA_DIR, "streamcache")
 STREAM_CACHE_MAX_BYTES = 4 * 1024 * 1024 * 1024  # LRU-pruned by mtime
 STREAM_FETCH_MAX_BYTES = 200 * 1024 * 1024  # refuse to buffer an absurd upstream
+# Fallback timeout used only when the source duration is unknown (unreadable
+# probe) — see REMUX_TIMEOUT_PER_SECOND below for the normal, duration-aware
+# path. `-c copy` remuxes never get anywhere near this; it only bounds the
+# rare case where a transcode has to run without knowing how long it will take.
 REMUX_TIMEOUT_S = 120
 # A videoId reaches the filesystem as a path component, so it is constrained to
 # the alphabet YouTube actually uses. Without this a crafted id is a traversal.
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{5,32}$")
+
+# --- Transcode timeout: proportional, not fixed ------------------------------
+# Measured against real ffmpeg 8.0.1 on an i7-1270P (reported by the audit):
+# transcoding a 210s/3:30 track to AAC took 46.0s at 1 CPU core. The native
+# AAC encoder has no threading ("Threading capabilities: none" per
+# `ffmpeg -h encoder=aac`, confirmed in this environment too), so its cost
+# scales with audio DURATION, not file size or core count. At that rate
+# (~0.219s of encode time per second of source audio), a FIXED 120s timeout
+# guarantees eventual failure: any track past ~9 minutes at 1 core hits it,
+# and proportionally less on weaker hardware. Since the fragmented-bytes
+# fallback is gone, that timeout used to kill the track PERMANENTLY — every
+# retry repeats the identical fetch+encode and times out again.
+#
+# REMUX_TIMEOUT_PER_SECOND=1.0 leaves more than 2x headroom over even the
+# audit's own "half speed" estimate for weaker hardware (~0.44s/s), while
+# REMUX_TIMEOUT_FLOOR_S protects very short clips from an unreasonably tight
+# budget and REMUX_TIMEOUT_CEILING_S bounds the worst case for a pathological
+# input rather than blocking a worker thread indefinitely.
+REMUX_TIMEOUT_FLOOR_S = 30.0
+REMUX_TIMEOUT_PER_SECOND = 1.0
+REMUX_TIMEOUT_CEILING_S = 600.0
+
+
+def _remux_timeout_for(duration):
+    """Proportional ffmpeg subprocess timeout for `duration` seconds of
+    source audio. Falls back to the fixed REMUX_TIMEOUT_S when duration is
+    unknown — an unreadable probe is not evidence the track is short, but
+    that only matters for the transcode branch: the `-c copy` remux never
+    gets close to either value."""
+    if not duration or duration <= 0 or not math.isfinite(duration):
+        return REMUX_TIMEOUT_S
+    return min(REMUX_TIMEOUT_CEILING_S, max(REMUX_TIMEOUT_FLOOR_S, duration * REMUX_TIMEOUT_PER_SECOND))
+
+
+# --- Transcode timeout: non-terminal ------------------------------------------
+# A timeout is not proof a track can never be encoded — it may just mean this
+# ATTEMPT hit unlucky system load, or a genuinely slow-worst-case source. A
+# video_id that has timed out once gets a cheaper (lower-bitrate) encode on
+# its NEXT attempt instead of repeating the identical, already-failed path —
+# a real chance of finishing where the first attempt did not, not just a
+# retry of the exact same doomed work. Cleared on the next successful build so
+# a one-off timeout (e.g. transient host load) does not permanently degrade
+# quality for a track that turns out to encode fine most of the time.
+_transcode_timeout_guard = threading.Lock()
+_transcode_timeout_counts = {}  # video_id -> consecutive-timeout count
+_TRANSCODE_TIMEOUT_TRACKED_MAX = 500  # bounded, same spirit as _remux_locks
+
+
+def _record_transcode_timeout(video_id):
+    with _transcode_timeout_guard:
+        if len(_transcode_timeout_counts) > _TRANSCODE_TIMEOUT_TRACKED_MAX:
+            # A burst of distinct timed-out ids is itself a signal something
+            # bigger is wrong (overloaded host); simplest bound is to reset
+            # rather than grow forever or evict arbitrarily.
+            _transcode_timeout_counts.clear()
+        _transcode_timeout_counts[video_id] = _transcode_timeout_counts.get(video_id, 0) + 1
+
+
+def _clear_transcode_timeout(video_id):
+    with _transcode_timeout_guard:
+        _transcode_timeout_counts.pop(video_id, None)
+
+
+def _aac_transcode_args(video_id):
+    """AAC encode args for `video_id`. `-aac_coder fast` is always on:
+    measured (real ffmpeg 8.0.1, this environment) at ~34-42% faster than the
+    default `twoloop` search, with no change to output validity. On top of
+    that, a video_id that has already timed out once gets a lower target
+    bitrate — genuinely cheaper for the encoder to search, not the same
+    settings repeated."""
+    with _transcode_timeout_guard:
+        attempts = _transcode_timeout_counts.get(video_id, 0)
+    bitrate = "128k" if attempts >= 1 else "192k"
+    return ["-c:a", "aac", "-aac_coder", "fast", "-b:a", bitrate]
 
 # --- Output validation (ffprobe) ---------------------------------------------
 # `returncode == 0` from ffmpeg is NOT proof of a playable file. Verified case:
@@ -1326,17 +1422,24 @@ def _build_stream_cache(video_id, source):
             # this worker's own validation rejects — so every one of those plays
             # used to build a doomed cache entry and fail with a 502 that was
             # anything but exceptional. Probe the raw fetch first: only stream-copy
-            # (cheap, ~90ms, no quality loss) when it is already something this
-            # worker can serve; transcode to AAC otherwise. An unreadable probe is
-            # not proof of a bad codec, so it defaults to the cheap copy path and
-            # leaves the final word to `_validate_audio_output` below.
+            # (cheap, ~90ms, no quality loss) when it is CONFIRMED already
+            # something this worker can serve. Anything else — including an
+            # unreadable probe — transcodes: an ambiguous probe is not evidence
+            # the source is safe to copy, and copying a source that turns out
+            # to be Opus produces the same unplayable container this validation
+            # exists to catch, killing a track a transcode would have saved.
             raw_probe = _probe_media(raw)
             raw_codecs = raw_probe["codecs"] if raw_probe else []
-            needs_transcode = raw_codecs and any(
+            needs_transcode = (not raw_codecs) or any(
                 codec not in EXPECTED_AUDIO_CODECS for codec in raw_codecs
             )
             audio_args = (
-                ["-c:a", "aac", "-b:a", "192k"] if needs_transcode else ["-c", "copy"]
+                _aac_transcode_args(video_id) if needs_transcode else ["-c", "copy"]
+            )
+            remux_timeout = (
+                _remux_timeout_for(raw_probe["duration"] if raw_probe else None)
+                if needs_transcode
+                else REMUX_TIMEOUT_S  # a copy remux never gets close to this
             )
             try:
                 proc = subprocess.run(
@@ -1354,8 +1457,17 @@ def _build_stream_cache(video_id, source):
                     ],
                     capture_output=True,
                     text=True,
-                    timeout=REMUX_TIMEOUT_S,
+                    timeout=remux_timeout,
                 )
+            except subprocess.TimeoutExpired:
+                if needs_transcode:
+                    _record_transcode_timeout(video_id)
+                print(
+                    f"[stream] transcode TIMED OUT for {video_id} after {remux_timeout:.0f}s "
+                    f"(needs_transcode={needs_transcode})",
+                    flush=True,
+                )
+                return None
             except subprocess.SubprocessError:
                 return None
             if proc.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
@@ -1379,6 +1491,11 @@ def _build_stream_cache(video_id, source):
                 return None
             os.replace(out, final)
             _write_content_type(final, content_type)
+            # A successful build means this video_id is no longer "known
+            # slow" — a prior timeout may have been one-off system load, and
+            # the NEXT time this track needs a fresh transcode it should get
+            # the normal bitrate again, not stay degraded forever.
+            _clear_transcode_timeout(video_id)
             # Timings on every build: this path has a latency budget the user can
             # feel (it runs before the first byte of audio), and the throttle it
             # works around is invisible from anywhere else.
@@ -1547,7 +1664,15 @@ def _transcode_to_aac(video_id, src, dst):
     cannot simply be rewrapped into an MP4 container and play on iOS, the
     samples themselves must become AAC. Returns True only if the result
     passes `_validate_audio_output` (which also catches the doubled-duration
-    defect by comparing against `src`)."""
+    defect by comparing against `src`).
+
+    Shares the stream cache's fast-coder default and duration-proportional,
+    non-terminal timeout (see the module notes above `REMUX_TIMEOUT_S`): this
+    is a background download-queue job rather than something a user is
+    watching a spinner for, but the underlying AAC-encoder bottleneck is
+    identical, so a fixed timeout here would eventually fail the same way."""
+    src_probe = _probe_media(src)
+    timeout = _remux_timeout_for(src_probe["duration"] if src_probe else None)
     dst_tmp = f"{dst}.tmp.{uuid.uuid4().hex}"
     try:
         proc = subprocess.run(
@@ -1555,15 +1680,26 @@ def _transcode_to_aac(video_id, src, dst):
                 "ffmpeg", "-nostdin", "-v", "error", "-y",
                 "-i", src,
                 "-map", "0:a:0",
-                "-c:a", "aac", "-b:a", "192k",
+                *_aac_transcode_args(video_id),
                 "-movflags", "+faststart",
                 "-f", "mp4",
                 dst_tmp,
             ],
             capture_output=True,
             text=True,
-            timeout=REMUX_TIMEOUT_S,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired as exc:
+        _record_transcode_timeout(video_id)
+        print(
+            f"[download] transcode TIMED OUT for {video_id} after {timeout:.0f}s: {exc!r}",
+            flush=True,
+        )
+        try:
+            os.remove(dst_tmp)
+        except OSError:
+            pass
+        return False
     except subprocess.SubprocessError as exc:
         print(f"[download] transcode subprocess error for {video_id}: {exc!r}", flush=True)
         try:
@@ -1590,6 +1726,7 @@ def _transcode_to_aac(video_id, src, dst):
             pass
         return False
     os.replace(dst_tmp, dst)
+    _clear_transcode_timeout(video_id)
     return True
 
 

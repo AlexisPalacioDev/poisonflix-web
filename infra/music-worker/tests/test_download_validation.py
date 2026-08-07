@@ -150,6 +150,41 @@ class TranscodeToAacTests(unittest.TestCase):
         self.assertFalse(ok)
         replace.assert_not_called()
 
+    def test_uses_fast_aac_coder_and_proportional_timeout(self):
+        """Same slow-encoder problem as the stream cache's transcode branch
+        (ROUND 2 BLOQUEANTE): this call site gets the same fast coder and
+        duration-proportional timeout instead of a fixed one."""
+        ok_proc = subprocess.CompletedProcess(args=["ffmpeg"], returncode=0, stdout="", stderr="")
+        with mock.patch.object(server.subprocess, "run", return_value=ok_proc) as run, \
+             mock.patch.object(server.os.path, "exists", return_value=True), \
+             mock.patch.object(server.os.path, "getsize", return_value=2048), \
+             mock.patch.object(
+                 server, "_probe_media",
+                 return_value={"codecs": ["opus"], "format_name": "webm", "duration": 720.0},
+             ), \
+             mock.patch.object(server, "_validate_audio_output", return_value="audio/mp4"), \
+             mock.patch.object(server.os, "replace"), \
+             mock.patch.object(server.os, "remove"):
+            server._transcode_to_aac("vid1", "/raw.opus", "/final.m4a")
+
+        ffmpeg_cmd = run.call_args.args[0]
+        self.assertIn("-aac_coder", ffmpeg_cmd)
+        self.assertEqual(ffmpeg_cmd[ffmpeg_cmd.index("-aac_coder") + 1], "fast")
+        self.assertEqual(run.call_args.kwargs["timeout"], server.REMUX_TIMEOUT_CEILING_S)
+
+    def test_timeout_expired_is_recorded_and_fails_cleanly(self):
+        server._transcode_timeout_counts.clear()
+        self.addCleanup(server._transcode_timeout_counts.clear)
+        timeout_exc = subprocess.TimeoutExpired(cmd=["ffmpeg"], timeout=600.0)
+        with mock.patch.object(server.subprocess, "run", side_effect=timeout_exc), \
+             mock.patch.object(server, "_probe_media", return_value=None), \
+             mock.patch.object(server.os, "remove") as remove:
+            ok = server._transcode_to_aac("vid-timeout", "/raw.opus", "/final.m4a")
+
+        self.assertFalse(ok)
+        remove.assert_called_once()
+        self.assertEqual(server._transcode_timeout_counts.get("vid-timeout"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
