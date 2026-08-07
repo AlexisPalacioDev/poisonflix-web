@@ -261,4 +261,46 @@ describe('buildFeedRows', () => {
     expect(rowOne?.items.map((i) => i.videoId)).toEqual(['pure-a1']);
     expect(rowTwo?.items.map((i) => i.videoId)).toEqual(['pure-b1']);
   });
+
+  it('leads the mix with tracks no seed row is already showing', () => {
+    // Measured on the running app before this rule existed: "Mix para vos"
+    // shared 6/12, 5/12 and 5/12 tracks with the three "Porque escuchaste"
+    // rows below it, and its FIRST card was the same track as the first card
+    // of the row directly underneath. That is the residue of the reported
+    // "every row shows the same five songs" bug: the per-seed rows were fixed
+    // by the worker's `pure` mode, but the mix still draws from the same
+    // seeds, so it echoed each row's opening track straight back.
+    //
+    // The mix is still allowed to repeat — it is a blend of these same
+    // radios, so forbidding it outright would starve it. It just may not LEAD
+    // with the echo while unseen tracks are sitting behind it.
+    const pureOnly = [
+      [song('a1'), song('a2')],
+      [song('b1'), song('b2')],
+    ];
+    const fullyPersonalised = [
+      [song('a1'), song('a2'), song('fresh-a')],
+      [song('b1'), song('b2'), song('fresh-b')],
+    ];
+
+    const rows = buildFeedRows(seeds, pureOnly, 'history', 4, fullyPersonalised);
+    const mix = rows.find((r) => r.key === 'mix');
+
+    expect(mix?.items.slice(0, 2).map((i) => i.videoId)).toEqual(['fresh-a', 'fresh-b']);
+  });
+
+  it('still fills the mix to the limit when every track is already in a seed row', () => {
+    // The preference must not become an exclusion: a user whose radios return
+    // nothing beyond what the seed rows show would otherwise get a mix with a
+    // couple of tracks in it, or none at all.
+    const both = [
+      [song('a1'), song('a2')],
+      [song('b1'), song('b2')],
+    ];
+
+    const rows = buildFeedRows(seeds, both, 'history', 4, both);
+    const mix = rows.find((r) => r.key === 'mix');
+
+    expect(mix?.items).toHaveLength(4);
+  });
 });

@@ -92,17 +92,59 @@ export function songsOnly(items: MusicResultItem[]): MusicSongResult[] {
  */
 export function interleave(rows: MusicSongResult[][], limit: number): MusicSongResult[] {
   const mixed: MusicSongResult[] = [];
-  const seen = new Set<string>();
+  fillRoundRobin(rows, limit, mixed, new Set<string>());
+  return mixed;
+}
+
+/** One round-robin sweep, appending to `mixed` and marking what it took.
+ *
+ * `skip` holds videoIds this sweep must pass over — they stay eligible for a
+ * later sweep, because being skipped is a preference, not a ban. */
+function fillRoundRobin(
+  rows: MusicSongResult[][],
+  limit: number,
+  mixed: MusicSongResult[],
+  seen: Set<string>,
+  skip?: ReadonlySet<string>,
+): void {
   const depth = Math.max(0, ...rows.map((row) => row.length));
   for (let i = 0; i < depth && mixed.length < limit; i += 1) {
     for (const row of rows) {
       if (mixed.length >= limit) break;
       const song = row[i];
       if (!song || seen.has(song.videoId)) continue;
+      if (skip?.has(song.videoId)) continue;
       seen.add(song.videoId);
       mixed.push(song);
     }
   }
+}
+
+/**
+ * The mix, ordered so it does not open by echoing the rows underneath it.
+ *
+ * Measured on the running app: the mix shared 5-6 of 12 tracks with each
+ * "Porque escuchaste X" row, and its first card was the same track as the
+ * first card of the row directly below. The per-seed rows are built from the
+ * worker's `pure` radios and the mix from the fully-personalised ones, and the
+ * latter is a superset of the former by construction — so drawing both from
+ * the top of the same seed guarantees the echo.
+ *
+ * Two sweeps rather than a filter: the first takes only what no seed row is
+ * showing, the second fills whatever is left over from everything. The mix is
+ * genuinely a blend of these radios, so it may repeat them — a hard exclusion
+ * would have left it with four tracks out of twenty in the measured case. It
+ * just may not LEAD with the repeat while fresher tracks wait behind it.
+ */
+function interleavePreferringUnshown(
+  rows: MusicSongResult[][],
+  limit: number,
+  alreadyShown: ReadonlySet<string>,
+): MusicSongResult[] {
+  const mixed: MusicSongResult[] = [];
+  const seen = new Set<string>();
+  fillRoundRobin(rows, limit, mixed, seen, alreadyShown);
+  fillRoundRobin(rows, limit, mixed, seen);
   return mixed;
 }
 
@@ -157,30 +199,39 @@ export function buildFeedRows(
   mixLimit: number,
   mixPerSeed: MusicSongResult[][] = perSeed,
 ): FeedRow[] {
-  const mix = interleave(mixPerSeed, mixLimit);
-  if (mix.length === 0) return [];
-
   if (source === 'library') {
-    return [{ key: 'library-mix', title: 'Basado en tu biblioteca', items: mix }];
+    const libraryMix = interleave(mixPerSeed, mixLimit);
+    if (libraryMix.length === 0) return [];
+    return [{ key: 'library-mix', title: 'Basado en tu biblioteca', items: libraryMix }];
   }
 
-  const rows: FeedRow[] = [{ key: 'mix', title: 'Mix para vos', items: mix }];
+  // The seed rows are laid out FIRST so the mix knows what they already show
+  // and can lead with something else. They still render below it.
+  //
   // Two seeds occasionally come back with the exact same radio (a shared
   // upstream fallback, or two artists whose "related" set collapses to one
   // list) — this is the mechanism behind the reported "same five songs in
-  // every row" bug, so an identical tracklist is shown once, not twice.
+  // every row" bug, so an identical tracklist is shown once, not twice. A
+  // tracklist dropped here is not counted as shown: nobody sees it.
+  const seedRows: FeedRow[] = [];
   const seenTracklists = new Set<string>();
+  const shownInSeedRows = new Set<string>();
   seeds.forEach((seed, index) => {
     const items = perSeed[index] ?? [];
     if (items.length === 0) return;
     const tracklist = items.map((item) => item.videoId).join('|');
     if (seenTracklists.has(tracklist)) return;
     seenTracklists.add(tracklist);
-    rows.push({
+    items.forEach((item) => shownInSeedRows.add(item.videoId));
+    seedRows.push({
       key: `seed-${seed.id}`,
       title: `Porque escuchaste ${seed.label}`,
       items,
     });
   });
-  return rows;
+
+  const mix = interleavePreferringUnshown(mixPerSeed, mixLimit, shownInSeedRows);
+  if (mix.length === 0) return [];
+
+  return [{ key: 'mix', title: 'Mix para vos', items: mix }, ...seedRows];
 }
