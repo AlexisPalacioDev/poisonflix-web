@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { measureJamClockOffset } from '../../api/jam';
+import { measureJamClockOffset, sendJamTransport } from '../../api/jam';
 import type { JamSnapshot, JamTrack } from '../../api/schemas/jam';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { getSession } from '../../lib/session/store';
@@ -186,6 +186,35 @@ export function useJamPlayback(
       audio.load();
     }
   }, [active, snapshot, audioRef]);
+
+  // Advance the queue when a track runs out.
+  //
+  // Nothing did this, and the room's playhead is a free-running clock that
+  // knows nothing about how long a track is: after a 247-second song it had
+  // counted to 3034 and was still claiming to play, with the queue never
+  // moving. A Jam played one track and then sat there.
+  //
+  // Only the acting leader reports it. Every attached device reaches the end
+  // at roughly the same moment and `next` advances by one per call, so N
+  // devices reporting would skip N-1 tracks.
+  const amLeader = snapshot?.leaderId != null && snapshot.leaderId === ownUserId;
+  const jamId = snapshot?.jam.id ?? null;
+  const atLastTrack =
+    snapshot != null && snapshot.jam.current.index >= snapshot.jam.queue.length - 1;
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !active || !amLeader || !jamId) return;
+    const onEnded = () => {
+      // At the end of the queue there is nowhere to go, and leaving the room
+      // "playing" is what let the clock run away past the track in the first
+      // place.
+      void sendJamTransport(jamId, atLastTrack ? { type: 'pause' } : { type: 'next' }).catch(
+        () => undefined,
+      );
+    };
+    audio.addEventListener('ended', onEnded);
+    return () => audio.removeEventListener('ended', onEnded);
+  }, [active, amLeader, jamId, atLastTrack, audioRef]);
 
   // Follow the playhead: on every snapshot, and on a timer in between, because
   // drift accumulates silently while nothing is being broadcast.
