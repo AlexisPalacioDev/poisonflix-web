@@ -15,6 +15,7 @@ Node style. Download queue is FIFO, concurrency 1.
 import concurrent.futures
 import http.client
 import json
+import math
 import os
 import queue
 import re
@@ -99,10 +100,7 @@ LIB_INDEX_TTL = 30.0
 _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 
 
-# --- iOS fMP4 duration patch (SUPERSEDED — fallback path only) --------------
-# HISTORY, kept because the fallback proxy still calls this and a maintainer
-# needs to know it does NOT fix what its name suggests.
-#
+# --- iOS fMP4 duration patch (REMOVED) --------------------------------------
 # YouTube only serves DASH-fragmented audio (every format is `*_dash`), and those
 # files carry the total duration TWICE: once in `moov/mvhd` and again in the
 # fragment timeline. iOS WebKit ADDS them, so a 3:14 track reports as 6:26 — the
@@ -112,47 +110,19 @@ _VIDEO_IN_PATH = re.compile(r"\[([A-Za-z0-9_-]{6,})\]\.[A-Za-z0-9]+$")
 # padding every demuxer skips, the box KEEPS ITS LENGTH, so no byte offset moves
 # and Range requests stay valid. It was shipped twice, for `sidx` and then for
 # `edts`, and the DEVICE refuted both — with neither box in the delivered bytes
-# an iPhone still reported exactly 2x (322.926s for a 162s track).
-#
-# The real fix is to stop serving a fragmented file at all: see the progressive
-# remux cache below. This patch survives only on the fallback path, where it is
-# free and harmless but is not what makes the duration right.
-_SIDX_SCAN_LIMIT = 1 << 20  # both boxes sit right after moov; never megabytes in.
-
-# Boxes that redundantly restate the total duration. The device log settled which
-# one mattered: with `sidx` already stripped, an iPhone (iOS 18.7 / Safari 26.5)
-# still reported 386.34s for a 193.18s track, so the sum was not coming from the
-# segment index. `mvhd`, `mdhd` AND the edit list all declare the full length, and
-# WebKit adds `mvhd` to the `elst` segment_duration:
+# an iPhone still reported exactly 2x (322.926s for a 162s track):
 #
 #     mvhd 161.469s + elst 161.469s = 322.938s   (Mi Comedia, ~161s of dead air)
 #
-# `edts` is dropped whole rather than editing `elst` inside it. Its only other
-# payload is media_time=1600 — 1600 samples of AAC encoder priming at 44100Hz,
-# about 36ms — so losing it costs an inaudible sliver at the very start of a
-# track, against two minutes of silence at the end.
-_REDUNDANT_DURATION_BOXES = (b"sidx", b"edts")
+# The real fix is to stop serving a fragmented file at all — see the progressive
+# remux cache below. There is no fallback path left for this patch to serve: a
+# remux that fails validation now fails the TRACK (explicit error, client skips
+# it) instead of reviving the fragmented bytes this patch used to paper over.
+# Serving those bytes "because a doubled duration beats no audio" was the bug:
+# a doubled duration means `ended` never fires on time, so the queue never
+# advances and the whole session hangs — one skipped track is recoverable, a
+# hung session is not.
 
-
-def _neutralize_sidx(chunk, stream_offset):
-    """Rewrite redundant duration boxes to `free` within this chunk.
-
-    `stream_offset` is where the chunk starts in the response body. A box header
-    straddling a chunk boundary is deliberately left alone: chunks are 64 KiB and
-    sidx lands within the first few KiB, so the split case does not arise in
-    practice and half-patching a header would corrupt the stream.
-    """
-    if stream_offset > _SIDX_SCAN_LIMIT:
-        return chunk
-    patched = None
-    for tag in _REDUNDANT_DURATION_BOXES:
-        idx = (patched or chunk).find(tag)
-        while idx >= 4:  # need room for the preceding 4-byte size field
-            if patched is None:
-                patched = bytearray(chunk)
-            patched[idx:idx + 4] = b"free"
-            idx = patched.find(tag, idx + 4)
-    return bytes(patched) if patched is not None else chunk
 
 def _load_state():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -923,16 +893,6 @@ def _resolve_stream_url(video_id, source="auto", force=False):
     return url
 
 
-def _open_stream_upstream(url, range_header):
-    """Open the googlevideo URL from the worker's IP (the URL is IP-locked to
-    whoever resolved it), forwarding the client's Range so seeking works."""
-    headers = {"User-Agent": _STREAM_UA}
-    if range_header:
-        headers["Range"] = range_header
-    req = urllib.request.Request(url, headers=headers)
-    return urllib.request.urlopen(req, timeout=20)
-
-
 # --- Progressive remux cache ------------------------------------------------
 # THE fix for "a 3 minute track plays for 5, the last 2 silent".
 #
@@ -971,6 +931,186 @@ REMUX_TIMEOUT_S = 120
 # A videoId reaches the filesystem as a path component, so it is constrained to
 # the alphabet YouTube actually uses. Without this a crafted id is a traversal.
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{5,32}$")
+
+# --- Output validation (ffprobe) ---------------------------------------------
+# `returncode == 0` from ffmpeg is NOT proof of a playable file. Verified case:
+# ffmpeg 8.0.1 happily muxes an Opus stream into an MP4 container and exits 0 —
+# iOS cannot decode that, and nothing before this validation would have noticed.
+# ffprobe's structured report is the ground truth this worker actually reads
+# instead of trusting a process exit code.
+PROBE_TIMEOUT_S = 15
+# Codecs iOS/Safari are known to decode inside the containers this worker
+# produces. Opus is deliberately excluded even though ffmpeg will mux it
+# without complaint — see the module docstring above.
+EXPECTED_AUDIO_CODECS = {"aac", "mp3", "alac"}
+# ffprobe reports an MP4/M4A container's format_name as the combined
+# "mov,mp4,m4a,3gp,3g2,mj2" string, not a single token — matching by substring
+# is the only way that does not need an exact, brittle match.
+EXPECTED_CONTAINER_TOKENS = ("mp4", "m4a", "mov", "mp3")
+CODEC_CONTENT_TYPE = {"aac": "audio/mp4", "alac": "audio/mp4", "mp3": "audio/mpeg"}
+# The device-observed defect is an EXACT 2x (322.926s for a 162s track). This
+# window is deliberately wide enough to catch that class of bug while staying
+# clear of legitimate encoder rounding.
+DUPLICATE_DURATION_RATIO = (1.8, 2.2)
+
+
+def _probe_media(path):
+    """Run ffprobe against `path` and return
+    {"codecs": [str, ...], "format_name": str, "duration": float|None}, or
+    None if ffprobe itself failed or its output could not be parsed.
+
+    `codecs` deliberately lists AUDIO streams only. yt-dlp's
+    `--embed-thumbnail --convert-thumbnail jpg` (see `_run_download`) leaves
+    an mjpeg `covr` atom in every downloaded `.m4a`, which ffprobe reports as
+    a perfectly ordinary second stream (codec_type "video",
+    disposition.attached_pic=1). Verified against real ffmpeg 8.0.1: a plain
+    aac+mjpeg-cover file probes to codecs ["aac", "mjpeg"] if streams aren't
+    filtered by type — an embedded cover is desirable, not a defect, and
+    counting it against EXPECTED_AUDIO_CODECS deleted every download that had
+    one (which is every download, by default). Any stream whose codec_type
+    isn't "audio" is excluded regardless of its codec name or disposition, so
+    this also covers attached images that ffprobe might not flag as
+    attached_pic for whatever reason.
+
+    This is the only place in the worker that inspects what actually landed
+    on disk, rather than trusting a subprocess exit code.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "stream=codec_name,codec_type",
+                "-show_entries", "stream_disposition=attached_pic",
+                "-show_entries", "format=format_name,duration",
+                "-of", "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_S,
+        )
+    except subprocess.SubprocessError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    streams = data.get("streams")
+    streams = streams if isinstance(streams, list) else []
+    codecs = []
+    for s in streams:
+        if not isinstance(s, dict) or not s.get("codec_name"):
+            continue
+        if s.get("codec_type") != "audio":
+            continue  # attached cover art, or any other non-audio stream
+        disposition = s.get("disposition")
+        if isinstance(disposition, dict) and disposition.get("attached_pic"):
+            continue  # belt-and-braces: an "audio"-typed attached pic, if that ever happens
+        codecs.append(s.get("codec_name"))
+    fmt = data.get("format")
+    fmt = fmt if isinstance(fmt, dict) else {}
+    format_name = fmt.get("format_name") or ""
+    try:
+        duration = float(fmt.get("duration"))
+    except (TypeError, ValueError):
+        duration = None
+    return {"codecs": codecs, "format_name": format_name, "duration": duration}
+
+
+def _validate_audio_output(video_id, out_path, raw_path=None, label="remux"):
+    """The real acceptance gate for any audio file this worker is about to
+    serve or keep. Returns the Content-Type to serve it with on success, or
+    None on any failure — logged loudly so a maintainer can see WHY a track
+    was rejected instead of it silently degrading.
+
+    `raw_path`, when given, is probed too so the doubled-duration defect can
+    be caught directly: an output whose OWN reported duration comes out ~2x
+    its source's is exactly the device-observed defect this validation exists
+    to keep off the wire, not merely a nonzero ffmpeg exit code.
+
+    This cross-check assumes `raw_path` is a COMPLETE file, never a partial
+    one — otherwise a fragmented (DASH-style) raw source that only exposed a
+    partial/init-segment duration to ffprobe would make a perfectly good
+    full-length output look ~2x too long and get rejected by mistake. That
+    assumption holds structurally in this codebase: every caller of this
+    function only ever passes a `raw_path` that `_download_chunked` already
+    finished writing (its own contract is "Returns True ONLY when every byte
+    landed"), so ffprobe always sees a complete, seekable file and reports the
+    real total duration rather than a fraction of it — verified directly
+    against a real fragmented mp4 (frag_keyframe+empty_moov, matching the DASH
+    shape this worker downloads) in
+    RealFfmpegValidationTests.test_fully_downloaded_fragmented_source_does_not_false_positive_the_duplicate_ratio.
+    """
+    info = _probe_media(out_path)
+    if not info:
+        print(f"[{label}] rejected {video_id}: ffprobe could not read the output", flush=True)
+        return None
+
+    codecs = info["codecs"]
+    if not codecs or any(codec not in EXPECTED_AUDIO_CODECS for codec in codecs):
+        print(f"[{label}] rejected {video_id}: unexpected codec(s) {codecs!r}", flush=True)
+        return None
+
+    format_name = (info["format_name"] or "").lower()
+    if not any(token in format_name for token in EXPECTED_CONTAINER_TOKENS):
+        print(
+            f"[{label}] rejected {video_id}: unexpected container {info['format_name']!r}",
+            flush=True,
+        )
+        return None
+
+    duration = info["duration"]
+    if duration is None or duration <= 0 or not math.isfinite(duration):
+        print(f"[{label}] rejected {video_id}: non-finite duration {duration!r}", flush=True)
+        return None
+
+    if raw_path is not None:
+        raw_info = _probe_media(raw_path)
+        raw_duration = raw_info["duration"] if raw_info else None
+        if raw_duration and raw_duration > 0:
+            ratio = duration / raw_duration
+            low, high = DUPLICATE_DURATION_RATIO
+            if low <= ratio <= high:
+                print(
+                    f"[{label}] rejected {video_id}: duplicated-duration defect "
+                    f"({duration:.1f}s output vs {raw_duration:.1f}s source, "
+                    f"ratio={ratio:.2f})",
+                    flush=True,
+                )
+                return None
+
+    return CODEC_CONTENT_TYPE.get(codecs[0], "audio/mp4")
+
+
+def _content_type_sidecar_path(cache_path):
+    return cache_path + ".ct"
+
+
+def _write_content_type(cache_path, content_type):
+    """Best-effort: a missing sidecar just falls back to audio/mp4 at serve
+    time (see _read_content_type), so a write failure here never blocks the
+    track that was just successfully validated and cached."""
+    try:
+        tmp = _content_type_sidecar_path(cache_path) + f".tmp.{uuid.uuid4().hex}"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(content_type)
+        os.replace(tmp, _content_type_sidecar_path(cache_path))
+    except OSError:
+        pass
+
+
+def _read_content_type(cache_path):
+    try:
+        with open(_content_type_sidecar_path(cache_path), encoding="utf-8") as fh:
+            value = fh.read().strip()
+        return value or "audio/mp4"
+    except OSError:
+        return "audio/mp4"
 
 _remux_guard = threading.Lock()
 _remux_locks = {}  # videoId -> lock, so a burst of plays builds the cache once
@@ -1163,7 +1303,8 @@ def _download_chunked(url, dest):
 
 def _build_stream_cache(video_id, source):
     """Fetch + remux to a progressive MP4 at the cache path. Returns the path,
-    or None if any step failed (the caller then falls back to proxying)."""
+    or None if any step failed OR the result failed ffprobe validation — the
+    caller then fails the track outright (see server.Handler._stream)."""
     final = _stream_cache_path(video_id)
     lock = _remux_lock_for(video_id)
     with lock:
@@ -1178,6 +1319,25 @@ def _build_stream_cache(video_id, source):
                 print(f"[stream] fetch failed for {video_id}", flush=True)
                 return None
             t_fetch = time.monotonic()
+            # `_resolve_stream_url` asks for `bestaudio[ext=m4a]/bestaudio`; when
+            # nothing m4a-shaped is available it falls back to whatever bestaudio
+            # yt-dlp finds, which is routinely Opus-in-WebM. `-c copy -f mp4` on
+            # that source is exactly the ffmpeg-8.0.1 exit-0-with-opus-in-mp4 case
+            # this worker's own validation rejects — so every one of those plays
+            # used to build a doomed cache entry and fail with a 502 that was
+            # anything but exceptional. Probe the raw fetch first: only stream-copy
+            # (cheap, ~90ms, no quality loss) when it is already something this
+            # worker can serve; transcode to AAC otherwise. An unreadable probe is
+            # not proof of a bad codec, so it defaults to the cheap copy path and
+            # leaves the final word to `_validate_audio_output` below.
+            raw_probe = _probe_media(raw)
+            raw_codecs = raw_probe["codecs"] if raw_probe else []
+            needs_transcode = raw_codecs and any(
+                codec not in EXPECTED_AUDIO_CODECS for codec in raw_codecs
+            )
+            audio_args = (
+                ["-c:a", "aac", "-b:a", "192k"] if needs_transcode else ["-c", "copy"]
+            )
             try:
                 proc = subprocess.run(
                     [
@@ -1187,7 +1347,7 @@ def _build_stream_cache(video_id, source):
                         "-y",
                         "-i", raw,
                         "-map", "0:a:0",
-                        "-c", "copy",
+                        *audio_args,
                         "-movflags", "+faststart",
                         "-f", "mp4",
                         out,
@@ -1199,20 +1359,32 @@ def _build_stream_cache(video_id, source):
             except subprocess.SubprocessError:
                 return None
             if proc.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
-                # Loud on purpose: a silent failure here degrades every play on
-                # this track back to the fragmented bytes, invisibly.
+                # Loud on purpose: a silent failure here used to fall back to
+                # the fragmented upstream. It no longer does — see the module
+                # docstring on why that fallback was itself the bug — so a
+                # failure here now fails the track outright.
                 print(
                     f"[stream] remux failed for {video_id}: "
                     f"rc={proc.returncode} {(proc.stderr or '').strip()[:300]}",
                     flush=True,
                 )
                 return None
+            # `returncode == 0` is not proof of a playable file (ffmpeg 8.0.1
+            # exits 0 after muxing Opus into an MP4 container). ffprobe against
+            # both the output AND the raw fetch is what actually decides
+            # whether this build is safe to serve, including the doubled-
+            # duration defect this whole cache exists to eliminate.
+            content_type = _validate_audio_output(video_id, out, raw_path=raw, label="stream")
+            if content_type is None:
+                return None
             os.replace(out, final)
+            _write_content_type(final, content_type)
             # Timings on every build: this path has a latency budget the user can
             # feel (it runs before the first byte of audio), and the throttle it
             # works around is invisible from anywhere else.
             print(
                 f"[stream] built {video_id} bytes={os.path.getsize(final)} "
+                f"content_type={content_type} "
                 f"fetch={t_fetch - t0:.2f}s remux={time.monotonic() - t_fetch:.2f}s",
                 flush=True,
             )
@@ -1366,16 +1538,100 @@ def _run_download(job):
         err = tail[-1] if tail else f"yt-dlp exit {proc.returncode}"
         return None, f"yt-dlp exit {proc.returncode}: {err}"[:500]
 
+    return _finalize_download_output(video_id, out_path)
+
+
+def _transcode_to_aac(video_id, src, dst):
+    """Re-encode `src` into a validated AAC `.m4a` at `dst`. This is a REAL
+    encode, unlike the stream cache's `-c copy` remux: a raw Opus extraction
+    cannot simply be rewrapped into an MP4 container and play on iOS, the
+    samples themselves must become AAC. Returns True only if the result
+    passes `_validate_audio_output` (which also catches the doubled-duration
+    defect by comparing against `src`)."""
+    dst_tmp = f"{dst}.tmp.{uuid.uuid4().hex}"
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-v", "error", "-y",
+                "-i", src,
+                "-map", "0:a:0",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-f", "mp4",
+                dst_tmp,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=REMUX_TIMEOUT_S,
+        )
+    except subprocess.SubprocessError as exc:
+        print(f"[download] transcode subprocess error for {video_id}: {exc!r}", flush=True)
+        try:
+            os.remove(dst_tmp)
+        except OSError:
+            pass
+        return False
+    if proc.returncode != 0 or not os.path.exists(dst_tmp) or os.path.getsize(dst_tmp) == 0:
+        print(
+            f"[download] transcode failed for {video_id}: "
+            f"rc={proc.returncode} {(proc.stderr or '').strip()[:300]}",
+            flush=True,
+        )
+        try:
+            os.remove(dst_tmp)
+        except OSError:
+            pass
+        return False
+    content_type = _validate_audio_output(video_id, dst_tmp, raw_path=src, label="download")
+    if content_type is None:
+        try:
+            os.remove(dst_tmp)
+        except OSError:
+            pass
+        return False
+    os.replace(dst_tmp, dst)
+    return True
+
+
+def _finalize_download_output(video_id, out_path):
+    """Ensure `out_path` holds a validated audio file after yt-dlp's
+    postprocessing. Handles yt-dlp landing at a slightly different extension,
+    and closes the Opus rename hole: a bare `.opus` extraction is NOT
+    re-encoded by a rename, so it goes through a real transcode instead of
+    `shutil.move`. Every other candidate is validated the same way the stream
+    cache validates its own remux, so `returncode == 0` from yt-dlp is never
+    trusted on its own either. Returns (out_path, None) on success or
+    (None, error_message) otherwise."""
     if not os.path.exists(out_path):
         # Postprocessing may have produced a slightly different ext — recover it.
         base = out_path[: -len(".m4a")]
-        for cand in (base + ".m4a", base + ".mp4", base + ".opus"):
+        recovered = None
+        for ext in (".m4a", ".mp4", ".opus"):
+            cand = base + ext
             if os.path.exists(cand):
-                if cand != out_path:
-                    shutil.move(cand, out_path)
+                recovered = cand
                 break
-        else:
+        if recovered is None:
             return None, "download reported success but no output file found"
+        if recovered.endswith(".opus"):
+            ok = _transcode_to_aac(video_id, recovered, out_path)
+            try:
+                os.remove(recovered)
+            except OSError:
+                pass
+            if not ok:
+                return None, "opus recovery: transcode to AAC failed validation"
+            return out_path, None  # _transcode_to_aac already validated the result
+        if recovered != out_path:
+            shutil.move(recovered, out_path)
+
+    content_type = _validate_audio_output(video_id, out_path, label="download")
+    if content_type is None:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        return None, "downloaded file failed audio validation"
     return out_path, None
 
 
@@ -2217,14 +2473,15 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return False
         try:
-            return self._serve_open_stream(handle, range_header)
+            content_type = _read_content_type(path)
+            return self._serve_open_stream(handle, range_header, content_type)
         finally:
             try:
                 handle.close()
             except OSError:
                 pass
 
-    def _serve_open_stream(self, handle, range_header):
+    def _serve_open_stream(self, handle, range_header, content_type="audio/mp4"):
         try:
             size = os.fstat(handle.fileno()).st_size
         except OSError:
@@ -2261,7 +2518,7 @@ class Handler(BaseHTTPRequestHandler):
                 status = 206
         length = end - start + 1
         self.send_response(status)
-        self.send_header("Content-Type", "audio/mp4")
+        self.send_header("Content-Type", content_type)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
         if status == 206:
@@ -2289,9 +2546,18 @@ class Handler(BaseHTTPRequestHandler):
     def _stream(self, qs):
         """Instant-play: serve the videoId's audio WITHOUT a prior download.
 
-        Served from the progressive remux cache (see _build_stream_cache) so an
-        iPhone gets a file with exactly one declared duration; only if building
-        that fails does it fall back to range-proxying the fragmented upstream."""
+        Served EXCLUSIVELY from the validated progressive remux cache (see
+        _build_stream_cache) so an iPhone gets a file with exactly one
+        declared duration. There is NO fallback to proxying the raw
+        fragmented upstream: that fragmented file IS the doubled-duration
+        defect (iOS WebKit sums `mvhd` + `elst`), so serving it "because a
+        doubled duration beats no audio" had it backwards — a doubled
+        duration means `ended` never fires on time, the queue never advances,
+        and the WHOLE SESSION hangs instead of just this track. A remux that
+        fails to build or fails ffprobe validation now fails the track with
+        an explicit error instead, which the client's `onError` already knows
+        how to skip past. One skipped track is recoverable; a hung session is
+        not."""
         video_id = (qs.get("videoId", [""])[0]).strip()
         if not video_id:
             return self._send(400, {"error": "videoId required"})
@@ -2307,9 +2573,8 @@ class Handler(BaseHTTPRequestHandler):
             if not (os.path.exists(cached) and os.path.getsize(cached) > 0):
                 cached = _build_stream_cache(video_id, source)
         except Exception as exc:  # noqa: BLE001
-            # Nothing raised out of the build is worth killing the request for —
-            # the proxy below still plays the track. Loud, because a build that
-            # always throws would otherwise look like a permanently slow track.
+            # Loud, because a build that always throws would otherwise look
+            # like a permanently slow track instead of a failed one.
             print(f"[stream] build raised for {video_id}: {exc!r}", flush=True)
             cached = None
         if cached:
@@ -2320,66 +2585,12 @@ class Handler(BaseHTTPRequestHandler):
             if self._serve_cached_stream(cached, range_header):
                 return
 
-        # Fallback: the remux failed (upstream gone, ffmpeg error). Proxy the
-        # fragmented bytes as before — a doubled duration beats no audio.
-        # The _neutralize_sidx call further down does NOT repair that duration:
-        # it was refuted on-device twice (see the remux comment above). It is
-        # kept only because it is free and harmless, not because it works.
-        # Resolve (cached) then proxy. A stale/expired URL comes back 403/410 from
-        # googlevideo — force a fresh resolve once before giving up.
-        upstream = None
-        for attempt in range(2):
-            url = _resolve_stream_url(video_id, source, force=(attempt == 1))
-            if not url:
-                return self._send(502, {"error": "resolve_failed"})
-            try:
-                upstream = _open_stream_upstream(url, range_header)
-                break
-            except urllib.error.HTTPError as exc:
-                if exc.code in (403, 410) and attempt == 0:
-                    continue  # expired signed URL — re-resolve and retry
-                return self._send(502, {"error": "upstream_error", "code": exc.code})
-            except (urllib.error.URLError, OSError):
-                return self._send(502, {"error": "upstream_unreachable"})
-        if upstream is None:
-            return self._send(502, {"error": "resolve_failed"})
-
-        try:
-            self.send_response(getattr(upstream, "status", 200) or 200)
-            for header in ("Content-Type", "Content-Length", "Accept-Ranges", "Content-Range"):
-                value = upstream.headers.get(header)
-                if value:
-                    self.send_header(header, value)
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            # Only patch when serving from the start of the resource. A ranged
-            # request that begins mid-file cannot contain the sidx header, and
-            # rewriting bytes at an unknown offset would corrupt the stream.
-            sent = 0
-            patch = not upstream.headers.get("Content-Range") or str(
-                upstream.headers.get("Content-Range", "")
-            ).startswith("bytes 0-")
-            while True:
-                chunk = upstream.read(65536)
-                if not chunk:
-                    break
-                if patch:
-                    chunk = _neutralize_sidx(chunk, sent)
-                sent += len(chunk)
-                self.wfile.write(chunk)
-        except (BrokenPipeError, ConnectionResetError):
-            pass  # client seeked or closed the tab — normal for audio playback
-        except (http.client.HTTPException, urllib.error.URLError, OSError):
-            # A truncated upstream raises IncompleteRead, which is NOT an
-            # OSError. Uncaught it escapes do_GET and socketserver tears the
-            # socket down with a traceback; the headers are already sent, so the
-            # honest end is to drop this connection and stop.
-            self.close_connection = True
-        finally:
-            try:
-                upstream.close()
-            except Exception:  # noqa: BLE001
-                pass
+        # The remux failed (fetch, ffmpeg, or ffprobe validation) or the
+        # cached file vanished under a concurrent prune. Fail the track
+        # explicitly instead of proxying the fragmented upstream — see the
+        # docstring above for why that used to make things worse, not better.
+        print(f"[stream] no playable cache for {video_id}, failing the track", flush=True)
+        return self._send(502, {"error": "remux_failed", "videoId": video_id})
 
     def log_message(self, *args):  # quieter default logging
         pass
