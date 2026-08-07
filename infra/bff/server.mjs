@@ -27,6 +27,22 @@ import {
   deleteUser,
   importToJellyseerr,
 } from './identity.mjs';
+import {
+  attach as jamAttach,
+  currentSnapshot as jamSnapshot,
+  createJam,
+  listJamsForUser,
+  inviteMembers,
+  respondToInvite,
+  leaveJam,
+  removeMember,
+  setRole,
+  transferOwnership,
+  setMode,
+  addTracks,
+  removeTrack,
+  transport,
+} from './jam.mjs';
 
 // `||`, not destructuring defaults. A default only applies to `undefined`, and
 // docker-compose.override.yml interpolates `${JELLYSEERR_URL}` with no `:-`
@@ -880,6 +896,242 @@ async function handleMusic(req, res, subPath, search, user) {
 }
 
 // ---------------------------------------------------------------------------
+// Jam — listening together
+// ---------------------------------------------------------------------------
+
+// Every write returns a reason string rather than throwing, so the mapping to
+// status codes lives here once instead of in a dozen handlers.
+const JAM_STATUS = {
+  not_found: 404,
+  not_member: 403,
+  not_invited: 403,
+  forbidden: 403,
+  owner_cannot_leave: 409,
+  already_member: 409,
+  jam_full: 409,
+  queue_full: 409,
+  end_of_queue: 409,
+  start_of_queue: 409,
+  bad_role: 400,
+  bad_mode: 400,
+  bad_index: 400,
+  bad_position: 400,
+  bad_command: 400,
+};
+
+function sendJam(res, outcome) {
+  if (outcome.ok) return send(res, 200, { jam: outcome.jam });
+  return send(res, JAM_STATUS[outcome.reason] ?? 400, { error: outcome.reason });
+}
+
+/**
+ * The minimal user directory a Jam invite needs: id and display name, nothing
+ * else.
+ *
+ * Deliberately NOT `listUsers()` from identity.mjs, which is the admin list
+ * and comes from Jellyfin. Two reasons. It carries `isAdmin`, `hasPassword`
+ * and `lastActivityDate`, none of which a peer should learn from a search box;
+ * and its ids are Jellyfin GUIDs, while `resolveUser` authenticates Jellyseerr
+ * numeric ids. Keying membership off the wrong one would produce a room whose
+ * members can never be recognised as themselves.
+ *
+ * Jellyseerr's own list is queried with the CALLER's cookie, so the directory
+ * can never show more than that person is already entitled to see.
+ */
+async function jamDirectory(req, excludeUserId) {
+  const upstream = await fetch(`${JELLYSEERR_URL}/api/v1/user?take=200`, {
+    headers: { cookie: req.headers.cookie || '', accept: 'application/json' },
+    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+  });
+  if (!upstream.ok) return null;
+  const body = await upstream.json();
+  return (body?.results ?? [])
+    .map((u) => ({
+      userId: String(u.id),
+      name: String(u.displayName || u.username || u.email || u.id),
+    }))
+    // No point offering to invite yourself to your own room.
+    .filter((u) => u.userId !== String(excludeUserId));
+}
+
+async function handleJamUsers(req, res, user) {
+  // Enumerating everyone's name used to require the admin bit
+  // (`/bff/admin/users`), so handing it to every logged-in account would be a
+  // new capability granted as a side effect of shipping Jam. Owning a room is
+  // the smallest thing that makes the directory necessary, and creating one
+  // needs no directory at all — so the flow still works and a user who never
+  // starts a Jam gains nothing.
+  const mine = await listJamsForUser(String(user.id));
+  if (!mine.some((entry) => entry.jam.ownerId === String(user.id))) {
+    return send(res, 403, { error: 'forbidden' });
+  }
+  const users = await jamDirectory(req, user.id);
+  if (!users) return send(res, 502, { error: 'directory_unavailable' });
+  return send(res, 200, { users });
+}
+
+/**
+ * The live channel. The connection IS the presence: opening it puts you in the
+ * room, closing it takes you out, and that is what makes leadership fall out
+ * of who is connected rather than needing to be tracked separately.
+ *
+ * SSE rather than a WebSocket because this server has no dependencies and
+ * intends to keep it that way — `text/event-stream` is plain HTTP, and the
+ * upstream direction is an ordinary POST, which doubles as the round trip a
+ * follower measures its clock offset with.
+ */
+async function handleJamStream(req, res, jamId, user) {
+  const snapshot = await jamSnapshot(jamId);
+  if (!snapshot) return send(res, 404, { error: 'not_found' });
+  const userId = String(user.id);
+  const member = snapshot.jam.members.find((m) => m.userId === userId);
+  // A pending invitee may watch the room they were invited to; a stranger may
+  // not learn it exists.
+  if (!member) return send(res, 403, { error: 'forbidden' });
+
+  // Only an accepted member counts as being in the room — otherwise opening
+  // an invitation would make the invitee eligible to lead a jam they have not
+  // joined. Attach BEFORE the headers go out: refusing after a 200 has been
+  // written leaves the client believing it has a live stream.
+  let detach = () => {};
+  if (member.acceptedAt !== null) {
+    const attached = jamAttach(jamId, userId, res);
+    if (!attached) return send(res, 429, { error: 'too_many_streams' });
+    detach = attached;
+  }
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    // Caddy does not buffer by default, but a future proxy in front of it
+    // would, and a buffered event stream is an event stream that never
+    // arrives.
+    'x-accel-buffering': 'no',
+  });
+
+  // Send the room before anything changes, so the client renders immediately
+  // instead of waiting for someone else to press a button.
+  res.write(`data: ${JSON.stringify(await jamSnapshot(jamId))}\n\n`);
+
+  // Comment-only heartbeat: keeps intermediaries from reaping an idle
+  // connection, and costs nothing to parse on the client.
+  const beat = setInterval(() => {
+    try {
+      res.write(': beat\n\n');
+    } catch {
+      /* the close handler cleans up */
+    }
+  }, 20_000);
+
+  const cleanUp = () => {
+    clearInterval(beat);
+    detach();
+  };
+  req.on('close', cleanUp);
+  req.on('error', cleanUp);
+}
+
+async function handleJam(req, res, subPath, url, user) {
+  const userId = String(user.id);
+
+  // The clock a follower measures its offset against. Deliberately the
+  // cheapest possible handler: the round trip is the measurement, so anything
+  // slow here becomes error in someone's playhead.
+  if (subPath === '/time' && req.method === 'GET') {
+    return send(res, 200, { now: Date.now() });
+  }
+
+  if (subPath === '/users' && req.method === 'GET') {
+    return await handleJamUsers(req, res, user);
+  }
+
+  if (subPath === '' || subPath === '/') {
+    if (req.method === 'GET') return send(res, 200, { jams: await listJamsForUser(userId) });
+    if (req.method === 'POST') {
+      const body = await parseJson(req);
+      if (body === 'too_large') return send(res, 413, { error: 'body_too_large' });
+      if (!body) return send(res, 400, { error: 'bad_json' });
+      // The display name comes from the session rather than the request: a
+      // client that could name itself could impersonate someone in the member
+      // list.
+      const me = await meDisplayName(req, userId);
+      return sendJam(res, await createJam({
+        ownerId: userId,
+        ownerName: me,
+        name: body.name,
+        mode: body.mode,
+      }));
+    }
+    return send(res, 405, { error: 'method_not_allowed' });
+  }
+
+  const stream = subPath.match(/^\/([^/]+)\/stream$/);
+  if (stream && req.method === 'GET') {
+    return await handleJamStream(req, res, stream[1], user);
+  }
+
+  const action = subPath.match(/^\/([^/]+)\/([a-z-]+)$/);
+  if (!action || req.method !== 'POST') return send(res, 404, { error: 'not found' });
+  const [, jamId, verb] = action;
+
+  const body = await parseJson(req);
+  if (body === 'too_large') return send(res, 413, { error: 'body_too_large' });
+  if (!body) return send(res, 400, { error: 'bad_json' });
+
+  switch (verb) {
+    case 'invite': {
+      // Names come from the directory, never from the request. `createJam`
+      // already refuses to let a client name its own creator; letting one name
+      // OTHER people would be worse — whoever invites would control how a
+      // member is labelled inside that room for good.
+      const wanted = (Array.isArray(body.users) ? body.users : []).map((u) => String(u.userId));
+      const directory = await jamDirectory(req, userId);
+      if (!directory) return send(res, 502, { error: 'directory_unavailable' });
+      const known = new Map(directory.map((u) => [u.userId, u.name]));
+      const resolved = wanted.filter((id) => known.has(id)).map((id) => ({ userId: id, name: known.get(id) }));
+      return sendJam(res, await inviteMembers(jamId, userId, resolved));
+    }
+    case 'kick':
+      return sendJam(res, await removeMember(jamId, userId, String(body.userId)));
+    case 'respond':
+      return sendJam(res, await respondToInvite(jamId, userId, body.accept === true));
+    case 'leave':
+      return sendJam(res, await leaveJam(jamId, userId));
+    case 'role':
+      return sendJam(res, await setRole(jamId, userId, String(body.userId), body.role));
+    case 'owner':
+      return sendJam(res, await transferOwnership(jamId, userId, String(body.userId)));
+    case 'mode':
+      return sendJam(res, await setMode(jamId, userId, body.mode));
+    case 'queue':
+      return sendJam(res, await addTracks(jamId, userId, Array.isArray(body.tracks) ? body.tracks : []));
+    case 'unqueue':
+      return sendJam(res, await removeTrack(jamId, userId, body.index));
+    case 'transport':
+      return sendJam(res, await transport(jamId, userId, body));
+    default:
+      return send(res, 404, { error: 'not found' });
+  }
+}
+
+/** The caller's display name, straight from Jellyseerr, so a member list can
+ *  never be seeded with a name the client made up. */
+async function meDisplayName(req, fallback) {
+  try {
+    const upstream = await fetch(`${JELLYSEERR_URL}/api/v1/auth/me`, {
+      headers: { cookie: req.headers.cookie || '', accept: 'application/json' },
+      signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+    });
+    if (!upstream.ok) return fallback;
+    const body = await upstream.json();
+    return String(body?.displayName || body?.username || fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -980,6 +1232,10 @@ const server = createServer(async (req, res) => {
 
     if (path.startsWith('/bff/music/')) {
       return await handleMusic(req, res, path.slice('/bff/music'.length), url.search, user);
+    }
+
+    if (path === '/bff/jam' || path.startsWith('/bff/jam/')) {
+      return await handleJam(req, res, path.slice('/bff/jam'.length), url, user);
     }
 
     const seg = path.split('/'); // ['', 'radarr', 'api', ...]
