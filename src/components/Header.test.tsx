@@ -399,11 +399,17 @@ describe('Header logout ("Cerrar sesión")', () => {
 
     // Server-side logout hit through apiFetch: POST to the Jellyseerr logout
     // endpoint with the same-origin cookie included so `connect.sid` is cleared.
+    // Found by URL rather than by position: the header also mounts the Jam
+    // invitation bell, which polls /bff/jam, so the logout is no longer the
+    // first request the header makes. What matters is that it is made, with
+    // the cookie, as a POST — not where it lands in the list.
     expect(fetchSpy).toHaveBeenCalled();
-    const [calledUrl, init] = fetchSpy.mock.calls[0];
-    expect(String(calledUrl)).toContain('/jellyseerr/api/v1/auth/logout');
-    expect(init?.method).toBe('POST');
-    expect(init?.credentials).toBe('include');
+    const logoutCall = fetchSpy.mock.calls.find(([url]) =>
+      String(url).includes('/jellyseerr/api/v1/auth/logout'),
+    );
+    expect(logoutCall, 'the server-side logout was never requested').toBeDefined();
+    expect(logoutCall?.[1]?.method).toBe('POST');
+    expect(logoutCall?.[1]?.credentials).toBe('include');
 
     // Local teardown + redirect to the login screen.
     await waitFor(() => expect(getSession()).toBeNull());

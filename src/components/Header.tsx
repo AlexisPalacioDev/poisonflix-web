@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { JamNotifications } from '../features/jam/JamNotifications';
 import { AdultPinOverlay } from './AdultPinOverlay';
 import { OverlayShell } from './overlay/OverlayShell';
 import { PoisonMark } from '../features/onboarding/PoisonMark';
@@ -40,7 +41,14 @@ export function Header() {
   // Whether we're inside the music section. When true the "Música" control
   // flips into a "back to movies/series" (Netflix mode) affordance so the user
   // always has a way out of /musica* - the button they were missing.
-  const inMusic = location.pathname === '/musica' || location.pathname.startsWith('/musica/');
+  // /jam belongs to the Música world: it is listening together, it borrows
+  // that feature's green, and a screen that switches the logo back to the gold
+  // PoisonFlix mark announces itself as somewhere else entirely.
+  const inMusic =
+    location.pathname === '/musica' ||
+    location.pathname.startsWith('/musica/') ||
+    location.pathname === '/jam' ||
+    location.pathname.startsWith('/jam/');
 
   // Below the now-playing bar's breakpoint (899px) the row of nav controls no
   // longer fits, so they collapse behind a hamburger menu. Reuses the shared
@@ -317,6 +325,10 @@ export function Header() {
 
       {isMobile ? (
         <div className="pf-header__menu">
+          {/* Outside the hamburger on purpose. A notification hidden behind a
+              menu notifies nobody, and an invitation to listen together is
+              worth about ten minutes before it stops mattering. */}
+          <JamNotifications />
           <button
             ref={hamburgerRef}
             type="button"
@@ -359,7 +371,10 @@ export function Header() {
           )}
         </div>
       ) : (
-        <div className="pf-header__actions">{renderControls()}</div>
+        <div className="pf-header__actions">
+          <JamNotifications />
+          {renderControls()}
+        </div>
       )}
 
       <AdultPinOverlay open={pinOpen} onClose={handleAdultPinClose} />
