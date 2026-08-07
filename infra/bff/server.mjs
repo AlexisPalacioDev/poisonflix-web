@@ -7,6 +7,8 @@
 // Zero runtime dependencies: Node's built-in http + global fetch (Node >= 18).
 
 import { createServer } from 'node:http';
+import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import {
   createInvite,
@@ -45,6 +47,16 @@ const PROWLARR_API_KEY = env.PROWLARR_API_KEY || '';
 // Reachable only from the BFF; every call below is gated on an authenticated
 // Jellyseerr session, same as the rest of the BFF-fronted backends.
 const MUSIC_WORKER_URL = env.MUSIC_WORKER_URL || 'http://music-worker:8790';
+// Where /bff/client-log's reports are durably mirrored — see `persistClientLog`
+// below. Same env-override convention as invites.mjs's `INVITES_FILE`.
+const CLIENT_LOG_FILE = env.CLIENT_LOG_FILE || '/data/client-log.ndjson';
+// This is a debugging aid, not an audit trail — keep it small. One rotated
+// backup is kept (`${CLIENT_LOG_FILE}.1`), so worst case on disk is ~2x this.
+const CLIENT_LOG_MAX_BYTES = 1_000_000;
+// Per-entry ceiling, deliberately far below the rotation cap above. A report is
+// a scope, a message and a small detail object; anything larger is a bug or an
+// abuse of a route that takes no authentication.
+const CLIENT_LOG_MAX_ENTRY_BYTES = 4_000;
 
 // ---- Upstream timeouts ----
 // Undici has NO total-request timeout by default, so a HUNG upstream (as opposed
@@ -132,6 +144,74 @@ function logError(scope, err, detail) {
   console.error(
     JSON.stringify({ at: new Date().toISOString(), level: 'error', scope, message, ...detail }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Client-side diagnostics persistence — bounded, rotated NDJSON file.
+//
+// `docker compose logs bff` is NOT durable: it rotates/truncates on its own
+// schedule and a redeploy clears the buffer entirely. That is exactly why the
+// duration-defect telemetry (`music.player.durationMismatch`) that was added
+// for this bug never left a trace anyone could read — the report reached
+// stdout, but nothing kept it. Client reports now also land in a small file
+// under /data (same volume invites.mjs already persists to), one JSON object
+// per line, so a report survives both container restarts and log rotation.
+//
+// Bounded and rotated so a client stuck logging in a loop cannot grow this
+// file without limit or take the BFF down with it: once the current file
+// reaches CLIENT_LOG_MAX_BYTES it is rotated to a single `.1` backup (the
+// previous backup, if any, is overwritten) and a fresh file is started.
+// ---------------------------------------------------------------------------
+
+/** Serializes rotate+append so two concurrent client-log POSTs can't race. */
+let clientLogQueue = Promise.resolve();
+function withClientLogLock(fn) {
+  const run = clientLogQueue.then(fn, fn);
+  // Keep the chain alive but swallow errors so one failure doesn't poison it.
+  clientLogQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * Append one NDJSON line, rotating the file first if it has grown past the
+ * cap. Never throws and never rejects — a diagnostic write must not fail (or
+ * slow down) the request it is diagnosing, let alone crash the process.
+ */
+function persistClientLog(entry) {
+  return withClientLogLock(async () => {
+    // One entry must never be able to age out the file on its own. The route
+    // shares the global MAX_BODY_BYTES (1 MB), which equals the rotation cap —
+    // so without this a single POST rotates and a second one overwrites the
+    // backup, erasing every report. That is the opposite of what this file is
+    // for: it exists because a defect only reproduces on the owner's phone.
+    // At this cap it takes thousands of entries to rotate, which is a real
+    // history rather than a two-request wipe.
+    let line = JSON.stringify(entry);
+    if (line.length > CLIENT_LOG_MAX_ENTRY_BYTES) {
+      line = JSON.stringify({
+        at: entry.at,
+        scope: entry.scope,
+        message: String(entry.message ?? '').slice(0, 500),
+        truncated: line.length,
+      });
+    }
+
+    await mkdir(dirname(CLIENT_LOG_FILE), { recursive: true });
+    try {
+      const { size } = await stat(CLIENT_LOG_FILE);
+      if (size >= CLIENT_LOG_MAX_BYTES) {
+        await rename(CLIENT_LOG_FILE, `${CLIENT_LOG_FILE}.1`); // overwrites prior backup
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    await appendFile(CLIENT_LOG_FILE, `${line}\n`, 'utf8');
+  }).catch((err) => {
+    logError('client.persist', err, {});
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -855,11 +935,16 @@ const server = createServer(async (req, res) => {
     if (path === '/bff/client-log' && req.method === 'POST') {
       const body = await parseJson(req);
       if (body === 'too_large') return sendTooLarge(res);
-      logError('client', body?.scope || 'unknown', {
+      const scope = body?.scope || 'unknown';
+      const detail = {
         message: body?.message ?? null,
         detail: body?.detail ?? null,
         ua: String(req.headers['user-agent'] || '').slice(0, 120),
-      });
+      };
+      logError('client', scope, detail); // stdout — greppable via `docker logs poisonflix-bff | grep '"scope":"client"'`
+      // Fire-and-forget: `persistClientLog` never throws/rejects, and a public
+      // diagnostics endpoint must not make the caller wait on disk I/O.
+      void persistClientLog({ at: new Date().toISOString(), scope, ...detail });
       return send(res, 204, '');
     }
 
