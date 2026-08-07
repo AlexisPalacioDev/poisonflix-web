@@ -44,8 +44,10 @@ export interface ThumbButtonsProps {
   artist?: string | null;
   thumbnailUrl?: string | null;
   /** `menu` sits inside the ⋮ list; `bar` sits in the desktop NowPlayingBar;
-   * `full` sits in the mobile full-screen player. */
-  variant?: 'menu' | 'bar' | 'full';
+   * `full` sits in the mobile full-screen player; `art` overlays the cover on
+   * a rail card, where only the thumb-up is shown — a rejection needs the
+   * deliberation of opening a menu, a like does not. */
+  variant?: 'menu' | 'bar' | 'full' | 'art';
 }
 
 export function ThumbButtons({
@@ -76,17 +78,21 @@ export function ThumbButtons({
         <ThumbUpGlyph filled={rating === 1} />
         {variant === 'menu' && <span>Me gusta</span>}
       </button>
-      <button
-        type="button"
-        className={`pf-thumbs__btn${rating === -1 ? ' pf-thumbs__btn--off' : ''}`}
-        onClick={() => toggle(-1)}
-        aria-pressed={rating === -1}
-        aria-label={`No me gusta ${title}`}
-        title="No me gusta"
-      >
-        <ThumbDownGlyph filled={rating === -1} />
-        {variant === 'menu' && <span>No me gusta</span>}
-      </button>
+      {/* No thumb-down on the artwork: rejecting a track deserves the
+          deliberation of opening a menu, liking one does not. */}
+      {variant !== 'art' && (
+        <button
+          type="button"
+          className={`pf-thumbs__btn${rating === -1 ? ' pf-thumbs__btn--off' : ''}`}
+          onClick={() => toggle(-1)}
+          aria-pressed={rating === -1}
+          aria-label={`No me gusta ${title}`}
+          title="No me gusta"
+        >
+          <ThumbDownGlyph filled={rating === -1} />
+          {variant === 'menu' && <span>No me gusta</span>}
+        </button>
+      )}
     </div>
   );
 }

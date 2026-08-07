@@ -1371,3 +1371,42 @@
   min-width: 0;
   flex: 1 1 auto;
 }
+
+/* The like, on the artwork. Top-left so it never collides with the play button
+   that sits centred, and only visible as a filled heart once it means
+   something — an empty control on every cover would be noise on a screen made
+   of covers. */
+.pf-music__rec-like {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+}
+
+.pf-thumbs--art {
+  gap: 0;
+}
+
+.pf-thumbs--art .pf-thumbs__btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.pf-thumbs--art .pf-thumbs__btn--on {
+  opacity: 1;
+  color: var(--pf-green-bright);
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.pf-thumbs--art .pf-thumbs__btn:hover {
+  opacity: 1;
+}

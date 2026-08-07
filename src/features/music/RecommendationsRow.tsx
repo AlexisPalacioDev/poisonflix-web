@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MusicResultItem, MusicSearchResult } from '../../api/schemas/music';
 import { CoverImage } from './CoverImage';
 import { MusicRowMenu } from './MusicRowMenu';
+import { ThumbButtons } from './ThumbButtons';
 import { MusicCollectionCard } from './MusicCollectionCard';
 import { isRowActive } from '../../lib/domain/musicTrack';
 import type { MusicTrack } from './musicPlayerCore';
@@ -161,6 +162,19 @@ export function RecommendationsRow({
                 <div key={result.videoId} className="pf-music__rec">
                   <div className="pf-music__rec-art">
                     <CoverImage src={result.thumbnailUrl} loading="lazy" />
+                    {/* On the artwork, not under it. A like belongs to the
+                        cover the same way it does in every music app the
+                        owner uses, and the caption row was already carrying
+                        the title, the artist and the ⋮. */}
+                    <span className="pf-music__rec-like">
+                      <ThumbButtons
+                        videoId={result.videoId}
+                        title={title}
+                        artist={result.artist ?? null}
+                        thumbnailUrl={result.thumbnailUrl ?? null}
+                        variant="art"
+                      />
+                    </span>
                     <button
                       type="button"
                       className={`pf-music__rec-btn${active ? ' pf-music__rec-btn--active' : ''}`}

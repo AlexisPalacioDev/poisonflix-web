@@ -147,6 +147,7 @@ export function OverlayShell({
   const [opener] = useState<HTMLElement | null>(() => document.activeElement as HTMLElement | null);
   const backdropRef = useRef<HTMLDivElement | HTMLButtonElement>(null);
   const [panelStyle, setPanelStyle] = useState<CSSProperties | undefined>(undefined);
+  const panelBoxRef = useRef<HTMLDivElement>(null);
 
   // Measured once, synchronously before paint, from the trigger's actual
   // on-screen position - the panel is portalled away from wherever it sits
@@ -174,10 +175,24 @@ export function OverlayShell({
       ? Number.parseInt(window.getComputedStyle(backdropRef.current).zIndex, 10)
       : Number.NaN;
 
+    // Clamped to the viewport, both edges.
+    //
+    // Anchoring the panel's RIGHT to the trigger's right is correct for a
+    // control in the top-right corner, and wrong everywhere else: a ⋮ on the
+    // first card of a rail sits near the LEFT edge, so `innerWidth - rect.right`
+    // is nearly the whole screen and the panel gets pushed off the left side.
+    // The owner saw it cut by the screen edge; this is why.
+    //
+    // The panel's own width is not known until it renders, so this is the
+    // first guess and the effect below corrects it once it can measure.
+    const MARGIN = 8;
+    const anchoredRight = Math.max(MARGIN, window.innerWidth - rect.right);
+
     setPanelStyle({
       position: 'fixed',
       top: rect.bottom + panelOffset,
-      right: window.innerWidth - rect.right,
+      right: anchoredRight,
+      maxWidth: `calc(100vw - ${MARGIN * 2}px)`,
       zIndex: Number.isNaN(backdropZ) ? 1 : backdropZ + 1,
       // A phone in landscape has room for about four rows; without this the
       // last items overflow off-screen and the body scroll lock makes them
@@ -186,6 +201,25 @@ export function OverlayShell({
       overflowY: 'auto',
     });
   }, [variant, anchorRef, panelOffset]);
+
+  // Second pass, once the panel has a width: if the first guess put its left
+  // edge off-screen, pull it back in. Measuring is the only way — a menu's
+  // width depends on its longest label, which the caller owns.
+  useLayoutEffect(() => {
+    const panel = panelBoxRef.current;
+    if (variant !== 'menu' || !panel || !panelStyle) return;
+    const MARGIN = 8;
+    const rect = panel.getBoundingClientRect();
+    if (rect.left >= MARGIN && rect.right <= window.innerWidth - MARGIN) return;
+    const right = Math.min(
+      Math.max(MARGIN, window.innerWidth - rect.width - MARGIN),
+      Math.max(MARGIN, window.innerWidth - rect.right + Number(panelStyle.right ?? 0)),
+    );
+    setPanelStyle((previous) => (previous ? { ...previous, right } : previous));
+    // `panelStyle` is deliberately not a dependency: this runs to correct the
+    // first measurement, and re-running on its own output would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant, panelBoxRef]);
 
   useEffect(() => {
     pushOverlay(id, sequence);
@@ -234,7 +268,7 @@ export function OverlayShell({
         {/* Panel after the backdrop in DOM order on purpose - see the module
             doc comment for why this ordering is load-bearing, not cosmetic. */}
         {children && anchorRef ? (
-          <div className={panelClassName} style={panelStyle}>
+          <div ref={panelBoxRef} className={panelClassName} style={panelStyle}>
             {children}
           </div>
         ) : null}
