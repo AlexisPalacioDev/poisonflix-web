@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ThumbButtons } from './ThumbButtons';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { OverlayShell } from '../../components/overlay/OverlayShell';
 import { useUserPlaylists } from '../../hooks/useUserPlaylists';
 import { addToPlaylist, createPlaylist } from '../../api/playlists';
 import { setFavorite } from '../../api/jellyfin';
 import { getMusicJob, requestDownload, type RequestDownloadParams } from '../../api/music';
 import { queryKeys } from '../../hooks/queryKeys';
+import { addTracksToJam, listJams } from '../../api/jam';
 
 // The universal per-song "⋮" overflow menu, used by EVERY song row (search,
 // recommendations, library "Canciones", album, playlist, track detail). Play
@@ -74,7 +75,38 @@ export function MusicRowMenu({
 }: MusicRowMenuProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'menu' | 'playlists'>('menu');
+  const [view, setView] = useState<'menu' | 'playlists' | 'jams'>('menu');
+
+  // Only rooms this user has actually joined can receive a track; a pending
+  // invitation is not a queue you may write to.
+  const jamsQuery = useQuery({ queryKey: queryKeys.jamList(), queryFn: listJams });
+  const myJams = (jamsQuery.data ?? []).filter((entry) => entry.myRole?.acceptedAt != null);
+  const [addingToJam, setAddingToJam] = useState(false);
+
+  const addToJam = async (jamId: string) => {
+    if (!videoId || addingToJam) return;
+    setAddingToJam(true);
+    try {
+      await addTracksToJam(jamId, [
+        {
+          itemId: itemId ?? videoId,
+          title,
+          artist: artist ?? null,
+          coverUrl: coverUrl ?? null,
+          videoId,
+          // A Jam plays on other people's devices, which have no claim on this
+          // user's Jellyfin session — so the queue carries the shared preview
+          // stream rather than a per-user library URL.
+          streamUrl: `/bff/music/stream?videoId=${encodeURIComponent(videoId)}&source=ytmusic`,
+        },
+      ]);
+      close();
+    } catch {
+      /* the row stays open; the failure is visible as nothing happening */
+    } finally {
+      setAddingToJam(false);
+    }
+  };
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -278,6 +310,32 @@ export function MusicRowMenu({
                     </button>
                   </li>
                 )}
+                {/* Until this existed a Jam had no way to get music into it
+                    from the app at all — the queue could only be filled
+                    through the API, so a room the owner created sat empty and
+                    the feature looked broken. Adding from the song you are
+                    already looking at is where it belongs. */}
+                {videoId && myJams.length > 0 && (
+                  <li>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="pf-music__addpl-item"
+                      disabled={addingToJam}
+                      onClick={() => {
+                        if (myJams.length === 1) {
+                          addToJam(myJams[0].jam.id);
+                        } else {
+                          setView('jams');
+                        }
+                      }}
+                    >
+                      {myJams.length === 1
+                        ? `Agregar a ${myJams[0].jam.name}`
+                        : 'Agregar a una Jam'}
+                    </button>
+                  </li>
+                )}
                 <li>
                   <button
                     type="button"
@@ -341,6 +399,22 @@ export function MusicRowMenu({
                     </button>
                   </li>
                 )}
+              </ul>
+            ) : view === 'jams' ? (
+              <ul className="pf-music__addpl-list">
+                {myJams.map((entry) => (
+                  <li key={entry.jam.id}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="pf-music__addpl-item"
+                      disabled={addingToJam}
+                      onClick={() => addToJam(entry.jam.id)}
+                    >
+                      {entry.jam.name}
+                    </button>
+                  </li>
+                ))}
               </ul>
             ) : (
               <>
