@@ -183,6 +183,32 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     [playImperative],
   );
 
+  // Auto-advance when the element itself says the track is over (`ended`, or a
+  // dead source via `onError`).
+  //
+  // This must drive the element from inside the media event's own task, exactly
+  // like a tap does. Dispatching alone leaves the actual play() to a passive
+  // effect, and React schedules those through the scheduler — a MessageChannel
+  // callback. With the screen locked, WebKit suspends the page hard: an on-device
+  // probe measured 84s frozen with no audio playing, against 3s of throttling
+  // while audio was. The dispatch lands, the effect never runs, and playback
+  // simply stops between tracks. Calling play() here instead is the same shape
+  // the click path already uses, and the probe confirmed iOS allows it from a
+  // media handler on a locked phone — including a cold network fetch.
+  //
+  // Repeat-one is deliberately left on the dispatch path: it reuses the current
+  // source, so playing synchronously would resume at the very end of the track
+  // and risk firing `ended` again before the seek-to-zero effect lands. It
+  // already works, and it is not what the owner reported.
+  const advanceFromMediaEvent = useCallback(() => {
+    const action: Action = { type: 'NEXT', auto: true };
+    if (stateRef.current.repeat === 'one') {
+      dispatch(action);
+      return;
+    }
+    runGesture(action);
+  }, [runGesture]);
+
   // The URL the current track resolves to (preview streamUrl or Jellyfin). Used
   // as the src-effect key so re-renders that don't change the source never
   // reload/restart playback.
@@ -690,7 +716,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         }}
         onEnded={() => {
           reportDurationMismatch('ended');
-          dispatch({ type: 'NEXT', auto: true });
+          advanceFromMediaEvent();
         }}
         onPlay={() => {
           // Swallowed while the unlock probe's own play() is in flight — it
@@ -751,7 +777,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
             dispatch({ type: 'SET_PLAYING', value: false });
             return;
           }
-          dispatch({ type: 'NEXT', auto: true });
+          // Same reasoning as `onEnded`: skipping a dead track has to drive the
+          // element from this handler, or a locked phone never resumes.
+          advanceFromMediaEvent();
         }}
       />
       {children}

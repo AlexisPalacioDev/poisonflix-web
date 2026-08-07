@@ -489,3 +489,71 @@ describe('MusicPlayerProvider — past-known-duration reporting on `timeupdate` 
     expect(seen.length).toBe(1); // did not refire on the same track
   });
 });
+
+describe('MusicPlayerProvider — auto-advance drives the element from the media event', () => {
+  // The reported bug: with the phone locked, a finished track never handed off
+  // to the next one. An on-device probe cleared iOS of the charge — it happily
+  // starts a track from an `ended` handler on a locked screen, cold network
+  // fetch and all. What it will not do is run React's passive effects while the
+  // page is suspended (84s frozen, measured), and that is where the real play()
+  // used to live.
+  //
+  // These fire the DOM event directly instead of through `fireEvent`, which
+  // wraps everything in `act()` and flushes effects — under that wrapper a
+  // deferred play() and a synchronous one look identical, so the test would
+  // pass against the very bug it exists to catch. Raw dispatch means React has
+  // scheduled the update but run nothing: a play() observed here can only have
+  // come from the media handler's own task, which is the whole point.
+  function endedRaw(el: HTMLAudioElement) {
+    el.dispatchEvent(new Event('ended'));
+  }
+  function errorRaw(el: HTMLAudioElement) {
+    el.dispatchEvent(new Event('error'));
+  }
+
+  it('calls play() inside the `ended` handler, before any effect can run', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    playSpy.mockClear();
+
+    endedRaw(audioEl());
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {});
+    expect(api.currentIndex).toBe(1);
+    expect(api.isPlaying).toBe(true);
+  });
+
+  it('calls play() inside the `error` handler when skipping a dead track', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    playSpy.mockClear();
+
+    errorRaw(audioEl());
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {});
+    expect(api.currentIndex).toBe(1);
+  });
+
+  it('leaves repeat-one to the effect so it cannot restart from the very end', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    act(() => api.setRepeat('one'));
+    playSpy.mockClear();
+
+    endedRaw(audioEl());
+    // Nothing synchronous here on purpose: replaying the same source from its
+    // end could fire `ended` again before the seek-to-zero lands.
+    expect(playSpy).not.toHaveBeenCalled();
+
+    await act(async () => {});
+    expect(api.currentIndex).toBe(0); // looped, not advanced
+  });
+});
