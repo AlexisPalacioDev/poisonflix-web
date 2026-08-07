@@ -3,6 +3,7 @@ import { listJams } from '../../api/jam';
 import { queryKeys } from '../../hooks/queryKeys';
 import { useAuth } from '../../hooks/useAuth';
 import { setJamDestination, useJamDestination } from './destination';
+import { useJamStream } from './useJamStream';
 import './jam.css';
 
 // Where playback goes: this device, or one of your Jams.
@@ -18,6 +19,14 @@ import './jam.css';
 export function JamDestinationPicker() {
   const { session } = useAuth();
   const destination = useJamDestination();
+
+  // Choosing to play into a room IS attending it. Presence in this app is the
+  // open SSE connection, and transport rights require presence — so without
+  // this, selecting a Jam as your output let you APPEND to its queue but not
+  // replace it, and pressing play silently half-worked. Holding the stream
+  // here also means the room sees you arrive the moment you point your music
+  // at it, which is what anyone else in it would expect.
+  useJamStream(destination);
 
   const jamsQuery = useQuery({
     queryKey: queryKeys.jamList(),
