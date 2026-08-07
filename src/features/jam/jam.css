@@ -1,0 +1,258 @@
+/* Jam (collaborative listening) - list + room, same page-shell pattern as
+   downloads.css: padding pinned under the fixed Header, a vertical stack of
+   sections rather than a horizontal Row rail. */
+
+.pf-jam {
+  position: relative;
+  flex: 1;
+  min-height: 100%;
+  padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
+  padding-bottom: var(--pf-space-2xl);
+  padding-left: var(--pf-gutter);
+  padding-right: var(--pf-gutter);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-lg);
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.pf-jam__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pf-jam__title {
+  margin: 0;
+  font-size: clamp(1.6rem, 2.6vw, 2.3rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--pf-text);
+}
+
+.pf-jam__back {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  color: var(--pf-text-dim);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0;
+}
+
+.pf-jam__back:hover,
+.pf-jam__back:focus-visible {
+  color: var(--pf-gold);
+}
+
+.pf-jam__create-toggle,
+.pf-jam__create-submit,
+.pf-jam__accept,
+.pf-jam__leave {
+  background: linear-gradient(to bottom, var(--pf-gold) 0%, var(--pf-gold-dim) 100%);
+  color: #14161b;
+  border: none;
+  border-radius: var(--pf-radius-pill);
+  padding: 10px 20px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pf-jam__reject {
+  background: transparent;
+  border: 1px solid var(--pf-danger);
+  color: var(--pf-danger);
+  border-radius: var(--pf-radius-pill);
+  padding: 9px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-jam__create-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-md);
+  border-radius: var(--pf-radius-lg);
+  border: 1px solid var(--pf-glass-border);
+  background: var(--pf-glass-bg);
+}
+
+.pf-jam__input {
+  padding: 10px 14px;
+  border-radius: var(--pf-radius-md);
+  border: 1px solid var(--pf-glass-border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--pf-text);
+  font: inherit;
+}
+
+.pf-jam__mode-radios {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-2xs);
+  color: var(--pf-text-dim);
+  font-size: 0.9rem;
+}
+
+.pf-jam__mode-radio {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
+
+.pf-jam__status {
+  color: var(--pf-text-dim);
+}
+
+.pf-jam__status--error {
+  color: var(--pf-danger);
+}
+
+.pf-jam__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+
+.pf-jam__section-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--pf-text);
+}
+
+.pf-jam__list,
+.pf-jam__members,
+.pf-jam__queue,
+.pf-jam__directory {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+
+.pf-jam__invite-row,
+.pf-jam__member-row,
+.pf-jam__directory-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  border-radius: var(--pf-radius-md);
+  border: 1px solid var(--pf-glass-border);
+  background: var(--pf-glass-bg);
+  color: var(--pf-text);
+}
+
+.pf-jam__invite-actions,
+.pf-jam__member-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--pf-space-xs);
+}
+
+.pf-jam__jam-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  border-radius: var(--pf-radius-md);
+  border: 1px solid var(--pf-glass-border);
+  background: var(--pf-glass-bg);
+  color: var(--pf-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pf-jam__jam-row:hover,
+.pf-jam__jam-row:focus-visible {
+  border-color: var(--pf-gold);
+}
+
+.pf-jam__jam-mode {
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+}
+
+.pf-jam__room-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+}
+
+.pf-jam__leader {
+  margin: 0;
+  color: var(--pf-text-dim);
+}
+
+.pf-jam__transport {
+  display: flex;
+  gap: var(--pf-space-sm);
+}
+
+.pf-jam__transport button {
+  padding: 10px 18px;
+  border-radius: var(--pf-radius-pill);
+  border: 1px solid var(--pf-glass-border);
+  background: var(--pf-glass-bg);
+  color: var(--pf-text);
+  cursor: pointer;
+}
+
+.pf-jam__transport button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pf-jam__member-name {
+  font-weight: 600;
+}
+
+.pf-jam__member-role,
+.pf-jam__member-presence {
+  color: var(--pf-text-dim);
+  font-size: 0.85rem;
+}
+
+.pf-jam__track {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  color: var(--pf-text-dim);
+}
+
+.pf-jam__track--current {
+  color: var(--pf-text);
+  background: rgba(242, 193, 78, 0.1);
+  border: 1px solid rgba(242, 193, 78, 0.35);
+}
+
+.pf-jam__track-artist {
+  font-size: 0.85rem;
+}
+
+.pf-jam__mode-select-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-2xs);
+  color: var(--pf-text-dim);
+  font-size: 0.9rem;
+}
+
+.pf-jam__mode-select {
+  padding: 8px 12px;
+  border-radius: var(--pf-radius-md);
+  border: 1px solid var(--pf-glass-border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--pf-text);
+  font: inherit;
+}

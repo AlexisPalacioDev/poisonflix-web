@@ -101,4 +101,11 @@ export const queryKeys = {
   // playlists (keyed by user) and one playlist's tracks (keyed by playlist id).
   userPlaylists: (userId: string) => ['jellyfin', 'userPlaylists', userId] as const,
   userPlaylist: (playlistId: string) => ['jellyfin', 'userPlaylist', playlistId] as const,
+  // Jam (collaborative listening): the caller's own jams + pending invites
+  // (each entry carries `myRole`, which doubles as how the screen learns its
+  // own Jellyseerr user id — see JamScreen's module doc comment), and the
+  // directory of users the owner can invite. Neither is scoped by userId:
+  // both are already scoped to the caller by the BFF's own session cookie.
+  jamList: () => ['jam', 'list'] as const,
+  jamDirectory: () => ['jam', 'directory'] as const,
 };

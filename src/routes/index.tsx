@@ -21,6 +21,7 @@ import { AlbumScreen } from '../features/music/AlbumScreen';
 import { ArtistScreen } from '../features/music/ArtistScreen';
 import { TrackScreen } from '../features/music/TrackScreen';
 import { PlaylistScreen } from '../features/music/PlaylistScreen';
+import { JamScreen } from '../features/jam/JamScreen';
 
 // Route tree per design.md §7. `:id` is the TMDB id for /detail and the
 // Jellyfin item id for /player.
@@ -215,6 +216,16 @@ export const routes: RouteObject[] = [
     element: (
       <RouteGuard>
         <PlaylistScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Jam: collaborative listening — list/create/join rooms, transport
+    // controls gated by `canControlTransport` (lib/domain/jam.ts).
+    path: '/jam',
+    element: (
+      <RouteGuard>
+        <JamScreen />
       </RouteGuard>
     ),
   },

@@ -242,6 +242,22 @@ export function Header() {
         <span className="pf-header__search-label">Descargas</span>
       </Link>
 
+      <Link to="/jam" className="pf-header__search" aria-label="Jam" onClick={onSelect}>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <circle cx="7" cy="17" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+          <circle cx="17" cy="17" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+          <path
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M7 17V5l10-2v14"
+          />
+        </svg>
+        <span className="pf-header__search-label">Jam</span>
+      </Link>
+
       {isAdmin && (
         <Link to="/admin" className="pf-header__search" aria-label="Admin" onClick={onSelect}>
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
