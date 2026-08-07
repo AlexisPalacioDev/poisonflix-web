@@ -60,9 +60,21 @@ services:
     environment:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
+      # Without these the worker still starts, still answers, and still returns
+      # a radio — just never a personalised one. Every Jellyfin call 401s, so
+      # the videoId index comes back empty, no library track ever resolves to a
+      # seed, and every "Porque escuchaste X" row silently collapses to the same
+      # generic feed. The code has read them since it was written; the compose
+      # never passed them.
+      JELLYFIN_URL: ${JELLYFIN_URL:?set JELLYFIN_URL in infra/.env}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:?set JELLYFIN_API_KEY in infra/.env}
     volumes:
       # The shared media disk — the worker writes /media/Music, Jellyfin reads it.
-      - ${DATA_DIR}/media:/media
+      # Fail loudly on an unset DATA_DIR: compose interpolates blank, mounts the
+      # host's /media, and `create_host_path` conjures it into existence, so the
+      # worker writes into an empty directory Jellyfin has never heard of and
+      # every smoke test still passes.
+      - ${DATA_DIR:?set DATA_DIR in infra/.env — host path whose media/ Jellyfin reads}/media:/media
       # Jobs + dedup manifest + yt-dlp cache (best-effort persistence).
       - ./music-worker/data:/data
     networks:
