@@ -49,7 +49,17 @@ export default defineConfig({
     // empty workbox globPatterns), so there's no offline caching / install
     // prompt yet. Deferred per tasks.md "Deferred" list. Wiring it live is
     // a later slice, not a retrofit of the plugin itself.
+    //
+    // `selfDestroying` matters because "we never register it" only describes
+    // THIS build. An earlier one did, and a registered service worker outlives
+    // every deploy that follows: its NavigationRoute answers each navigation
+    // from its own cached index.html, so the owner kept seeing a months-old app
+    // no matter what shipped. Nothing in the repo can reveal that — the stale
+    // worker lives in the browser. This emits a worker that unregisters itself
+    // and clears its caches, so the next visit repairs the device instead of
+    // waiting for someone to know to clear site data.
     VitePWA({
+      selfDestroying: true,
       registerType: 'prompt',
       injectRegister: null,
       manifest: {
