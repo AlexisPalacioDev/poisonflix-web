@@ -1,3 +1,4 @@
+import { buildStamp } from './build';
 // Client-side failure log.
 //
 // Music reporting, autoplay radio and download polling are all deliberately
@@ -57,7 +58,10 @@ export function reportFailure(scope: string, cause: unknown, detail?: unknown): 
       void fetch('/bff/client-log', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ scope, message, detail }),
+        // The build id rides along: an error report that does not say which
+        // code produced it cannot be acted on, and this session proved that
+        // twice over.
+        body: JSON.stringify({ scope, message, detail, build: buildStamp() }),
         keepalive: true,
       }).catch(() => {});
     }

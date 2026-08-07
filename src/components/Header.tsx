@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { buildLabel } from '../lib/obs/build';
 import { JamNotifications } from '../features/jam/JamNotifications';
 import { AdultPinOverlay } from './AdultPinOverlay';
 import { OverlayShell } from './overlay/OverlayShell';
@@ -366,6 +367,12 @@ export function Header() {
                 aria-label="Menú de navegación"
               >
                 {renderControls(() => setMenuOpen(false))}
+                {/* Which code is actually running. Not decoration: a whole
+                    night went into symptoms that were really "the deploy did
+                    not land", and there was no way to tell from the phone. */}
+                <span className="pf-header__build" title="Versión desplegada">
+                  {buildLabel()}
+                </span>
               </div>
             </OverlayShell>
           )}
@@ -374,6 +381,9 @@ export function Header() {
         <div className="pf-header__actions">
           <JamNotifications />
           {renderControls()}
+          <span className="pf-header__build" title="Versión desplegada">
+            {buildLabel()}
+          </span>
         </div>
       )}
 

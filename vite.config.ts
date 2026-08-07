@@ -1,4 +1,22 @@
+import { execSync } from 'node:child_process';
 import { configDefaults, defineConfig } from 'vitest/config';
+
+// Build stamp, injected at build time.
+//
+// Most of a long night was lost to not knowing which code was running: a
+// deploy went to the wrong host, a bind mount kept serving a deleted
+// directory, and every symptom looked like "the fix did not work" when the fix
+// simply was not there. A visible build id turns that whole class of question
+// into a glance.
+function buildStamp() {
+  let commit = 'unknown';
+  try {
+    commit = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    /* not a git checkout (CI tarball, vendored copy) — the timestamp still identifies it */
+  }
+  return { commit, builtAt: new Date().toISOString() };
+}
 import react from '@vitejs/plugin-react';
 import legacy from '@vitejs/plugin-legacy';
 import { VitePWA } from 'vite-plugin-pwa';
@@ -7,6 +25,9 @@ import flexGapFallback from './postcss-flex-gap-fallback.mjs';
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __PF_BUILD__: JSON.stringify(buildStamp()),
+  },
   css: {
     postcss: {
       plugins: [

@@ -1,0 +1,13 @@
+
+/* Which build is running. Small and quiet — it is a diagnostic, not a feature —
+   but always reachable, because "are my changes live?" was unanswerable from
+   the phone for an entire night and cost more than any bug did. */
+.pf-header__build {
+  font-size: 0.68rem;
+  color: var(--pf-text-dim);
+  opacity: 0.65;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  align-self: center;
+  padding: 0 var(--pf-space-xs);
+}
