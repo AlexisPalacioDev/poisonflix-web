@@ -1010,26 +1010,45 @@ async function handleJamStream(req, res, jamId, user) {
     'x-accel-buffering': 'no',
   });
 
-  // Send the room before anything changes, so the client renders immediately
-  // instead of waiting for someone else to press a button.
-  res.write(`data: ${JSON.stringify(await jamSnapshot(jamId))}\n\n`);
-
   // Comment-only heartbeat: keeps intermediaries from reaping an idle
   // connection, and costs nothing to parse on the client.
-  const beat = setInterval(() => {
+  let beat = null;
+  const cleanUp = () => {
+    if (beat) clearInterval(beat);
+    detach();
+  };
+  req.on('close', cleanUp);
+  req.on('error', cleanUp);
+  // The store also hangs up on people who leave or are removed, by ending
+  // their response from the outside. `res` 'close' is the documented signal
+  // for "this response finished", where `req` 'close' firing after a
+  // server-initiated end is an implementation detail. `cleanUp` is idempotent
+  // — `detach` guards itself and `clearInterval` twice is nothing — so both
+  // may fire, and in that case both do.
+  res.on('close', cleanUp);
+
+  // Registered BEFORE the await below, and re-checked after it. The attach
+  // above happens first, and Node does not replay a 'close' that fired while
+  // nobody was listening — so a client that hung up during this await left a
+  // phantom in `streams` that nothing would ever remove, plus its heartbeat.
+  // And because presence IS the socket, that room could then never count as
+  // empty again: one aborted connection quietly switched off the pause-when-
+  // nobody-is-listening rule for it, permanently.
+  if (req.destroyed || res.destroyed) return cleanUp();
+
+  // Send the room before anything changes, so the client renders immediately
+  // instead of waiting for someone else to press a button.
+  const opening = JSON.stringify(await jamSnapshot(jamId));
+  if (req.destroyed || res.destroyed) return cleanUp();
+
+  res.write(`data: ${opening}\n\n`);
+  beat = setInterval(() => {
     try {
       res.write(': beat\n\n');
     } catch {
       /* the close handler cleans up */
     }
   }, 20_000);
-
-  const cleanUp = () => {
-    clearInterval(beat);
-    detach();
-  };
-  req.on('close', cleanUp);
-  req.on('error', cleanUp);
 }
 
 async function handleJam(req, res, subPath, url, user) {
