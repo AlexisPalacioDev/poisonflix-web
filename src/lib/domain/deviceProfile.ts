@@ -121,11 +121,19 @@ export interface JellyfinTranscodingProfile {
   MaxAudioChannels?: string;
 }
 
+/** How the server should hand a subtitle format to this client.
+ * `External` = a separate text file the client fetches and renders itself. */
+export interface JellyfinSubtitleProfile {
+  Format: string;
+  Method: 'External' | 'Embed' | 'Hls' | 'Encode';
+}
+
 export interface JellyfinDeviceProfile {
   MaxStreamingBitrate: number;
   DirectPlayProfiles: JellyfinDirectPlayProfile[];
   TranscodingProfiles: JellyfinTranscodingProfile[];
   CodecProfiles?: JellyfinCodecProfile[];
+  SubtitleProfiles?: JellyfinSubtitleProfile[];
 }
 
 const MAX_STREAMING_BITRATE = 20_000_000;
@@ -141,6 +149,47 @@ export function createBrowserDeviceProfile(): JellyfinDeviceProfile {
     DirectPlayProfiles: [
       { Type: 'Video', Container: 'mp4', VideoCodec: 'h264', AudioCodec: 'aac' },
       { Type: 'Audio', Container: 'mp3,aac,flac,m4a', AudioCodec: 'aac,mp3,flac' },
+    ],
+    // ## Why SubtitleProfiles exists (three problems, one declaration)
+    //
+    // Without this list, Jellyfin assumes the client cannot consume subtitle
+    // text and BURNS every subtitle into the transcoded video's pixels.
+    // Measured against a real server on a title whose Spanish and English
+    // subtitles are both plain external `.srt` files sitting next to the
+    // video:
+    //
+    //     no SubtitleProfiles -> eng=Encode,   spa=Encode
+    //     with this list      -> eng=External, spa=External
+    //
+    // That single flip fixes three separate things:
+    //
+    //  1. Dual subtitles become possible at all. Two burned-in tracks cannot
+    //     be shown together - they are pixels, not text - so the owner's
+    //     "inglés y español a la vez" request was unreachable while every
+    //     subtitle came back as `Encode`.
+    //  2. It removes the CAUSE of the duplicate-subtitle bug rather than
+    //     coping with it. `isBurnedInSubtitle` (mediaStreamTracks.ts) still
+    //     earns its place - image-based formats below are still burned, and
+    //     older sessions can still report `Encode` - but text subtitles no
+    //     longer take that path.
+    //  3. It takes real load off the server. Burning subtitles forces a full
+    //     video re-encode, since the picture itself has to change; delivering
+    //     text lets the transcode stream-copy the video instead.
+    //
+    // The list is text formats ONLY, and that boundary is deliberate. Asking
+    // for `External` delivery of an image-based subtitle (PGS, DVDSUB) would
+    // hand the browser a bitmap stream it cannot draw; those are genuinely
+    // un-renderable as text and SHOULD keep being burned in. The client always
+    // fetches `Stream.vtt`, and Jellyfin converts any text format to WebVTT on
+    // the way out, so listing srt/ass/ssa here costs nothing extra.
+    SubtitleProfiles: [
+      { Format: 'vtt', Method: 'External' },
+      { Format: 'srt', Method: 'External' },
+      { Format: 'subrip', Method: 'External' },
+      { Format: 'ass', Method: 'External' },
+      { Format: 'ssa', Method: 'External' },
+      { Format: 'sub', Method: 'External' },
+      { Format: 'microdvd', Method: 'External' },
     ],
     // ## Why CodecProfiles exists (audio-switch bug for DirectPlay sources)
     //

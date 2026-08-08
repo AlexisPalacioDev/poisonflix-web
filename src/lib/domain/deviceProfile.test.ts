@@ -62,6 +62,32 @@ describe('createBrowserDeviceProfile', () => {
     expect(body).not.toContain('"MaxAudioChannels":2');
   });
 
+  // Without SubtitleProfiles the server burns every subtitle into the video's
+  // pixels. Measured live: the same title returned eng=Encode/spa=Encode with
+  // no list and eng=External/spa=External with one. That flip is what makes
+  // dual subtitles possible, removes the cause of the duplicate-subtitle bug,
+  // and lets the transcode stream-copy video instead of re-encoding it.
+  it('asks for text subtitles as External so the server stops burning them in', () => {
+    const profile = createBrowserDeviceProfile();
+    const formats = (profile.SubtitleProfiles ?? []).map((p) => p.Format);
+
+    expect(formats).toContain('srt');
+    expect(formats).toContain('subrip');
+    expect(formats).toContain('vtt');
+    expect(profile.SubtitleProfiles?.every((p) => p.Method === 'External')).toBe(true);
+  });
+
+  // Image-based subtitles are bitmaps: asking for them as External hands the
+  // browser something it cannot draw. Those SHOULD stay burned in.
+  it('never asks for image-based subtitle formats as External', () => {
+    const profile = createBrowserDeviceProfile();
+    const formats = (profile.SubtitleProfiles ?? []).map((p) => p.Format.toLowerCase());
+
+    for (const imageFormat of ['pgs', 'pgssub', 'dvdsub', 'dvbsub', 'vobsub']) {
+      expect(formats).not.toContain(imageFormat);
+    }
+  });
+
   it('declares a sane MaxStreamingBitrate (not 0/undefined, which would starve playback)', () => {
     const profile = createBrowserDeviceProfile();
     expect(profile.MaxStreamingBitrate).toBeGreaterThan(0);
