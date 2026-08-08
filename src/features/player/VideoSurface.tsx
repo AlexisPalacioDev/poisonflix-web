@@ -132,6 +132,76 @@ import './VideoSurface.css';
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const VOLUME_STEP = 0.1;
 
+/**
+ * Bug fix (owner report, live production evidence - "Backrooms: Sin salida",
+ * itemId `19d008d1f5160dfca15e3960b9932b41`): exit-and-reenter reopened the
+ * file's own default audio FOREVER, even with a saved preference pointing at
+ * a different track and the menu correctly showing it checked.
+ *
+ * CONFIRMED (structurally, by reading the code and by a red-then-green test,
+ * `PlayerScreen.test.tsx` "when neither MANIFEST_PARSED nor canplay ever
+ * fires..."): `applyCurrentAudioSelection`'s `allowFallback` gate - the
+ * thing that lets the server-round-trip fallback (`onAudioSwitchUnavailable`)
+ * actually fire - has EXACTLY THREE ways to become `true`: `onCanPlay`,
+ * `onLoadedMetadata` (DirectPlay only), and hls.js's `MANIFEST_PARSED`. None
+ * of them is guaranteed to fire within any bounded time, and the
+ * props-driven retry effect only ever forwards whatever
+ * `audioReadyForInBandRef.current` currently is - it never forces it `true`
+ * on its own. IF that trio is ever missed, the saved preference is stuck for
+ * the rest of that mount, forever - nothing else in this file ever flips
+ * that ref.
+ *
+ * NOT independently confirmed against the real production browser session
+ * (only reproduced in tests, and only against the described symptom, not a
+ * live repro): WHY those three events would be missed there. The owner's
+ * report noted the `<video>` was PAUSED (autoplay blocked) at the time, and
+ * that is the working theory - but checking hls.js's own source
+ * (`level-controller.ts`) shows `MANIFEST_PARSED` is driven purely by
+ * manifest-file network/parse timing, independent of `<video>.paused` or
+ * autoplay state, on the hls.js path (Chrome/Firefox/Edge). A genuinely slow
+ * network, a native-HLS Safari session (no `MANIFEST_PARSED` at all - only
+ * `canplay`, which IS documented to be deferrable on a paused/backgrounded
+ * iOS video), or something else entirely could equally explain a missed
+ * checkpoint. This fix does not depend on knowing which - it closes the gap
+ * for ALL of them, unconditionally: if nothing else ever supplies a
+ * readiness signal, this does, once, bounded.
+ *
+ * A SEPARATE, equally plausible failure mode exists and is NOT fixed here:
+ * `PlayerScreen.tsx`'s `handleAudioSwitchUnavailable` swallows a failed
+ * re-resolve in an empty `catch {}`, and `applyCurrentAudioSelection` marks
+ * `appliedAudioIndexRef` BEFORE that async call resolves - so a rejected
+ * `getPlaybackInfo` (network hiccup, session conflict, anything) would
+ * produce the exact same permanently-stuck symptom, and this timer would NOT
+ * rescue it either (`appliedAudioIndexRef` already matches by then). Logging
+ * that failure (see `PlayerScreen.tsx`) at least makes it observable; a real
+ * retry-on-failure is out of scope for this change.
+ *
+ * This timer is a bounded second chance, not a targeted fix for a fully
+ * proven mechanism: started fresh per resolved `source` (cleared on every
+ * `key` change/unmount via the effect's cleanup, so it can never fire for a
+ * source that's no longer live), it fires AT MOST once, and is a no-op the
+ * instant a real readiness event already handled things first
+ * (`applyCurrentAudioSelection` is idempotent, guarded by
+ * `appliedAudioIndexRef`). It is ALSO skipped entirely once the user has
+ * made a manual pick during this component's lifetime
+ * (`manualAudioPickRef.current`, set in `handleSelectAudio`) - a passive
+ * restore-the-saved-preference safety net must never override an explicit,
+ * possibly-still-in-flight user action.
+ *
+ * Known, accepted tradeoff (NOT eliminated by the above): a real
+ * `MANIFEST_PARSED`/`canplay` that is merely slow - not stuck - and would
+ * have reported a genuinely different in-band answer (e.g. a Transcoded
+ * session that DOES mux more than one audio rendition, the rare case this
+ * file's header documents) can still lose a race against this timer if it
+ * arrives after `AUDIO_READINESS_FALLBACK_MS`, costing an unnecessary
+ * server round trip instead of a free in-band switch. The delay below is
+ * deliberately generous (real readiness events normally arrive in well
+ * under a second; this is not) to make that window narrow, but "narrow" is
+ * not "never" - there is no fixed timeout that is both bounded and race-free
+ * against an unbounded wait.
+ */
+const AUDIO_READINESS_FALLBACK_MS = 4000;
+
 /** Minimal shape of the experimental `HTMLMediaElement.audioTracks` W3C API
  * - not in TS's `lib.dom.d.ts` (it's still non-standard/partially shipped),
  * so this is declared locally rather than widening a shared type. */
@@ -410,6 +480,26 @@ export function VideoSurface({
   // `applyCurrentAudioSelection`'s doc comment for why this must be tracked
   // separately from whether the desired track is already known.
   const audioReadyForInBandRef = useRef(false);
+  // Set once the user makes an EXPLICIT audio pick (`handleSelectAudio`).
+  // Deliberately NOT reset by the per-source `[key]` effect below, unlike
+  // `audioReadyForInBandRef`/`appliedSubtitleIndexRef`: an audio switch
+  // CREATES a new source, so resetting on `key` would clear the very flag
+  // that pick just set. Harmless to keep for later sources, because by then
+  // `appliedAudioIndexRef` already matches `selectedAudioIndex` and the
+  // safety net short-circuits before ever consulting this.
+  // Guards `AUDIO_READINESS_FALLBACK_MS`'s safety-net timer (see that
+  // constant's doc comment): without this, a manual pick made WHILE that
+  // timer is still pending races it - `handleSelectAudio` marks
+  // `appliedAudioIndexRef` with the NEW pick synchronously, but
+  // `selectedAudioIndexRef` (React-prop-driven) only catches up once
+  // PlayerScreen's own re-resolve promise resolves, so the timer firing in
+  // that window would see the OLD `selectedAudioIndexRef` value, wrongly
+  // conclude IT hasn't been applied yet, and fire a second, stale
+  // `onAudioSwitchUnavailable` for an index the user already moved away
+  // from. A passive restore-the-saved-preference safety net must never
+  // second-guess an explicit user action - once one happens, this ref stays
+  // `true` for the rest of the component's lifetime.
+  const manualAudioPickRef = useRef(false);
   // Accelerating seek: holding an arrow climbs 5s -> 10s -> 30s -> 1min ...
   // and snaps back once released. Held in a ref rather than state because it
   // changes on every keypress and nothing renders from it directly.
@@ -681,6 +771,21 @@ export function VideoSurface({
       hlsRef.current = null;
     }
 
+    // Readiness-checkpoint safety net - see `AUDIO_READINESS_FALLBACK_MS`'s
+    // doc comment for the full root-cause story. Started for EVERY source
+    // (DirectPlay included, for the same reason `onLoadedMetadata`/`onCanPlay`
+    // already cover DirectPlay too - a paused, autoplay-blocked <video> isn't
+    // exclusive to the HLS path) and always cleared below. Skips entirely
+    // once the user has made a manual pick for this source
+    // (`manualAudioPickRef` - see its own doc comment): this is a passive
+    // restore-the-saved-preference mechanism and must never second-guess an
+    // explicit, possibly-still-in-flight user action.
+    const readinessSafetyNet = window.setTimeout(() => {
+      if (manualAudioPickRef.current) return;
+      audioReadyForInBandRef.current = true;
+      applyCurrentAudioSelection(true);
+    }, AUDIO_READINESS_FALLBACK_MS);
+
     if (source.kind === 'DirectPlay') {
       video.src = source.url;
       applyCurrentSubtitleSelection();
@@ -688,7 +793,7 @@ export function VideoSurface({
       // `applyCurrentAudioSelection`'s doc comment) - `onCanPlay` below is
       // the real readiness checkpoint for this path.
       applyCurrentAudioSelection(false);
-      return undefined;
+      return () => window.clearTimeout(readinessSafetyNet);
     }
 
     // Transcoded: server-side HLS.
@@ -717,6 +822,7 @@ export function VideoSurface({
     }
 
     return () => {
+      window.clearTimeout(readinessSafetyNet);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -843,6 +949,10 @@ export function VideoSurface({
     // TWO `PlaybackInfo` re-resolves and two `Stopped` reports instead of
     // one.
     appliedAudioIndexRef.current = track.index;
+    // See `manualAudioPickRef`'s doc comment - an explicit pick permanently
+    // disarms the passive readiness-fallback safety net for this source, so
+    // it can never race this pick's own still-in-flight fallback.
+    manualAudioPickRef.current = true;
     setActiveMenu(null);
     if (applied) onAudioApplied(track);
     else onAudioSwitchUnavailable(track);

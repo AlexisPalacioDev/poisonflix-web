@@ -995,3 +995,378 @@ describe('PlayerScreen — episode prev/next/jump navigation (owner request)', (
     });
   });
 });
+
+// Owner-reported production bug: "Backrooms: Sin salida" (itemId/
+// mediaSourceId `19d008d1f5160dfca15e3960b9932b41`, live evidence - both
+// Index 1 (spa) and Index 2 (eng) come back `IsDefault: true` from Jellyfin,
+// server's own `DefaultAudioStreamIndex` is 1). Saved audio preference
+// 'en'. Timeline captured from `performance.getEntriesByType('resource')`
+// against production: open (index1, correct - no pref applied yet) -> pick
+// Inglés manually (index2, works) -> exit the player and reenter the SAME
+// item -> reopens on index1 FOREVER, even though the menu shows Inglés
+// checked and localStorage still has 'en'. The `<video>` was PAUSED
+// (autoplay blocked by the browser) at the moment of the bug.
+//
+// `useItemMediaStreams` (mediaStreams query) and `usePlaybackInfo` are two
+// independently-timed queries in production, but every OTHER test in this
+// file resolves both through the SAME `mockResolvedValue`/fresh `QueryClient`
+// per render - meaning neither their real relative timing NOR a shared
+// cache across an unmount+remount of the same item (what "exit and reenter"
+// actually is - `App.tsx` creates ONE `QueryClient` for the app's lifetime)
+// was ever exercised anywhere else in this suite.
+describe('PlayerScreen — audio restore survives exit-and-reenter (owner report: "Backrooms: Sin salida")', () => {
+  afterEach(() => {
+    cleanup();
+    clearSession();
+    mockedGetPlaybackInfo.mockReset();
+    mockedGetItem.mockReset();
+    hlsInstances.length = 0;
+    clearSubtitlePreference();
+    clearAudioPreference();
+    vi.clearAllMocks();
+  });
+
+  it('mediaStreams resolving AFTER the readiness checkpoint (dual-IsDefault tracks, saved pref differs from the server default) still re-resolves', async () => {
+    setAudioPreference('en');
+    mockedGetPlaybackInfo.mockResolvedValue({
+      MediaSources: [
+        {
+          Id: 'ms-1',
+          Container: 'mkv',
+          TranscodingUrl: '/videos/item-g/master.m3u8',
+          SupportsDirectPlay: false,
+          SupportsDirectStream: false,
+          SupportsTranscoding: true,
+          MediaStreams: [],
+        },
+      ],
+      PlaySessionId: 'sess-g-1',
+    } as never);
+
+    let resolveMediaStreamsItem: ((value: unknown) => void) | null = null;
+    const mediaStreamsItemPromise = new Promise((resolve) => {
+      resolveMediaStreamsItem = resolve;
+    });
+
+    mockedGetItem.mockImplementation(async (_userId, _itemId, fields) => {
+      if (fields === 'MediaStreams') {
+        return mediaStreamsItemPromise as never;
+      }
+      return {
+        Id: 'jf-item-g',
+        Name: 'Backrooms: Sin salida',
+        UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      } as never;
+    });
+
+    renderPlayer('jf-item-g');
+    await screen.findByTestId('pf-video');
+
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(1));
+    // Readiness checkpoint fires BEFORE mediaStreams resolves - matches the
+    // owner's observed order (video paused/autoplay-blocked, second query
+    // slower than the first).
+    hlsInstances[0].handlers.hlsManifestParsed?.();
+
+    resolveMediaStreamsItem?.({
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'spa', DisplayTitle: 'Español', IsDefault: true },
+        { Index: 2, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+      ],
+    });
+
+    await vi.waitFor(() => {
+      expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2);
+    });
+    expect(mockedGetPlaybackInfo).toHaveBeenNthCalledWith(
+      2,
+      'jf-item-g',
+      expect.objectContaining({ audioStreamIndex: 2, mediaSourceId: 'ms-1' }),
+    );
+  });
+
+  // A SHARED QueryClient across unmount/remount of the SAME item - the real
+  // "salgo del player y vuelvo a entrar", not the fresh-QueryClient-per-test
+  // shortcut every other test in this file uses (`renderPlayer`). With a
+  // shared client and `staleTime: 0` (both queries), a second mount of the
+  // same itemId gets BOTH queries' cached data SYNCHRONOUSLY on the very
+  // first render (no async gap at all) while a background refetch replaces
+  // `data` (and therefore VideoSurface's `key`) moments later.
+  it('a shared QueryClient across unmount+remount of the same item still honors the saved audio preference on re-entry', async () => {
+    setAudioPreference('en');
+    let call = 0;
+    mockedGetPlaybackInfo.mockImplementation(async () => {
+      call += 1;
+      return {
+        MediaSources: [
+          {
+            Id: 'ms-1',
+            Container: 'mkv',
+            TranscodingUrl: `/videos/item-h/master-${call}.m3u8`,
+            SupportsDirectPlay: false,
+            SupportsDirectStream: false,
+            SupportsTranscoding: true,
+            MediaStreams: [],
+          },
+        ],
+        PlaySessionId: `sess-h-${call}`,
+      } as never;
+    });
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-h',
+      Name: 'Backrooms: Sin salida',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'spa', DisplayTitle: 'Español', IsDefault: true },
+        { Index: 2, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+      ],
+    } as never);
+
+    setSession({ jellyfinToken: 'tok-1', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const firstRender = render(
+      <MemoryRouter initialEntries={['/player/jf-item-h']}>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <TestRouteTree />
+          </AuthProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('pf-video');
+    // First mount reaches a normal, settled state: readiness fires, saved
+    // pref ('en') differs from the file's default (spa/index1) - one
+    // re-resolve.
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(1));
+    hlsInstances[0].handlers.hlsManifestParsed?.();
+    await vi.waitFor(() => expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2));
+
+    firstRender.unmount();
+    hlsInstances.length = 0;
+
+    // Re-enter the SAME item with the SAME (now-populated) QueryClient - the
+    // real "salgo del player y vuelvo a entrar" scenario.
+    render(
+      <MemoryRouter initialEntries={['/player/jf-item-h']}>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <TestRouteTree />
+          </AuthProvider>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('pf-video');
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(1));
+    // Let whichever hls instance is CURRENT reach its own readiness
+    // checkpoint (mirrors a real MANIFEST_PARSED, whenever it actually
+    // lands for the FINAL source).
+    hlsInstances[hlsInstances.length - 1].handlers.hlsManifestParsed?.();
+
+    // The saved preference ('en', index 2) must still win on re-entry - a
+    // fresh re-resolve carrying audioStreamIndex: 2 is expected.
+    await vi.waitFor(() => {
+      const englishCall = mockedGetPlaybackInfo.mock.calls.find(
+        (c) => (c[1] as { audioStreamIndex?: number })?.audioStreamIndex === 2,
+      );
+      expect(englishCall).toBeDefined();
+    }, { timeout: 3000 });
+  });
+
+  // THE confirmed root cause (see `AUDIO_READINESS_FALLBACK_MS`'s doc
+  // comment, VideoSurface.tsx): NEITHER readiness checkpoint (hls.js
+  // `MANIFEST_PARSED`, nor the <video> `canplay`/`loadedmetadata` DOM
+  // events) is guaranteed to fire within any bounded time - a paused,
+  // autoplay-blocked `<video>` (confirmed live: the video WAS paused at the
+  // moment of the bug) is exactly the kind of state where a browser can
+  // legitimately defer that work far longer than "the user is still on this
+  // screen". Before the fix, `applyCurrentAudioSelection`'s `allowFallback`
+  // gate had EXACTLY those three events as its only paths to `true` - the
+  // props-driven retry effect always forwarded whatever
+  // `audioReadyForInBandRef.current` currently was, never forcing it `true`
+  // on its own - so once genuinely missed, the saved preference was stuck
+  // for the rest of that mount, with NO other retry path. Verified RED
+  // against the pre-fix code (only 1 `getPlaybackInfo` call, forever); this
+  // is the permanent regression test for the fix (a bounded per-source
+  // timer, cleared on every `key` change/unmount, giving the fallback one
+  // guaranteed second chance).
+  it('when neither MANIFEST_PARSED nor canplay ever fires, the saved audio preference still re-resolves via the bounded safety net', { timeout: 8000 }, async () => {
+    setAudioPreference('en');
+    mockedGetPlaybackInfo.mockResolvedValue({
+      MediaSources: [
+        {
+          Id: 'ms-1',
+          Container: 'mkv',
+          TranscodingUrl: '/videos/item-i/master.m3u8',
+          SupportsDirectPlay: false,
+          SupportsDirectStream: false,
+          SupportsTranscoding: true,
+          MediaStreams: [],
+        },
+      ],
+      PlaySessionId: 'sess-i-1',
+    } as never);
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-i',
+      Name: 'Backrooms: Sin salida',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'spa', DisplayTitle: 'Español', IsDefault: true },
+        { Index: 2, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+      ],
+    } as never);
+
+    renderPlayer('jf-item-i');
+    await screen.findByTestId('pf-video');
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(1));
+
+    // Deliberately NEVER fire hlsManifestParsed, canPlay, or loadedMetadata -
+    // the video stays "paused, autoplay blocked, nothing ever became ready"
+    // for the whole test.
+    await vi.waitFor(
+      () => {
+        expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 6000 },
+    );
+    expect(mockedGetPlaybackInfo).toHaveBeenNthCalledWith(
+      2,
+      'jf-item-i',
+      expect.objectContaining({ audioStreamIndex: 2, mediaSourceId: 'ms-1' }),
+    );
+  });
+
+  // Regression for a real gap a `challenger` audit caught in the fix above
+  // (`manualAudioPickRef`, VideoSurface.tsx): the bounded safety-net timer
+  // races an in-flight MANUAL pick. `handleSelectAudio` marks
+  // `appliedAudioIndexRef` with the NEW pick synchronously, but
+  // `selectedAudioIndexRef` (React-prop-driven) only catches up once
+  // PlayerScreen's own re-resolve promise resolves - a timer firing DURING
+  // that window would see the OLD `selectedAudioIndexRef` value, wrongly
+  // conclude it "hasn't been applied yet", and fire a SECOND, stale
+  // `onAudioSwitchUnavailable` for the index the user just moved away from -
+  // a passive restore-the-saved-preference mechanism silently fighting an
+  // explicit, still-in-flight user action.
+  it('a manual audio pick still in flight is never raced by the readiness safety net', { timeout: 8000 }, async () => {
+    // Three tracks, saved preference 'es' (Spanish, index 2 - NOT the file's
+    // own default, index 1/English). Deliberate: the safety-net timer's
+    // stale read (`selectedAudioIndexRef.current`, unchanged until the
+    // in-flight pick's promise resolves) must land on an index that does
+    // NOT match the server default - otherwise `applyCurrentAudioSelection`
+    // takes its "already matches the file's default, nothing to do" early
+    // return (VideoSurface.tsx) regardless of the guard being tested, and
+    // the test would pass for the wrong reason. Spanish already differing
+    // from the default is exactly what makes the stale read dangerous: it
+    // looks like still-unapplied work to a naive re-check.
+    let call = 0;
+    mockedGetPlaybackInfo.mockImplementation(async () => {
+      call += 1;
+      return {
+        MediaSources: [
+          {
+            Id: 'ms-1',
+            Container: 'mkv',
+            TranscodingUrl: `/videos/item-j/master-${call}.m3u8`,
+            SupportsDirectPlay: false,
+            SupportsDirectStream: false,
+            SupportsTranscoding: true,
+            MediaStreams: [],
+          },
+        ],
+        PlaySessionId: `sess-j-${call}`,
+      } as never;
+    });
+    mockedGetItem.mockResolvedValue({
+      Id: 'jf-item-j',
+      Name: 'Backrooms: Sin salida',
+      UserData: { PlaybackPositionTicks: 0, PlayCount: 0, Played: false, IsFavorite: false },
+      MediaStreams: [
+        { Index: 1, Type: 'Audio', Language: 'eng', DisplayTitle: 'English', IsDefault: true },
+        { Index: 2, Type: 'Audio', Language: 'spa', DisplayTitle: 'Español', IsDefault: false },
+        { Index: 3, Type: 'Audio', Language: 'fre', DisplayTitle: 'Français', IsDefault: false },
+      ],
+    } as never);
+    setAudioPreference('es');
+
+    renderPlayer('jf-item-j');
+    await screen.findByTestId('pf-video');
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(1));
+    // Fire the FIRST source's own readiness checkpoint so the initial
+    // Spanish-preference restore settles immediately, without needing to
+    // wait out its own safety-net window too.
+    hlsInstances[0].handlers.hlsManifestParsed?.();
+    // Mount settles on Spanish via ONE re-resolve (saved pref differs from
+    // the file's English default) - this call is NOT held pending, only the
+    // manual pick below is. Wait for the SECOND hls instance too, not just
+    // the call count: `toHaveBeenCalledTimes` turns true the instant the
+    // mock fn is invoked (synchronously), which can win a race against
+    // React actually committing the re-resolved source/DOM under load - the
+    // new hls instance existing is proof the attach-source effect (and
+    // therefore the new `<video>`/menu subtree) has already run.
+    await vi.waitFor(() => expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(2));
+    await screen.findByTestId('pf-video');
+
+    // MANIFEST_PARSED is deliberately never fired for the SECOND source (the
+    // one attached after settling on Spanish) for the rest of this
+    // test - matches the "readiness never arrives" condition this whole fix
+    // targets, and means `attemptInBandAudioSwitch` fails for the manual
+    // pick below too (no in-band track data), forcing it down the same
+    // server-round-trip fallback path production hit.
+    fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Audio' });
+    expect(within(dialog).getByRole('button', { name: 'Español' })).toHaveAttribute('aria-pressed', 'true');
+
+    // The THIRD `getPlaybackInfo` call (the manual pick's own fallback,
+    // Spanish -> French) stays pending on purpose - this is the exact window
+    // the safety-net timer must not act in.
+    let resolveManualPick: ((value: unknown) => void) | null = null;
+    mockedGetPlaybackInfo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveManualPick = resolve;
+        }),
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Francés' }));
+    await vi.waitFor(() => expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(3));
+
+    // Let the safety-net window (AUDIO_READINESS_FALLBACK_MS) fully elapse
+    // WHILE the manual pick's own re-resolve is still unresolved. Without
+    // `manualAudioPickRef`'s guard, the timer's stale read
+    // (`selectedAudioIndexRef.current` still Spanish/index 2, since
+    // `setSelectedAudioIndex` only runs once the pending promise above
+    // resolves) mismatches the file's English default and fires a FOURTH,
+    // spurious re-resolve for Spanish - the index the user just moved away
+    // from.
+    await new Promise((resolve) => setTimeout(resolve, 4500));
+    expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(3);
+
+    // Resolving it now must settle cleanly on French, with no further calls
+    // (including from the NEW source's own safety-net timer, since
+    // `appliedAudioIndexRef` must already read as "French, done").
+    resolveManualPick?.({
+      MediaSources: [
+        {
+          Id: 'ms-1',
+          Container: 'mkv',
+          TranscodingUrl: '/videos/item-j/master-manual.m3u8',
+          SupportsDirectPlay: false,
+          SupportsDirectStream: false,
+          SupportsTranscoding: true,
+          MediaStreams: [],
+        },
+      ],
+      PlaySessionId: 'sess-j-manual',
+    });
+
+    await vi.waitFor(() => expect(hlsInstances.length).toBeGreaterThanOrEqual(3));
+    await screen.findByTestId('pf-video');
+    fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));
+    const settledDialog = await screen.findByRole('dialog', { name: 'Audio' });
+    expect(within(settledDialog).getByRole('button', { name: 'Francés' })).toHaveAttribute('aria-pressed', 'true');
+    expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(3);
+  });
+});

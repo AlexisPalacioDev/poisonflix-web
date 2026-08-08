@@ -7,6 +7,7 @@ import { usePlaybackHeartbeat } from '../../hooks/usePlaybackHeartbeat';
 import { usePlaybackInfo } from '../../hooks/usePlaybackInfo';
 import { createBrowserDeviceProfile } from '../../lib/domain/deviceProfile';
 import { isApiError } from '../../lib/http/errors';
+import { reportFailure } from '../../lib/obs/report';
 import {
   audioPreferenceKeyFor,
   resolveInitialAudio,
@@ -88,6 +89,20 @@ export function PlayerScreen() {
 
   const [selectedAudioIndex, setSelectedAudioIndex] = useState<number | null>(null);
   const [selectedSubtitleIndex, setSelectedSubtitleIndex] = useState<number | null>(null);
+  // Mirrors the state above so an ASYNC re-resolve reads the subtitle pick as
+  // it is WHEN THE REQUEST GOES OUT, not as it was in the render that created
+  // the callback. `handleAudioSwitchUnavailable` can be invoked from a
+  // timer/event whose closure was captured while this was still `null`, and
+  // it forwards the value to the server as `subtitleStreamIndex`: a stale
+  // `null` becomes `-1`, which Jellyfin reads as "no subtitles at all". An
+  // audio switch would then silently strip the auto-selected subtitle while
+  // the menu kept showing it ticked - the same lie-to-the-user shape as the
+  // bugs this screen has already been through. Written on every render (no
+  // dep array) because the only thing that matters is that it is current.
+  const selectedSubtitleIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    selectedSubtitleIndexRef.current = selectedSubtitleIndex;
+  });
   const [subtitleResolved, setSubtitleResolved] = useState(false);
 
   /** Set once EITHER an audio switch (`handleAudioSwitchUnavailable`) OR a
@@ -187,7 +202,9 @@ export function PlayerScreen() {
         // "Ninguno") - without this, an audio switch would silently hand the
         // decision back to the server's own default subtitle, possibly
         // changing (or re-adding) whatever the user had picked/turned off.
-        subtitleStreamIndex: selectedSubtitleIndex ?? -1,
+        // Read from the ref, never the closure: see its declaration for why a
+        // stale `null` here would tell the server to drop subtitles entirely.
+        subtitleStreamIndex: selectedSubtitleIndexRef.current ?? -1,
       });
       const resolved = resolvePlayback(itemId, playbackInfo, session.jellyfinToken);
       if (previousSession && previousSession !== resolved.playSessionId) {
@@ -206,8 +223,20 @@ export function PlayerScreen() {
       });
       setSelectedAudioIndex(track.index);
       setAudioPreference(audioPreferenceKeyFor(track));
-    } catch {
-      // Best-effort: leave current playback untouched if the re-resolve fails.
+    } catch (error) {
+      // Best-effort: leave current playback untouched if the re-resolve
+      // fails. NOT a fix for the exit-and-reenter audio-restore bug
+      // (VideoSurface.tsx's `AUDIO_READINESS_FALLBACK_MS` doc comment) - a
+      // failure here is a SEPARATE, equally plausible way to produce the
+      // exact same "saved preference never makes it to the stream" symptom,
+      // since `VideoSurface` already marks its own `appliedAudioIndexRef`
+      // before this promise settles and has no way to know it failed. Was a
+      // fully silent `catch {}` before (see `lib/obs/report.ts`'s header for
+      // why that pattern is a known problem in this codebase) - reporting it
+      // at least makes a real failure here distinguishable (during triage)
+      // from the readiness-gate bug the timer fixes, instead of both looking
+      // identical from the outside.
+      reportFailure('player.audioSwitchUnavailable', error, { itemId, audioStreamIndex: track.index });
     }
   };
 
