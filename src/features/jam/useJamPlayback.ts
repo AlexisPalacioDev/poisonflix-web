@@ -4,6 +4,7 @@ import type { JamSnapshot, JamTrack } from '../../api/schemas/jam';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { getSession } from '../../lib/session/store';
 import { useOptionalMusicPlayer } from '../music/musicPlayerCore';
+import { useJamDestination } from './destination';
 import { followPlayhead, shouldSound } from './jamPlayhead';
 
 // Makes a device actually play what the room is playing.
@@ -88,9 +89,16 @@ export function useJamPlayback(
   const lastSrcRef = useRef<string | null>(null);
   const player = useOptionalMusicPlayer();
 
+  // The chosen output, not the room state, is what decides which element owns
+  // the speaker. It changes the instant the card is tapped, while `snapshot`
+  // only catches up when SSE says so — and for the one render in between, the
+  // stale snapshot still says "keep playing".
+  const routedToJam = useJamDestination() != null;
+
   const mode = snapshot?.jam.mode ?? 'king';
   const present = snapshot ? new Set(snapshot.present) : new Set<string>();
-  const active = snapshot ? shouldSound(mode, ownUserId, snapshot.leaderId, present) : false;
+  const active =
+    routedToJam && snapshot ? shouldSound(mode, ownUserId, snapshot.leaderId, present) : false;
 
   // Only `everyone` mode has anything to agree about: in `king` a single
   // device makes the sound, so four round trips per room opening would buy
@@ -138,30 +146,63 @@ export function useJamPlayback(
     };
   }, [audioRef]);
 
-  // The app's own player and the Jam cannot both own the speaker. The Jam is
-  // the deliberate act, so it wins, and the other one stops.
+  // The app's own player and the Jam cannot both own the speaker. The chosen
+  // output wins, and the other one stops.
   //
-  // Watching `isPlaying` and not only the transition into `active`: the
-  // NowPlayingBar stays mounted underneath this screen, so its play button is
-  // reachable from inside a Jam room, and pressing it would leave two elements
-  // sounding at once. Guarding on `active` is what keeps this from fighting
-  // the user once they have left.
+  // Keyed on `routedToJam` rather than `active`: picking a room is the choice,
+  // and it has to silence the local element immediately — waiting for `active`
+  // left the local song playing for the whole SSE round trip, and left it
+  // playing forever in `king` mode for anyone who is not the acting leader,
+  // whose device is a remote and is meant to be silent.
+  //
+  // Watching `isPlaying` and not only the transition, and STILL necessary now
+  // that the bar's play button sends transport to the room instead of toggling
+  // the local element. The bar was never the only thing that could start local
+  // playback: the lock-screen MediaSession handlers call the local player's
+  // TOGGLE directly, and `advanceFromMediaEvent` sets `isPlaying` from the
+  // element's own `ended`/`error` events — either can wake the local element
+  // while a Jam owns the speaker. It also remains what silences a local track
+  // the instant a room is chosen mid-song.
+  //
+  // It cannot fight the user, because with a Jam selected there is no longer
+  // any path that deliberately asks for local sound: `playNow` and `enqueue`
+  // both route to the room (MusicPlayerProvider's `sendToJam`), and the bar's
+  // transport does too. Every remaining caller is something to override.
   const playerIsPlaying = player?.isPlaying ?? false;
   const playerToggle = player?.toggle;
   useEffect(() => {
-    if (active && playerIsPlaying) playerToggle?.();
-  }, [active, playerIsPlaying, playerToggle]);
+    if (routedToJam && playerIsPlaying) playerToggle?.();
+  }, [routedToJam, playerIsPlaying, playerToggle]);
+
+  // The volume slider in the bar sets the app's volume, and while a Jam is the
+  // output THIS element is the one making sound — so it has to obey it too, or
+  // the control would be visibly present and audibly inert.
+  const playerVolume = player?.volume ?? 1;
+  const playerMuted = player?.muted ?? false;
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.volume = playerVolume;
+    audio.muted = playerMuted;
+  }, [playerVolume, playerMuted, audioRef]);
 
   // Load the right track. Kept separate from the follow loop so a position
   // correction never reloads the source — assigning `src` restarts playback,
   // which would be audible on every single nudge.
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !snapshot) return;
+    if (!audio) return;
+    // Silence comes before every other consideration, and before the snapshot
+    // check in particular. Leaving a room clears the snapshot in the same
+    // cycle that clears `active`, so a `!snapshot` guard placed above this one
+    // returned early and the room's song kept playing on top of whatever the
+    // local player started next — two tracks at once, which is the bug this
+    // ordering exists to prevent.
     if (!active) {
       audio.pause();
       return;
     }
+    if (!snapshot) return;
     const track = snapshot.jam.queue[snapshot.jam.current.index] ?? null;
     const src = trackSrc(track);
     if (!src) {
