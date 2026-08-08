@@ -13,6 +13,25 @@ import { useAuth } from './useAuth';
 // §4.2 - PlaybackInfo must reflect the server's current transcode decision
 // on every play, never served stale from a previous visit.
 //
+// "Every play" does NOT mean "every time the tab regains focus" - hence the
+// two `refetchOn*` opt-outs below. Jellyfin mints a FRESH `PlaySessionId` on
+// every PlaybackInfo call, which changes the stream URL, which changes
+// `VideoSurface`'s `sourceKey`, which tears down hls.js and reloads the
+// <video> from zero. Measured live against 192.168.1.50:8600: alt-tab away
+// from a movie at 43s and back, and the element emitted `emptied` ->
+// `loadstart` -> `play` -> `waiting` with `currentTime` reset to 0 and a
+// second `PlaySessionId` on the wire. `refetchOnReconnect` is the same
+// mechanism behind a network blip. Neither event is a new play.
+//
+// Two SEPARATE mechanisms keep §4.2 honest without the focus refetch, and
+// it takes both - do not assume either one covers the other:
+//   - Opening the player fresh: `refetchOnMount` (default `true`) plus
+//     `staleTime: 0` means the mount always re-resolves.
+//   - Skipping to the next episode: `PlayerScreen` navigates with `replace`
+//     and NEVER unmounts, so `refetchOnMount` does nothing there. What saves
+//     that path is the query key changing with `itemId` (`queryKeys.ts`) -
+//     a different key is a different query, so it fetches on its own.
+//
 // Also fetches the plain Jellyfin `Item` (not the Jellyseerr movie-details
 // shape `useMovieDetail` uses) because resume position
 // (`UserData.PlaybackPositionTicks`) and the display title only live on the
@@ -65,6 +84,8 @@ export function usePlaybackInfo(itemId: string) {
     },
     enabled: Boolean(itemId && userId && token),
     staleTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
 }
