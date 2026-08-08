@@ -107,6 +107,56 @@ export type JellyfinQueryResult = z.infer<typeof JellyfinQueryResultSchema>;
 // PlaybackInfo: POST /Items/{itemId}/PlaybackInfo
 // ---------------------------------------------------------------------------
 
+// Delivery method Jellyfin used for ONE subtitle stream in THIS specific
+// playback session - ported from the server's own
+// `MediaBrowser.Model.Dlna.SubtitleDeliveryMethod` enum (verified against
+// jellyfin/jellyfin v10.11.11's source, tag-pinned). `Encode` is the one that
+// matters for the player's dedup bug fix: it means the server already burned
+// the subtitle into the transcoded video's PIXELS
+// (`Jellyfin.Api.Helpers.MediaInfoHelper.SetDeviceSpecificSubtitleInfo` sets
+// this per-stream), so a client-side `<track>`/hls.js text rendition for that
+// SAME stream would show the same text twice. This field is only ever
+// populated on a MediaStream returned INSIDE a `PlaybackInfo` response's
+// `MediaSources` (that helper mutates the MediaSource's own in-memory copy of
+// the stream) - a generic `/Items/{id}` fetch's `MediaStreams` never runs
+// that device-profile-specific logic, so `JellyfinItemSchema` deliberately
+// keeps `MediaStreams` as `z.array(z.unknown())` (parsed separately + only
+// for menu labels by `features/player/mediaStreamTracks.ts`) rather than
+// implying a field that would always come back empty there.
+export const SubtitleDeliveryMethodSchema = z.enum(['Encode', 'Embed', 'External', 'Hls', 'Drop']);
+export type SubtitleDeliveryMethod = z.infer<typeof SubtitleDeliveryMethodSchema>;
+
+// A single entry of `JellyfinMediaSourceSchema.MediaStreams` (Video, Audio,
+// Subtitle, or EmbeddedImage - only `Type`/`Index`/`DeliveryMethod` are
+// needed here; richer per-kind parsing for menu display already lives in
+// `features/player/mediaStreamTracks.ts`'s own `parseMediaStream`, which
+// reads the equally-loose `JellyfinItemSchema.MediaStreams` instead).
+export const JellyfinMediaStreamSchema = z.object({
+  Index: z.number(),
+  Type: z.string(),
+  Codec: z.string().nullable().optional(),
+  Language: z.string().nullable().optional(),
+  DisplayTitle: z.string().nullable().optional(),
+  Title: z.string().nullable().optional(),
+  IsDefault: z.boolean().default(false),
+  IsForced: z.boolean().default(false),
+  IsExternal: z.boolean().default(false),
+  // Parsed as a plain string ON PURPOSE, even though the meaningful values
+  // are the five in `SubtitleDeliveryMethodSchema`. Zod fails a whole array
+  // when a SINGLE item fails, and `MediaStreams` nests inside `MediaSources`
+  // inside the `PlaybackInfo` response - so validating this as a strict enum
+  // meant one subtitle carrying a value the enum never heard of (newer
+  // server, fork, undocumented value) failed the entire response, `apiFetch`
+  // raised, and the title refused to PLAY AT ALL. Trading playback for a
+  // cosmetic field is never the right call.
+  //
+  // Narrowing to the union happens downstream in `subtitleDeliveryMethodsOf`,
+  // which keeps only recognized values - unknown ones simply read as "no
+  // delivery method", the same state as before this field existed.
+  DeliveryMethod: z.string().nullable().optional(),
+});
+export type JellyfinMediaStream = z.infer<typeof JellyfinMediaStreamSchema>;
+
 export const JellyfinMediaSourceSchema = z.object({
   Id: z.string(),
   Path: z.string().nullable().optional(),
@@ -119,7 +169,7 @@ export const JellyfinMediaSourceSchema = z.object({
   // this is streamResolver.ts's single decision point (Slice 2/7, not this one).
   TranscodingUrl: z.string().nullable().optional(),
   TranscodingSubProtocol: z.string().nullable().optional(),
-  MediaStreams: z.array(z.unknown()).default([]),
+  MediaStreams: z.array(JellyfinMediaStreamSchema).default([]),
   DefaultAudioStreamIndex: z.number().nullable().optional(),
   DefaultSubtitleStreamIndex: z.number().nullable().optional(),
 });

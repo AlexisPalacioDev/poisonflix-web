@@ -23,7 +23,7 @@ import './TrackMenu.css';
 // than a component-local handler - `.pf-track-menu` is now OverlayShell's own
 // backdrop node (it already had the dim/flex-center styling that role needs).
 
-interface TrackMenuScaffoldProps {
+export interface TrackMenuScaffoldProps {
   title: string;
   onDismiss: () => void;
   children: React.ReactNode;
@@ -33,7 +33,10 @@ interface TrackMenuScaffoldProps {
   container?: Element | null;
 }
 
-function TrackMenuScaffold({ title, onDismiss, children, container }: TrackMenuScaffoldProps) {
+// Exported so `EpisodeMenu` (episode prev/next/jump navigation) can reuse
+// this exact scaffold + option button instead of re-implementing the same
+// OverlayShell dialog pattern a third time.
+export function TrackMenuScaffold({ title, onDismiss, children, container }: TrackMenuScaffoldProps) {
   const listRef = useRef<HTMLDivElement>(null);
 
   // Claim focus the instant the sheet appears so keyboard users can move
@@ -65,13 +68,13 @@ function TrackMenuScaffold({ title, onDismiss, children, container }: TrackMenuS
   );
 }
 
-interface TrackOptionButtonProps {
+export interface TrackOptionButtonProps {
   label: string;
   isSelected: boolean;
   onClick: () => void;
 }
 
-function TrackOptionButton({ label, isSelected, onClick }: TrackOptionButtonProps) {
+export function TrackOptionButton({ label, isSelected, onClick }: TrackOptionButtonProps) {
   return (
     <button
       type="button"

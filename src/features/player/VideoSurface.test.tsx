@@ -1,7 +1,8 @@
 import { createRef } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VideoSurface } from './VideoSurface';
+import type { MediaStreamTrack } from './mediaStreamTracks';
 
 // Fake `hls.js` module - jsdom has no MediaSource Extensions, so the real
 // `Hls.isSupported()` always returns false in this test environment; a
@@ -70,7 +71,23 @@ const trackMenuDefaultProps = {
   onAudioApplied: noop,
   onAudioSwitchUnavailable: noop,
   onSubtitleApplied: noop,
+  // Per-index DeliveryMethod for the CURRENT resolved source's subtitle
+  // MediaStreams (player spec: burned-in subtitle dedup bug fix) - empty by
+  // default, matching a DirectPlay/no-transcode session where nothing is
+  // server-burned. `onSubtitleSwitchUnavailable` mirrors
+  // `onAudioSwitchUnavailable`: fired instead of a purely client-side toggle
+  // when the active source has ANYTHING burned in (switching away needs a
+  // fresh PlaybackInfo re-resolve, not just hiding a `<track>`).
+  subtitleDeliveryMethods: {},
+  onSubtitleSwitchUnavailable: noop,
   buildSubtitleUrl: () => '',
+  // Episode prev/next/jump navigation (player spec: only for `Episode`
+  // items) - inert defaults for every suite in this file that isn't
+  // exercising it directly (mirrors trackMenuDefaultProps' own reasoning).
+  isEpisode: false,
+  episodes: [],
+  currentEpisodeId: '',
+  onSelectEpisode: noop,
 };
 
 const directPlaySource = { kind: 'DirectPlay' as const, url: '/jellyfin/Videos/item-1/stream.mp4' };
@@ -364,5 +381,181 @@ describe('VideoSurface — Transcoded (hls.js seam, design.md §10)', () => {
 
     expect(hlsInstances).toHaveLength(0);
     expect(onUnsupported).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Bug fix: DeliveryMethod: 'Encode' means Jellyfin already burned the
+// subtitle into the transcoded video's PIXELS (live evidence: Solo Leveling
+// S02E02, PlaybackInfo returned `{ Index: 2, Codec: 'ass', DeliveryMethod:
+// 'Encode' }`; the ORIGINAL file has no burned-in text at t=117s - confirmed
+// via ffmpeg frame extraction). Mounting a client-side <track> (or hls.js
+// text rendition) for that SAME stream on top doubles the same text on
+// screen. The client must never do that for an Encode-delivered stream, even
+// though it stays the SELECTED entry in the track menu (the user IS
+// effectively watching it - it's just not the client's job to render it).
+describe('VideoSurface — burned-in subtitles (DeliveryMethod: "Encode") must not double-render (bug fix)', () => {
+  const burnedInTrack: MediaStreamTrack = {
+    index: 2,
+    kind: 'Subtitle',
+    language: 'fra',
+    displayTitle: 'Français',
+    isDefault: false,
+    isForced: false,
+  };
+  const normalTrack: MediaStreamTrack = {
+    index: 3,
+    kind: 'Subtitle',
+    language: 'spa',
+    displayTitle: 'Español',
+    isDefault: false,
+    isForced: false,
+  };
+
+  it('mounts no client-side <track> for a subtitle whose DeliveryMethod is "Encode", even though it is the SELECTED index', () => {
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[burnedInTrack]}
+        selectedSubtitleIndex={burnedInTrack.index}
+        subtitleDeliveryMethods={{ [burnedInTrack.index]: 'Encode' }}
+        buildSubtitleUrl={() => '/jellyfin/Videos/item-1/ms-1/Subtitles/2/Stream.vtt'}
+        source={transcodedSource}
+        resumeSeconds={0}
+        title="Solo Leveling S02E02"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    expect(video.querySelectorAll('track')).toHaveLength(0);
+  });
+
+  it('still mounts + shows a NORMAL (non-Encode) subtitle track normally, next to a burned-in one', () => {
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[burnedInTrack, normalTrack]}
+        selectedSubtitleIndex={normalTrack.index}
+        subtitleDeliveryMethods={{ [burnedInTrack.index]: 'Encode', [normalTrack.index]: 'External' }}
+        buildSubtitleUrl={(track) => `/jellyfin/Videos/item-1/ms-1/Subtitles/${track.index}/Stream.vtt`}
+        source={transcodedSource}
+        resumeSeconds={0}
+        title="Solo Leveling S02E02"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    const tracks = video.querySelectorAll('track');
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]).toHaveAttribute('srclang', 'spa');
+  });
+});
+
+describe('VideoSurface — episode prev/next/jump navigation (owner request)', () => {
+  // `imageTag: null` = no still frame; the menu falls back to a text-only row.
+  const s1e1 = { id: 'ep-1', seasonNumber: 1, episodeNumber: 1, title: 'Pilot', imageTag: null };
+  const s1e2 = { id: 'ep-2', seasonNumber: 1, episodeNumber: 2, title: 'Second', imageTag: null };
+  const s2e1 = { id: 'ep-3', seasonNumber: 2, episodeNumber: 1, title: 'Return', imageTag: null };
+  const episodes = [s1e1, s1e2, s2e1];
+
+  function renderSurface(overrides: Partial<Parameters<typeof VideoSurface>[0]> = {}) {
+    const videoRef = createRef<HTMLVideoElement>();
+    return render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Some episode"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+        {...overrides}
+      />,
+    );
+  }
+
+  it('a movie (isEpisode: false) renders none of the three controls', () => {
+    renderSurface({ isEpisode: false, episodes, currentEpisodeId: s1e1.id });
+
+    expect(screen.queryByRole('button', { name: 'Episodio anterior' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Episodio siguiente' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Episodios' })).not.toBeInTheDocument();
+  });
+
+  it('an episode renders all three controls', () => {
+    renderSurface({ isEpisode: true, episodes, currentEpisodeId: s1e1.id });
+
+    expect(screen.getByRole('button', { name: 'Episodio anterior' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Episodio siguiente' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Episodios' })).toBeInTheDocument();
+  });
+
+  it('disables "Episodios" while the list is still loading (empty), instead of opening an empty dialog', () => {
+    renderSurface({ isEpisode: true, episodes: [], currentEpisodeId: s1e1.id });
+    expect(screen.getByRole('button', { name: 'Episodios' })).toBeDisabled();
+  });
+
+  it('disables "anterior" on the first episode and "siguiente" on the last', () => {
+    const { unmount } = renderSurface({ isEpisode: true, episodes, currentEpisodeId: s1e1.id });
+    expect(screen.getByRole('button', { name: 'Episodio anterior' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Episodio siguiente' })).not.toBeDisabled();
+    unmount();
+
+    renderSurface({ isEpisode: true, episodes, currentEpisodeId: s2e1.id });
+    expect(screen.getByRole('button', { name: 'Episodio anterior' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Episodio siguiente' })).toBeDisabled();
+  });
+
+  it('"siguiente" crosses a season boundary: last of S1 -> first of S2', () => {
+    const onSelectEpisode = vi.fn();
+    renderSurface({ isEpisode: true, episodes, currentEpisodeId: s1e2.id, onSelectEpisode });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Episodio siguiente' }));
+    expect(onSelectEpisode).toHaveBeenCalledWith(s2e1.id);
+  });
+
+  it('"anterior" navigates to the previous episode id', () => {
+    const onSelectEpisode = vi.fn();
+    renderSurface({ isEpisode: true, episodes, currentEpisodeId: s1e2.id, onSelectEpisode });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Episodio anterior' }));
+    expect(onSelectEpisode).toHaveBeenCalledWith(s1e1.id);
+  });
+
+  it('the episode menu lists every episode, marks the current one, and selecting closes it and navigates', () => {
+    const onSelectEpisode = vi.fn();
+    renderSurface({ isEpisode: true, episodes, currentEpisodeId: s1e2.id, onSelectEpisode });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Episodios' }));
+    const dialog = screen.getByRole('dialog', { name: 'Episodios' });
+
+    const current = within(dialog).getByRole('button', { name: /T1 E2/ });
+    expect(current).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByRole('button', { name: /T1 E1/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(dialog).getByRole('button', { name: /T2 E1/ })).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /T2 E1/ }));
+
+    expect(onSelectEpisode).toHaveBeenCalledWith(s2e1.id);
+    expect(screen.queryByRole('dialog', { name: 'Episodios' })).not.toBeInTheDocument();
   });
 });

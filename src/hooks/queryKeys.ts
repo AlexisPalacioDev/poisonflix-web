@@ -44,6 +44,12 @@ export const queryKeys = {
   musicSearch: (debouncedQuery: string, source: string) =>
     ['music', 'search', debouncedQuery, source] as const,
   musicLibrary: (userId: string) => ['music', 'library', userId] as const,
+  // Just the count of Audio items, for surfaces that print a number and nothing
+  // else (the /musica entry card). Nested *under* `musicLibrary` on purpose:
+  // react-query matches invalidations by key prefix, so every existing
+  // `invalidateQueries(musicLibrary(userId))` after a download or a delete
+  // refreshes the count too, with no extra call site to remember.
+  musicLibraryCount: (userId: string) => ['music', 'library', userId, 'count'] as const,
   musicJob: (jobId: string) => ['music', 'job', jobId] as const,
   // Música browse (Slice 3): album/artist grids (keyed by user) and the two
   // detail views — an album's track list and an artist's albums (keyed by id).
@@ -108,4 +114,8 @@ export const queryKeys = {
   // both are already scoped to the caller by the BFF's own session cookie.
   jamList: () => ['jam', 'list'] as const,
   jamDirectory: () => ['jam', 'directory'] as const,
+  // Player episode prev/next/jump navigation (owner request): a series' full
+  // playable episode list, keyed by series id so paging between siblings
+  // reuses the same cache entry instead of refetching per episode.
+  seriesEpisodeList: (seriesId: string) => ['player', 'seriesEpisodeList', seriesId] as const,
 };

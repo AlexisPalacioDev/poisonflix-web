@@ -1,4 +1,5 @@
-import type { JellyfinMediaSource, JellyfinPlaybackInfoResponse } from '../../api/schemas/jellyfin';
+import { SubtitleDeliveryMethodSchema } from '../../api/schemas/jellyfin';
+import type { JellyfinMediaSource, JellyfinPlaybackInfoResponse, SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 
 // Stream resolution + DirectPlay `<video>` auth, ported from `StreamResolver.kt`
 // (design.md §3.3, §10; player spec). MVP scope only: DirectPlay via the
@@ -21,6 +22,38 @@ export interface ResolvedStream {
   source: PlaybackSource;
   mediaSourceId: string;
   playSessionId: string | null;
+  /** Subtitle stream index -> `DeliveryMethod`, as Jellyfin resolved it for
+   * THIS specific playback session (subtitle dedup bug fix - see
+   * `SubtitleDeliveryMethod`'s doc comment in `api/schemas/jellyfin.ts`).
+   * Only subtitle-typed `MediaStreams` entries with a `DeliveryMethod` are
+   * included - most entries won't have one at all (only the stream the
+   * server actually resolved/is delivering carries it). Empty for a
+   * DirectPlay source (no transcode -> nothing ever gets burned in). */
+  subtitleDeliveryMethods: Record<number, SubtitleDeliveryMethod>;
+}
+
+/**
+ * Extracts the per-subtitle-stream `DeliveryMethod` map from a resolved
+ * `MediaSource` (subtitle dedup bug fix). Pure + exported on its own so
+ * `resolvePlayback` stays a thin composition and this one piece is
+ * independently testable against a raw `MediaStreams` fixture.
+ */
+export function subtitleDeliveryMethodsOf(mediaSource: JellyfinMediaSource): Record<number, SubtitleDeliveryMethod> {
+  const result: Record<number, SubtitleDeliveryMethod> = {};
+  for (const stream of mediaSource.MediaStreams) {
+    if (stream.Type !== 'Subtitle' || stream.DeliveryMethod == null) continue;
+    // The wire type is a plain string so that an unrecognized value can never
+    // fail the response parse (see the field's comment in
+    // `api/schemas/jellyfin.ts`). This is where it narrows: anything outside
+    // the known five is dropped, and the caller reads that stream as having
+    // no delivery method - which is exactly how it behaved before the field
+    // was modelled at all.
+    const parsed = SubtitleDeliveryMethodSchema.safeParse(stream.DeliveryMethod);
+    if (parsed.success) {
+      result[stream.Index] = parsed.data;
+    }
+  }
+  return result;
 }
 
 const TICKS_PER_MS = 10_000;
@@ -151,5 +184,6 @@ export function resolvePlayback(
     source: resolveStreamSource(itemId, mediaSource, token, base),
     mediaSourceId: mediaSource.Id,
     playSessionId: playbackInfo.PlaySessionId ?? null,
+    subtitleDeliveryMethods: subtitleDeliveryMethodsOf(mediaSource),
   };
 }

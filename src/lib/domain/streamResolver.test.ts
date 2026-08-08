@@ -7,6 +7,7 @@ import {
   resolveStreamSource,
   resumePositionMs,
   secondsToTicks,
+  subtitleDeliveryMethodsOf,
   ticksToMs,
 } from './streamResolver';
 
@@ -141,6 +142,7 @@ describe('resolvePlayback', () => {
       },
       mediaSourceId: 'ms-1',
       playSessionId: 'session-1',
+      subtitleDeliveryMethods: {},
     });
   });
 
@@ -161,6 +163,78 @@ describe('resolvePlayback', () => {
     expect(() => resolvePlayback('item-1', playbackInfo, 'TOKEN', '/jellyfin')).toThrow(
       'Jellyfin returned no MediaSources for item item-1',
     );
+  });
+});
+
+// Subtitle dedup bug fix (player spec): `DeliveryMethod` on a subtitle
+// MediaStream means the server already decided how THIS session delivers it
+// - `Encode` means burned into the video's pixels, which the client must
+// never ALSO sideload (see `mediaStreamTracks.ts`'s `isBurnedInSubtitle`).
+describe('subtitleDeliveryMethodsOf', () => {
+  it('maps subtitle stream index -> DeliveryMethod, ignoring non-subtitle streams and streams without one', () => {
+    const source = mediaSource({
+      Id: 'ms-1',
+      MediaStreams: [
+        { Index: 0, Type: 'Video' },
+        { Index: 1, Type: 'Audio', DeliveryMethod: undefined },
+        { Index: 2, Type: 'Subtitle', Codec: 'ass', DeliveryMethod: 'Encode' },
+        { Index: 3, Type: 'Subtitle', Codec: 'subrip' },
+      ] as never,
+    });
+
+    expect(subtitleDeliveryMethodsOf(source)).toEqual({ 2: 'Encode' });
+  });
+
+  it('returns an empty map when MediaStreams is empty (DirectPlay - no transcode, nothing burned in)', () => {
+    const source = mediaSource({ Id: 'ms-1', MediaStreams: [] });
+    expect(subtitleDeliveryMethodsOf(source)).toEqual({});
+  });
+
+  // The wire field is a plain string so an unrecognized value can never fail
+  // the whole PlaybackInfo parse and block playback. This is where it gets
+  // filtered: an unknown method reads as "no delivery method", so the client
+  // treats that subtitle exactly as it did before the field was modelled -
+  // and, crucially, the recognized stream beside it survives.
+  it('drops a DeliveryMethod outside the known set instead of trusting it', () => {
+    const source = mediaSource({
+      Id: 'ms-1',
+      MediaStreams: [
+        { Index: 2, Type: 'Subtitle', Codec: 'ass', DeliveryMethod: 'SomeFutureMethod' },
+        { Index: 3, Type: 'Subtitle', Codec: 'subrip', DeliveryMethod: 'Encode' },
+      ] as never,
+    });
+
+    expect(subtitleDeliveryMethodsOf(source)).toEqual({ 3: 'Encode' });
+  });
+
+  it('can carry more than one entry (e.g. an External subtitle alongside an Encode-delivered one)', () => {
+    const source = mediaSource({
+      Id: 'ms-1',
+      MediaStreams: [
+        { Index: 2, Type: 'Subtitle', DeliveryMethod: 'Encode' },
+        { Index: 3, Type: 'Subtitle', DeliveryMethod: 'External' },
+      ] as never,
+    });
+
+    expect(subtitleDeliveryMethodsOf(source)).toEqual({ 2: 'Encode', 3: 'External' });
+  });
+});
+
+describe('resolvePlayback — subtitleDeliveryMethods pass-through (subtitle dedup bug fix)', () => {
+  it('carries the resolved MediaSource\'s subtitle DeliveryMethod map', () => {
+    const playbackInfo: JellyfinPlaybackInfoResponse = {
+      MediaSources: [
+        mediaSource({
+          Id: 'ms-1',
+          TranscodingUrl: '/videos/item-1/master.m3u8',
+          MediaStreams: [{ Index: 2, Type: 'Subtitle', Codec: 'ass', DeliveryMethod: 'Encode' }] as never,
+        }),
+      ],
+      PlaySessionId: 'session-1',
+    };
+
+    const resolved = resolvePlayback('item-1', playbackInfo, 'TOKEN', '/jellyfin');
+    expect(resolved.subtitleDeliveryMethods).toEqual({ 2: 'Encode' });
   });
 });
 

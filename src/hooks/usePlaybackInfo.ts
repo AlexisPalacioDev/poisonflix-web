@@ -24,6 +24,15 @@ export interface PlaybackData {
    * seek - `0` means "no seek" per the player spec. */
   resumeSeconds: number;
   title: string;
+  /** Jellyfin item `Type` ('Episode', 'Movie', ...) - the player only shows
+   * episode prev/next/jump navigation when this is 'Episode' (owner request:
+   * navigate between a series' chapters from the player). */
+  type: string | null;
+  /** The parent series' item id - only present on `Episode` items. Feeds
+   * `useSeriesEpisodeList` to fetch the full episode list for prev/next. */
+  seriesId: string | null;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
 }
 
 export function usePlaybackInfo(itemId: string) {
@@ -48,6 +57,10 @@ export function usePlaybackInfo(itemId: string) {
         resolved: resolvePlayback(itemId, playbackInfo, token),
         resumeSeconds: resumePositionMs(item.UserData?.PlaybackPositionTicks) / 1000,
         title: displayTitle(item.Name),
+        type: item.Type ?? null,
+        seriesId: item.SeriesId ?? null,
+        seasonNumber: item.ParentIndexNumber ?? null,
+        episodeNumber: item.IndexNumber ?? null,
       };
     },
     enabled: Boolean(itemId && userId && token),

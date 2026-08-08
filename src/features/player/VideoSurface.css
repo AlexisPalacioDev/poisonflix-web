@@ -108,6 +108,13 @@
   outline-offset: 2px;
 }
 
+/* Episode prev/next at the first/last episode of the series. */
+.pf-player-surface__icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
 .pf-icon {
   display: block;
   width: 24px;

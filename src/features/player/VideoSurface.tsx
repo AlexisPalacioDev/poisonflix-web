@@ -1,9 +1,12 @@
 import Hls from 'hls.js';
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import type { PlaybackSource } from '../../lib/domain/streamResolver';
-import { audioTracksOf, subtitleTracksOf, trackLabel, type MediaStreamTrack } from './mediaStreamTracks';
+import { audioTracksOf, isBurnedInSubtitle, subtitleTracksOf, trackLabel, type MediaStreamTrack } from './mediaStreamTracks';
 import { formatSeekStep, newSeekRun, nextSeekStep, RESET_AFTER_MS } from '../../lib/domain/seekAccelerator';
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
+import { EpisodeMenu } from './EpisodeMenu';
+import { nextEpisode, previousEpisode, type EpisodeNavItem } from './episodeNavigation';
 import './VideoSurface.css';
 
 // `<video>` wrapper (design.md §10, ← `PlaybackController.kt`, tasks.md
@@ -34,26 +37,66 @@ import './VideoSurface.css';
 // + `PlaybackController.selectAudioTrack`/`selectSubtitleTrack`)
 //
 // Audio:
-// - DirectPlay: the browser's `HTMLVideoElement.audioTracks` API (feature-
-//   detected - it's a real but inconsistently-implemented W3C API; Chrome
-//   ships it, Firefox/Safari support varies) - tracks are correlated to
-//   Jellyfin's `MediaStream`s by ORDINAL position (Nth audio MediaStream <->
-//   Nth `audioTracks` entry), same assumption (and same "not verified against
-//   a real multi-audio-track file" caveat) as `PlaybackController.kt`'s
-//   header.
+// - DirectPlay: attempts the browser's `HTMLVideoElement.audioTracks` API
+//   (feature-detected, `attemptInBandAudioSwitch` below) - tracks are
+//   correlated to Jellyfin's `MediaStream`s by ORDINAL position (Nth audio
+//   MediaStream <-> Nth `audioTracks` entry). CORRECTION: an earlier version
+//   of this comment claimed "Chrome ships it" - that is FALSE, verified
+//   against a real Chromium build (`'audioTracks' in
+//   document.createElement('video')` is `false`; `window.AudioTrackList` is
+//   `undefined`). Safari has partial support, Firefox behind a pref. This
+//   branch is therefore currently dead code on Chromium, which makes it dead
+//   for the large majority of this app's real users - flagged here so the
+//   next person doesn't spend an evening debugging "why doesn't switching
+//   work" assuming the API is there. It is intentionally still IN the code
+//   (feature-detected, cheap, harmless where it doesn't apply) so it starts
+//   working the moment either fact changes, and so both the manual pick
+//   (`handleSelectAudio`) and the initial-restore path
+//   (`applyCurrentAudioSelection`) try it consistently rather than one of
+//   them skipping it.
 // - Transcoded: `hls.audioTracks`/`hls.audioTrack`, same ordinal correlation,
 //   ONLY attempted when hls.js actually offers more than one audio rendition
 //   (`hls.audioTracks.length > 1`) - in practice a Jellyfin HLS transcode
 //   almost always muxes exactly ONE server-picked audio stream, so this path
 //   is rarely available; that's expected, not a bug.
 // - Fallback (whenever neither of the above applies - most Transcoded
-//   sessions, or a browser without `audioTracks`): `onAudioSwitchUnavailable`
-//   signals the parent (`PlayerScreen`) to re-resolve `PlaybackInfo` with the
-//   picked `AudioStreamIndex` and reopen at the saved position - the actual
-//   primary path for transcode audio switching, ported as
-//   `switchAudioUnderTranscode`.
+//   sessions, or DirectPlay in Chrome): `onAudioSwitchUnavailable` signals
+//   the parent (`PlayerScreen`) to re-resolve `PlaybackInfo` with the picked
+//   `AudioStreamIndex` and reopen at the saved position - the primary,
+//   WORKING path for Transcoded audio switching (the server bakes the
+//   requested index into the HLS it builds), ported as
+//   `switchAudioUnderTranscode`. For a DirectPlay source this fallback is a
+//   structural no-op: `buildDirectPlayUrl` (streamResolver.ts) always
+//   requests Jellyfin's `static=true` stream, which the server serves
+//   byte-for-byte unprocessed - confirmed against Jellyfin server source
+//   (`VideosController`'s static/progressive branches never read
+//   `audioStreamIndex`). So: on Chromium, with a DirectPlay-eligible file,
+//   NEITHER the manual pick NOR the initial restore can currently change
+//   what's audible - a real, pre-existing architecture gap. Fixing it for
+//   real needs the server's Direct Stream (remux) mode instead of a static
+//   passthrough, which is a genuinely separate change (this app is
+//   DirectPlay-only by design - see this file's MVP-scope note at the top),
+//   not something either code path here can paper over.
 //
 // Subtitles:
+// - Burned-in dedup bug fix (player spec, live evidence: Solo Leveling
+//   S02E02): a subtitle whose `subtitleDeliveryMethods[index] === 'Encode'`
+//   is ALREADY in the transcoded video's pixels
+//   (`Jellyfin.Api.Helpers.MediaInfoHelper.SetDeviceSpecificSubtitleInfo`,
+//   verified against jellyfin/jellyfin v10.11.11 - browsers can't render
+//   ASS/SSA/PGS, so the server rasterizes it into the image instead of
+//   delivering it as text). `subtitles` (the render list, below) filters
+//   those OUT entirely - no `<track>` element is ever mounted for them - and
+//   `applySubtitle` returns early for a target track flagged this way,
+//   before touching either the sideload loop or the hls.js fallback (an
+//   Encode-delivered subtitle has no HLS text rendition in the manifest
+//   either, so blindly falling through would pick the WRONG ordinal hls
+//   track). The menu still shows it as SELECTED
+//   (`selectedSubtitleIndex`-driven, untouched by any of this) - the user
+//   really is watching it, it's just server-rendered, not ours to render
+//   again. See `isBurnedInSubtitle` (mediaStreamTracks.ts) for the predicate
+//   and `subtitleDeliveryMethodsOf` (streamResolver.ts) for where the map
+//   comes from.
 // - DirectPlay: sideloaded `<track kind="subtitles">` elements (one per
 //   subtitle MediaStream, `src` built by `buildSubtitleDeliveryUrl`),
 //   toggled via each track's own `.track.mode` ('showing'/'disabled') -
@@ -73,6 +116,15 @@ import './VideoSurface.css';
 //   Flagged here explicitly as the one genuinely-partial corner of this
 //   feature.
 
+// ## Episode navigation (owner request: prev/next/jump between a series'
+// chapters, from the player). Only rendered when `isEpisode` is true (a
+// movie has no siblings to navigate to). `previousEpisode`/`nextEpisode`
+// are pure lookups over the already-sorted `episodes` list PlayerScreen
+// passes down - VideoSurface owns rendering/interaction only, same split as
+// the audio/subtitle menus, but unlike those there is no "apply in place"
+// step: selecting an episode always means navigating to a different
+// `/player/:id`, which is PlayerScreen's job (`onSelectEpisode`).
+
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const VOLUME_STEP = 0.1;
 
@@ -91,7 +143,7 @@ function sourceKey(source: PlaybackSource): string {
   return source.kind === 'DirectPlay' ? `direct:${source.url}` : `hls:${source.hlsUrl}`;
 }
 
-type ActiveMenu = 'audio' | 'subtitle' | null;
+type ActiveMenu = 'audio' | 'subtitle' | 'episodes' | null;
 
 export interface VideoSurfaceProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -118,7 +170,33 @@ export interface VideoSurfaceProps {
    * `PlaybackInfo` with this track's index and reopen (see file header). */
   onAudioSwitchUnavailable: (track: MediaStreamTrack) => void;
   onSubtitleApplied: (track: MediaStreamTrack | null) => void;
+  /** Subtitle stream index -> `DeliveryMethod`, for the CURRENT resolved
+   * source (subtitle dedup bug fix - see this file's header). Empty for a
+   * DirectPlay/no-transcode session. */
+  subtitleDeliveryMethods: Record<number, SubtitleDeliveryMethod>;
+  /** Fired instead of a purely client-side toggle when the CURRENT source
+   * has anything burned in (`subtitleDeliveryMethods` contains an `Encode`
+   * entry): switching away (to a different track, OR to "Ninguno") can't be
+   * done by hiding a `<track>` - the burned-in pixels are already part of
+   * the playing video, so the parent must re-resolve `PlaybackInfo` with the
+   * new `SubtitleStreamIndex` (or `-1` for none) and reopen at the saved
+   * position, mirroring `onAudioSwitchUnavailable`. */
+  onSubtitleSwitchUnavailable: (track: MediaStreamTrack | null) => void;
   buildSubtitleUrl: (track: MediaStreamTrack) => string;
+  /** True only for `Episode` items - gates the prev/next/jump episode
+   * controls entirely (player spec: never shown for a movie). */
+  isEpisode: boolean;
+  /** The playing item's series, sorted (season, episode) ascending - empty
+   * while `useSeriesEpisodeList` is still loading, or for non-episodes. */
+  episodes: EpisodeNavItem[];
+  currentEpisodeId: string;
+  /** Navigates the player to a different episode - PlayerScreen's job
+   * (`navigate('/player/:id')`), not VideoSurface's. */
+  onSelectEpisode: (episodeId: string) => void;
+  /** Only used to authenticate episode thumbnails in the jump menu, which an
+   * `<img>` can carry as `api_key` but not as a header. Optional so the
+   * surface still renders (text-only rows) wherever a session isn't handy. */
+  jellyfinToken?: string | null;
 }
 
 function formatTime(totalSeconds: number): string {
@@ -232,6 +310,28 @@ const IconFullscreenExit = () => (
     <path d="M3 16h3a2 2 0 0 1 2 2v3" />
   </Svg>
 );
+const IconSkipPrevious = () => (
+  <Svg>
+    <polygon points="19 20 9 12 19 4 19 20" />
+    <line x1="5" y1="19" x2="5" y2="5" />
+  </Svg>
+);
+const IconSkipNext = () => (
+  <Svg>
+    <polygon points="5 4 15 12 5 20 5 4" />
+    <line x1="19" y1="5" x2="19" y2="19" />
+  </Svg>
+);
+const IconEpisodes = () => (
+  <Svg>
+    <path d="M8 6h13" />
+    <path d="M8 12h13" />
+    <path d="M8 18h13" />
+    <path d="M3 6h.01" />
+    <path d="M3 12h.01" />
+    <path d="M3 18h.01" />
+  </Svg>
+);
 
 export function VideoSurface({
   videoRef,
@@ -251,7 +351,14 @@ export function VideoSurface({
   onAudioApplied,
   onAudioSwitchUnavailable,
   onSubtitleApplied,
+  subtitleDeliveryMethods,
+  onSubtitleSwitchUnavailable,
   buildSubtitleUrl,
+  isEpisode,
+  episodes,
+  currentEpisodeId,
+  onSelectEpisode,
+  jellyfinToken,
 }: VideoSurfaceProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -272,11 +379,33 @@ export function VideoSurface({
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  // Initial-subtitle-apply-once guard + latest-value refs so the source-setup
-  // effect (keyed only on `key`, see below) can read the CURRENT selection
-  // without re-running every time the parent updates it (e.g. after the user
-  // picks a track, which is applied directly by the select handlers instead).
-  const initialSubtitleAppliedRef = useRef(false);
+  // Tracks which subtitle/audio index has ALREADY been applied to the
+  // CURRENT source, so the retry-effects below (keyed on the resolved
+  // selection, see `applyCurrentSubtitleSelection`/the initial-audio-apply
+  // effect) are idempotent instead of re-doing work on every unrelated
+  // parent re-render. `undefined` = "nothing applied yet for this source" -
+  // distinct from `null`, which IS a valid applied subtitle value ("no
+  // subtitle"/"Ninguno").
+  //
+  // These REPLACE a previous "apply exactly once" boolean guard that fired
+  // inside the same effect that attaches `source` to the <video> (keyed only
+  // on `key`, ready as soon as `usePlaybackInfo` resolves) - but
+  // `selectedSubtitleIndex`/`selectedAudioIndex` come from PlayerScreen's
+  // SEPARATE `useItemMediaStreams` query and its own `useEffect`, which is
+  // not guaranteed to run before this component's child effects do (React
+  // runs child effects before parent effects within the same commit). The
+  // old guard fired with the selection still at its initial `null`, marked
+  // itself "done" regardless, and never retried once the real preference
+  // arrived a render later - the track menu showed the right selection
+  // (PlayerScreen's own state was always correct) while the <video> kept
+  // playing/showing whatever the file's own default was.
+  const appliedSubtitleIndexRef = useRef<number | null | undefined>(undefined);
+  const appliedAudioIndexRef = useRef<number | null | undefined>(undefined);
+  // True once the CURRENT source has reached a genuine in-band-audio
+  // readiness checkpoint (`onCanPlay`, or hls.js's `MANIFEST_PARSED`) - see
+  // `applyCurrentAudioSelection`'s doc comment for why this must be tracked
+  // separately from whether the desired track is already known.
+  const audioReadyForInBandRef = useRef(false);
   // Accelerating seek: holding an arrow climbs 5s -> 10s -> 30s -> 1min ...
   // and snaps back once released. Held in a ref rather than state because it
   // changes on every keypress and nothing renders from it directly.
@@ -300,8 +429,17 @@ export function VideoSurface({
   subtitleTracksRef.current = subtitleTracks;
   const selectedSubtitleIndexRef = useRef(selectedSubtitleIndex);
   selectedSubtitleIndexRef.current = selectedSubtitleIndex;
+  // Subtitle dedup bug fix - see this file's header. Read via ref (not a
+  // closure) for the same reason `subtitleTracksRef`/`selectedSubtitleIndexRef`
+  // are: `applySubtitle`/`handleSelectSubtitle` are called from DOM event
+  // handlers and effects that must always see the LATEST prop value, not
+  // whatever was captured when the callback was created.
+  const subtitleDeliveryMethodsRef = useRef(subtitleDeliveryMethods);
+  subtitleDeliveryMethodsRef.current = subtitleDeliveryMethods;
   const audioTracksRef = useRef(audioTracks);
   audioTracksRef.current = audioTracks;
+  const selectedAudioIndexRef = useRef(selectedAudioIndex);
+  selectedAudioIndexRef.current = selectedAudioIndex;
   const trackElsRef = useRef<Map<number, HTMLTrackElement>>(new Map());
 
   const key = sourceKey(source);
@@ -309,9 +447,26 @@ export function VideoSurface({
   // A new source (different item, or DirectPlay<->Transcoded switch) must
   // reset every per-playback guard/state, or resume-seek and the displayed
   // clock would silently carry over from whatever was playing before.
+  //
+  // `appliedAudioIndexRef` is DELIBERATELY excluded from this reset, unlike
+  // `appliedSubtitleIndexRef`. A source change is not always "unrelated" to
+  // audio the way it is to subtitles: `onAudioSwitchUnavailable`'s server
+  // re-resolve (the fallback `applyCurrentAudioSelection` falls to) is
+  // ITSELF what produces the new `source`/`key` for a Transcoded session.
+  // Resetting the guard here used to mean the freshly-reopened source's own
+  // `MANIFEST_PARSED` immediately re-evaluated "is this the file's default?"
+  // against `audioTracks` (unchanged - it's the same MediaStreams list),
+  // concluded "no" again, and re-triggered the exact same fallback -
+  // reopening playback from scratch, forever. `selectedAudioIndex` (not
+  // `key`) is the right thing to gate on: it only changes for a genuine new
+  // pick (manual, or a real item change resets it via PlayerScreen's own
+  // `[itemId]` effect, which also fully unmounts/remounts this component -
+  // see PlayerScreen.tsx), never merely because THIS component reopened the
+  // same target index through a different source.
   useEffect(() => {
     hasSeekedResumeRef.current = false;
-    initialSubtitleAppliedRef.current = false;
+    appliedSubtitleIndexRef.current = undefined;
+    audioReadyForInBandRef.current = false;
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
@@ -341,6 +496,24 @@ export function VideoSurface({
    * manifest DOES carry renditions and no sideloaded element matched.
    * Still a no-op under native Safari HLS with no hls.js instance. */
   const applySubtitle = (track: MediaStreamTrack | null) => {
+    // Subtitle dedup bug fix (this file's header): a burned-in target track
+    // is ALREADY visible - baked into the video's pixels - so neither client
+    // mechanism has anything to do. Handled FIRST, before the sideload loop,
+    // for two reasons: (1) the render list already excludes it from
+    // `trackElsRef`, so falling through would see `sideloaded === false` and
+    // wrongly try the hls.js branch next; (2) an Encode-delivered subtitle
+    // has no HLS text rendition in the manifest at all, so computing its
+    // ordinal against the FULL, unfiltered `subtitleTracksRef.current` would
+    // misalign against hls.js's own (shorter) `subtitleTracks` array and
+    // could select a completely different stream by accident.
+    if (track && isBurnedInSubtitle(subtitleDeliveryMethodsRef.current[track.index])) {
+      for (const [, el] of trackElsRef.current) {
+        if (el.track) el.track.mode = 'disabled';
+      }
+      if (hlsRef.current) hlsRef.current.subtitleTrack = -1;
+      return;
+    }
+
     let sideloaded = false;
     for (const [idx, el] of trackElsRef.current) {
       if (!el.track) continue;
@@ -354,19 +527,140 @@ export function VideoSurface({
       if (!track) {
         hls.subtitleTrack = -1;
       } else {
-        const ordinal = subtitleTracksRef.current.findIndex((t) => t.index === track.index);
+        // Ordinal-match against the SAME filtered list the render uses
+        // (burned-in entries excluded) - see the guard above for why the
+        // full, unfiltered list would misalign hls.js's own ordinals.
+        const nonBurnedIn = subtitleTracksRef.current.filter(
+          (t) => !isBurnedInSubtitle(subtitleDeliveryMethodsRef.current[t.index]),
+        );
+        const ordinal = nonBurnedIn.findIndex((t) => t.index === track.index);
         const hlsTrack = ordinal >= 0 ? hls.subtitleTracks[ordinal] : undefined;
         if (hlsTrack) hls.subtitleTrack = hlsTrack.id;
       }
     }
   };
 
-  const applyInitialSubtitleOnce = () => {
-    if (initialSubtitleAppliedRef.current) return;
-    initialSubtitleAppliedRef.current = true;
+  /**
+   * Re-syncs the <video> to whatever `selectedSubtitleIndex` currently is,
+   * reading the latest values via refs so it can be called both from DOM
+   * readiness events (below) AND from the props-driven retry effect further
+   * down, without either call site going stale. Idempotent - skips if this
+   * exact index is already applied - and, critically, does NOT mark itself
+   * "applied" when a specific index was requested but its track isn't in
+   * `subtitleTracks` yet (mediaStreams still loading): that leaves the door
+   * open for the retry effect to apply it for real once the data arrives,
+   * instead of silently giving up like the old "once" guard did.
+   */
+  const applyCurrentSubtitleSelection = () => {
     const idx = selectedSubtitleIndexRef.current;
+    if (idx === appliedSubtitleIndexRef.current) return;
     const track = idx == null ? null : (subtitleTracksRef.current.find((t) => t.index === idx) ?? null);
+    if (idx != null && !track) return;
+    appliedSubtitleIndexRef.current = idx;
     applySubtitle(track);
+  };
+
+  /**
+   * Attempts to switch audio IN-BAND on the CURRENT source - no server round
+   * trip. Shared by the manual pick (`handleSelectAudio`, below) and the
+   * initial-restoration effect further down, so restoring a saved
+   * preference goes through the exact same "can this browser/hls.js do it
+   * without asking the server again" check a manual pick already does,
+   * instead of two divergent code paths. Returns whether it actually worked
+   * - the caller falls back to `onAudioSwitchUnavailable` (re-resolve
+   * `PlaybackInfo` with the picked `AudioStreamIndex`) when it didn't.
+   *
+   * KNOWN LIMITATION (not fixed by this function): `HTMLMediaElement
+   * .audioTracks` does not exist in Chromium at all (confirmed against a
+   * real Chromium build - `'audioTracks' in document.createElement('video')`
+   * is `false`), despite this file previously claiming "Chrome ships it".
+   * For a DirectPlay source, this branch is therefore dead code in Chrome,
+   * and the `onAudioSwitchUnavailable` fallback is ALSO a no-op there:
+   * `buildDirectPlayUrl` (streamResolver.ts) always requests Jellyfin's
+   * `static=true` stream, which the server serves byte-for-byte unprocessed
+   * - confirmed against Jellyfin server source (`VideosController`'s static
+   * file/progressive branches bypass the stream-selection parameters
+   * entirely, `audioStreamIndex` included). Actually fixing DirectPlay audio
+   * switching needs the server's Direct Stream (remux) mode instead of a
+   * static passthrough - a real, separate change, out of scope here. What
+   * THIS function fixes: hls.js's in-band switch (`hls.audioTracks`, which
+   * genuinely works when a Transcoded session muxes more than one audio
+   * rendition) now gets tried on the INITIAL restore too, not just on a
+   * manual pick - and the dead DirectPlay branch is at least consistent
+   * between both paths instead of only reachable from one of them.
+   */
+  const attemptInBandAudioSwitch = (track: MediaStreamTrack): boolean => {
+    if (source.kind === 'DirectPlay') {
+      const webVideo = videoRef.current as unknown as { audioTracks?: BrowserAudioTrackList } | null;
+      const list = webVideo?.audioTracks;
+      const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
+      // `ordinal < 0` means OUR track list and the browser's disagree (e.g.
+      // a codec the browser silently dropped) - looping with `i === -1`
+      // would match NOTHING and disable every entry, reporting "success"
+      // while actually silencing all audio. Treat that as unavailable
+      // instead, same as an empty list.
+      if (list && list.length > 0 && ordinal >= 0) {
+        for (let i = 0; i < list.length; i += 1) list[i].enabled = i === ordinal;
+        return true;
+      }
+      return false;
+    }
+    if (hlsRef.current && hlsRef.current.audioTracks.length > 1) {
+      const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
+      const hlsTrack = ordinal >= 0 ? hlsRef.current.audioTracks[ordinal] : undefined;
+      if (hlsTrack) {
+        hlsRef.current.audioTrack = hlsTrack.id;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  /**
+   * Re-syncs the <video> to whatever `selectedAudioIndex` currently is -
+   * mirrors `applyCurrentSubtitleSelection` above and fixes the same class
+   * of bug on the audio side. Skips entirely (no callback fired) when the
+   * requested track already matches the file's own default: the server
+   * already opened on that track, so there is nothing to switch and no
+   * reason to spend a `PlaybackInfo` round trip confirming it.
+   *
+   * `allowFallback` gates the `onAudioSwitchUnavailable` server round trip
+   * behind a SEPARATE readiness signal from "do we know which track to
+   * pick" (`audioTracksRef`/`selectedAudioIndexRef`, both React-prop-driven):
+   * the browser's own `video.audioTracks`/hls.js's `audioTracks` list is
+   * typically empty until the media has actually started loading (real
+   * `loadedmetadata`/hls `MANIFEST_PARSED` timing) - calling this the moment
+   * `source` attaches (see the effect below) would otherwise see an empty
+   * list, wrongly conclude in-band switching is unavailable, and burn the
+   * one-shot fallback before the browser ever had a chance. Callers at a
+   * genuine readiness checkpoint (`onCanPlay`, hls.js `MANIFEST_PARSED`)
+   * pass `true`; the too-early call site and the props-driven retry effect
+   * pass `false` and simply wait for a readiness checkpoint to re-call this
+   * with `true`.
+   */
+  const applyCurrentAudioSelection = (allowFallback: boolean) => {
+    const idx = selectedAudioIndexRef.current;
+    if (idx === appliedAudioIndexRef.current) return;
+    if (idx == null) {
+      appliedAudioIndexRef.current = idx;
+      return;
+    }
+    const tracks = audioTracksRef.current;
+    const track = tracks.find((t) => t.index === idx) ?? null;
+    if (!track) return; // MediaStreams not loaded yet - retry once `audioTracks` updates.
+    const serverDefault = tracks.find((t) => t.isDefault) ?? tracks[0] ?? null;
+    if (serverDefault && track.index === serverDefault.index) {
+      appliedAudioIndexRef.current = idx;
+      return;
+    }
+    if (attemptInBandAudioSwitch(track)) {
+      appliedAudioIndexRef.current = idx;
+      onAudioApplied(track);
+      return;
+    }
+    if (!allowFallback) return; // browser/hls.js hasn't had a chance yet - retry at the next readiness checkpoint.
+    appliedAudioIndexRef.current = idx;
+    onAudioSwitchUnavailable(track);
   };
 
   // Attaches the resolved source to the <video> element: DirectPlay sets
@@ -385,7 +679,11 @@ export function VideoSurface({
 
     if (source.kind === 'DirectPlay') {
       video.src = source.url;
-      applyInitialSubtitleOnce();
+      applyCurrentSubtitleSelection();
+      // `false`: too early for `video.audioTracks` to be populated yet (see
+      // `applyCurrentAudioSelection`'s doc comment) - `onCanPlay` below is
+      // the real readiness checkpoint for this path.
+      applyCurrentAudioSelection(false);
       return undefined;
     }
 
@@ -395,7 +693,11 @@ export function VideoSurface({
       hlsRef.current = hls;
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         applyResumeSeekOnce();
-        applyInitialSubtitleOnce();
+        applyCurrentSubtitleSelection();
+        // `true`: hls.js has parsed the multivariant playlist by now, so
+        // `hls.audioTracks` (if the transcode muxed more than one) is ready.
+        audioReadyForInBandRef.current = true;
+        applyCurrentAudioSelection(true);
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) onError();
@@ -418,6 +720,25 @@ export function VideoSurface({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+
+  // Retries the subtitle/audio application whenever the RESOLVED SELECTION
+  // itself changes or the track lists grow - this is what actually fixes
+  // the "menu shows the right pick, <video> doesn't" bug: `key` alone (the
+  // effect above) is ready before PlayerScreen's `useItemMediaStreams` query
+  // resolves, so the one-shot apply used to fire with `selectedSubtitleIndex`
+  // still `null`. `applyCurrentSubtitleSelection`/`applyCurrentAudioSelection`
+  // are idempotent (guarded by `appliedSubtitleIndexRef`/`appliedAudioIndexRef`,
+  // which `handleSelectSubtitle`/`handleSelectAudio` also update on a manual
+  // pick, for the same reason - otherwise THIS effect would repeat the
+  // manual pick's own work a second time right after) and no-op when the
+  // desired track isn't in the list YET, so this simply re-fires - cheaply -
+  // on every render until the real data lands and it can genuinely apply,
+  // instead of giving up after one attempt.
+  useEffect(() => {
+    applyCurrentSubtitleSelection();
+    applyCurrentAudioSelection(audioReadyForInBandRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, selectedSubtitleIndex, subtitleTracks, selectedAudioIndex, audioTracks]);
 
   const scheduleHideControls = () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -508,31 +829,42 @@ export function VideoSurface({
   };
 
   const handleSelectAudio = (track: MediaStreamTrack) => {
-    let applied = false;
-    if (source.kind === 'DirectPlay') {
-      const webVideo = videoRef.current as unknown as { audioTracks?: BrowserAudioTrackList } | null;
-      const list = webVideo?.audioTracks;
-      if (list && list.length > 0) {
-        const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
-        for (let i = 0; i < list.length; i += 1) list[i].enabled = i === ordinal;
-        applied = true;
-      }
-    } else if (hlsRef.current && hlsRef.current.audioTracks.length > 1) {
-      const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
-      const hlsTrack = ordinal >= 0 ? hlsRef.current.audioTracks[ordinal] : undefined;
-      if (hlsTrack) {
-        hlsRef.current.audioTrack = hlsTrack.id;
-        applied = true;
-      }
-    }
+    const applied = attemptInBandAudioSwitch(track);
+    // Mark this index as ALREADY decided/attempted before the callbacks
+    // below update `selectedAudioIndex` upstream (PlayerScreen). Otherwise
+    // the props-driven retry effect fires right after (because
+    // `selectedAudioIndex` - and, for the fallback case, `key` too - just
+    // changed), sees a "fresh" `appliedAudioIndexRef`, and repeats the exact
+    // same attempt a second time - a real, observed bug: one click produced
+    // TWO `PlaybackInfo` re-resolves and two `Stopped` reports instead of
+    // one.
+    appliedAudioIndexRef.current = track.index;
     setActiveMenu(null);
     if (applied) onAudioApplied(track);
     else onAudioSwitchUnavailable(track);
   };
 
   const handleSelectSubtitle = (track: MediaStreamTrack | null) => {
-    applySubtitle(track);
     setActiveMenu(null);
+    const targetIndex = track?.index ?? null;
+    // No-op: re-picking the already-active selection (including "Ninguno"
+    // twice in a row) - nothing changed, don't spend a round trip.
+    if (targetIndex === selectedSubtitleIndexRef.current) return;
+    // Subtitle dedup bug fix (this file's header): the CURRENT source has
+    // something burned into its video pixels - switching AWAY from it (to a
+    // different track, or to "Ninguno") can't be done by toggling a
+    // <track>/hls text rendition, since the burned text stays baked into the
+    // playing video regardless of what the client shows on top. Only a fresh
+    // PlaybackInfo re-resolve (a new `SubtitleStreamIndex`, a new transcode)
+    // actually changes what's on screen - the parent's job
+    // (`onSubtitleSwitchUnavailable`, mirrors `onAudioSwitchUnavailable`).
+    const hasBurnedInSubtitle = Object.values(subtitleDeliveryMethodsRef.current).some(isBurnedInSubtitle);
+    if (hasBurnedInSubtitle) {
+      onSubtitleSwitchUnavailable(track);
+      return;
+    }
+    applySubtitle(track);
+    appliedSubtitleIndexRef.current = targetIndex;
     onSubtitleApplied(track);
   };
 
@@ -564,8 +896,18 @@ export function VideoSurface({
     }
   };
 
-  const subtitles = subtitleTracksOf(subtitleTracks);
+  // Subtitle dedup bug fix: never mount a client-side `<track>` for a
+  // stream Jellyfin already burned into the video (this file's header) -
+  // filtered OUT of the render list entirely, not merely left 'disabled',
+  // so it can never end up in `trackElsRef` and never gets toggled
+  // 'showing' by mistake. The track menu itself still lists/selects it
+  // normally (`subtitleTracks`, unfiltered, feeds `SubtitleTrackMenu`).
+  const subtitles = subtitleTracksOf(subtitleTracks).filter(
+    (track) => !isBurnedInSubtitle(subtitleDeliveryMethods[track.index]),
+  );
   const audios = audioTracksOf(audioTracks);
+  const previous = isEpisode ? previousEpisode(episodes, currentEpisodeId) : null;
+  const next = isEpisode ? nextEpisode(episodes, currentEpisodeId) : null;
 
   // Percentages drive the gold "played"/"level" fill of the custom-styled
   // range inputs (a CSS gradient keyed on these vars), so the seek and volume
@@ -603,11 +945,25 @@ export function VideoSurface({
           // Gotcha (file header, point 1): only DirectPlay's resume seek is
           // safe on `loadedmetadata` - HLS (hls.js or native) seeks on
           // MANIFEST_PARSED/`canplay` instead.
-          if (source.kind === 'DirectPlay') applyResumeSeekOnce();
+          if (source.kind === 'DirectPlay') {
+            applyResumeSeekOnce();
+            // A DirectPlay `<video>`'s native `audioTracks` list (where a
+            // browser supports it at all) is populated once metadata is
+            // known, per spec - `loadedmetadata` fires before `canplay` and
+            // is an equally valid/earlier readiness checkpoint for it.
+            // `canplay` remains the catch-all `applyCurrentAudioSelection`
+            // call below in case this event is ever missed.
+            audioReadyForInBandRef.current = true;
+            applyCurrentAudioSelection(true);
+          }
         }}
         onCanPlay={() => {
           applyResumeSeekOnce();
-          applyInitialSubtitleOnce();
+          applyCurrentSubtitleSelection();
+          // `true`: canplay is the readiness checkpoint for DirectPlay's
+          // native `video.audioTracks` (see doc comment above).
+          audioReadyForInBandRef.current = true;
+          applyCurrentAudioSelection(true);
         }}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
         onPlay={() => {
@@ -682,6 +1038,18 @@ export function VideoSurface({
           </div>
 
           <div className="pf-player-surface__bar">
+            {isEpisode ? (
+              <button
+                type="button"
+                className="pf-player-surface__icon-btn"
+                onClick={() => previous && onSelectEpisode(previous.id)}
+                disabled={!previous}
+                aria-label="Episodio anterior"
+              >
+                <IconSkipPrevious />
+              </button>
+            ) : null}
+
             <button
               type="button"
               className="pf-player-surface__icon-btn"
@@ -690,6 +1058,18 @@ export function VideoSurface({
             >
               {isPlaying ? <IconPause /> : <IconPlay />}
             </button>
+
+            {isEpisode ? (
+              <button
+                type="button"
+                className="pf-player-surface__icon-btn"
+                onClick={() => next && onSelectEpisode(next.id)}
+                disabled={!next}
+                aria-label="Episodio siguiente"
+              >
+                <IconSkipNext />
+              </button>
+            ) : null}
 
             <div className="pf-player-surface__volume-group">
               <button
@@ -750,6 +1130,22 @@ export function VideoSurface({
               </button>
             ) : null}
 
+            {isEpisode ? (
+              <button
+                type="button"
+                className="pf-player-surface__icon-btn"
+                onClick={() => setActiveMenu('episodes')}
+                // `episodes` is empty while `useSeriesEpisodeList` is still
+                // loading - disabled rather than opening an empty dialog
+                // with nothing but "Cerrar" in it.
+                disabled={episodes.length === 0}
+                aria-label="Episodios"
+                aria-haspopup="dialog"
+              >
+                <IconEpisodes />
+              </button>
+            ) : null}
+
             <button
               type="button"
               className="pf-player-surface__icon-btn"
@@ -790,6 +1186,19 @@ export function VideoSurface({
           selectedIndex={selectedSubtitleIndex}
           onSelect={handleSelectSubtitle}
           onDismiss={() => setActiveMenu(null)}
+          container={containerRef.current}
+        />
+      ) : null}
+      {activeMenu === 'episodes' ? (
+        <EpisodeMenu
+          episodes={episodes}
+          currentEpisodeId={currentEpisodeId}
+          onSelect={(episodeId) => {
+            setActiveMenu(null);
+            onSelectEpisode(episodeId);
+          }}
+          onDismiss={() => setActiveMenu(null)}
+          token={jellyfinToken ?? null}
           container={containerRef.current}
         />
       ) : null}

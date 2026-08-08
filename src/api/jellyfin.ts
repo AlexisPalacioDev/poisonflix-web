@@ -285,6 +285,15 @@ export interface GetPlaybackInfoBody {
   userId: string;
   deviceProfile?: unknown;
   audioStreamIndex?: number;
+  /** Which subtitle stream the server should deliver (burned in, embedded,
+   * external, or as an HLS rendition - the server decides HOW per its own
+   * device-profile logic; this only picks WHICH). `-1` explicitly requests
+   * "none" (Jellyfin convention, verified against jellyfin/jellyfin
+   * v10.11.11's `StreamBuilder`: an explicit `-1` is a real, non-null value
+   * that skips the file's-own-default fallback, unlike simply omitting this
+   * field). Omitted entirely -> the server picks its own default subtitle
+   * (today's behavior for the initial `usePlaybackInfo` resolve). */
+  subtitleStreamIndex?: number;
 }
 
 export async function getPlaybackInfo(
@@ -298,6 +307,7 @@ export async function getPlaybackInfo(
       UserId: body.userId,
       DeviceProfile: body.deviceProfile ?? null,
       AudioStreamIndex: body.audioStreamIndex,
+      SubtitleStreamIndex: body.subtitleStreamIndex,
     }),
     schema: JellyfinPlaybackInfoResponseSchema,
   });

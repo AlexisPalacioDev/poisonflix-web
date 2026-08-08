@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getItem } from '../../api/jellyfin';
+import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import { queryKeys } from '../../hooks/queryKeys';
 import { languageDisplayName } from '../../lib/domain/languageNames';
 
@@ -166,6 +167,25 @@ export function bestAudioPerLanguage(tracks: MediaStreamTrack[]): MediaStreamTra
     if (track.index < current.index) groups.set(key, track);
   }
   return Array.from(groups.values());
+}
+
+/**
+ * True when Jellyfin already burned this subtitle into the transcoded
+ * video's PIXELS (`DeliveryMethod: 'Encode'` - player spec, subtitle dedup
+ * bug fix; live evidence: Solo Leveling S02E02's PlaybackInfo returned
+ * `{ Index: 2, Codec: 'ass', DeliveryMethod: 'Encode' }`, and the ORIGINAL
+ * file has no burned-in text at t=117s per an ffmpeg frame extraction - the
+ * server adds it during transcode because browsers can't render ASS/SSA).
+ * `VideoSurface.tsx` must never mount a client-side `<track>` (or select an
+ * hls.js text rendition) for a stream this returns `true` for - doing so
+ * shows the exact same text twice, once server-baked and once
+ * client-rendered on top. The other four `SubtitleDeliveryMethod` values
+ * (`Embed`, `External`, `Hls`, `Drop`) all need the CLIENT to do something
+ * (or nothing, for `Drop`) - only `Encode` means "already handled, stay out
+ * of it".
+ */
+export function isBurnedInSubtitle(method: SubtitleDeliveryMethod | null | undefined): boolean {
+  return method === 'Encode';
 }
 
 /** Appends "2", "3"... to labels that repeat (e.g. three embedded English

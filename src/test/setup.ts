@@ -36,3 +36,29 @@ if (!('matchMedia' in globalThis)) {
     dispatchEvent: () => false,
   })) as unknown as typeof globalThis.matchMedia;
 }
+
+// jsdom doesn't implement `HTMLTrackElement.track` at all (`trackEl.track`
+// is always `undefined`, confirmed against jsdom 25) - the sideloaded
+// `<track>` elements the player uses for subtitles (VideoSurface's
+// `applySubtitle`, which toggles `track.mode` between 'showing'/'disabled')
+// would be untestable without this: any test asserting on real subtitle
+// application would either crash on `undefined.mode` or - worse - every
+// player test would silently exercise a no-op branch and read green
+// regardless of whether subtitles actually got applied to the video. This
+// is exactly the gap that let the "menu shows Español checked, but no text
+// appears" bug ship unnoticed. One persistent fake `TextTrack`-like object
+// per `<track>` element (a real `<track>` starts 'disabled', same as here).
+if (typeof HTMLTrackElement !== 'undefined' && !('track' in HTMLTrackElement.prototype)) {
+  const fakeTextTracks = new WeakMap<HTMLTrackElement, { mode: string }>();
+  Object.defineProperty(HTMLTrackElement.prototype, 'track', {
+    configurable: true,
+    get(this: HTMLTrackElement) {
+      let track = fakeTextTracks.get(this);
+      if (!track) {
+        track = { mode: 'disabled' };
+        fakeTextTracks.set(this, track);
+      }
+      return track;
+    },
+  });
+}

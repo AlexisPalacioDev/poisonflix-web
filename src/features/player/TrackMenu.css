@@ -107,3 +107,56 @@
 .pf-track-menu__check {
   font-weight: 700;
 }
+
+/* Episode jump menu rows.
+   A row here is a still frame plus two lines of text, unlike the single
+   centered label of an audio/subtitle option - so it keeps
+   `pf-track-menu__option` for spacing, hover and focus, and only overrides
+   the layout of its own contents. */
+.pf-episode-option {
+  gap: 12px;
+  padding: 8px 12px;
+  align-items: center;
+}
+
+.pf-episode-option__thumb {
+  flex: 0 0 auto;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--pf-radius-sm, 6px);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Placeholder for an episode with no artwork: same footprint as a real
+   thumbnail so the text column stays aligned down the whole list. */
+.pf-episode-option__thumb--empty {
+  display: block;
+}
+
+.pf-episode-option__text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pf-episode-option__number {
+  font-size: 0.78rem;
+  font-weight: 700;
+  opacity: 0.75;
+  letter-spacing: 0.02em;
+}
+
+/* Long episode titles truncate rather than reflowing the row to three lines
+   and making every row a different height. */
+.pf-episode-option__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The check sits at the far right of the selected row, past the text. */
+.pf-episode-option .pf-track-menu__check {
+  margin-left: auto;
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getPlaybackInfo, reportStopped } from '../../api/jellyfin';
+import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import { useAuth } from '../../hooks/useAuth';
 import { usePlaybackHeartbeat } from '../../hooks/usePlaybackHeartbeat';
 import { usePlaybackInfo } from '../../hooks/usePlaybackInfo';
@@ -16,6 +17,7 @@ import {
 } from '../../lib/domain/playerPrefs';
 import { resolvePlayback, secondsToTicks, type PlaybackSource } from '../../lib/domain/streamResolver';
 import { audioTracksOf, buildSubtitleDeliveryUrl, subtitleTracksOf, useItemMediaStreams, type MediaStreamTrack } from './mediaStreamTracks';
+import { useSeriesEpisodeList } from './episodeNavigation';
 import { VideoSurface } from './VideoSurface';
 import './player.css';
 
@@ -50,6 +52,16 @@ import './player.css';
 //   PlaySessionId `Stopped` first so Jellyfin doesn't accumulate ghost
 //   sessions (mirrors `PlayerViewModel.openResolved`'s same guard).
 // - Persisting the user's subtitle choice (`setSubtitlePreference`).
+//
+// ## Episode prev/next/jump navigation (owner request)
+// `data.type`/`data.seriesId` (from `usePlaybackInfo`) gate `episodeNavigation.ts`'s
+// `useSeriesEpisodeList` - only fetched for `Episode` items, never for a
+// movie. `handleNavigateToEpisode` uses `navigate(..., { replace: true })`,
+// not a normal push: prev/next/jump can be pressed many times in one
+// session, and a growing history stack would mean "Volver" has to be
+// pressed once per episode watched instead of once to leave the player -
+// `replace` keeps a single player entry in history no matter how many
+// episodes were played from it.
 
 const APP_LANGUAGE = 'es';
 
@@ -68,18 +80,32 @@ export function PlayerScreen() {
   const audioTracks = mediaStreams.data ? audioTracksOf(mediaStreams.data) : [];
   const subtitleTracks = mediaStreams.data ? subtitleTracksOf(mediaStreams.data) : [];
 
+  // Episode prev/next/jump navigation (player spec: only for `Episode`
+  // items - a movie has no siblings, so the series-id fed to the query stays
+  // `null` and the query never fires, per react-query's `enabled`).
+  const isEpisode = data?.type === 'Episode';
+  const seriesEpisodes = useSeriesEpisodeList(isEpisode ? (data?.seriesId ?? null) : null, session?.jellyfinUserId ?? '');
+
   const [selectedAudioIndex, setSelectedAudioIndex] = useState<number | null>(null);
   const [selectedSubtitleIndex, setSelectedSubtitleIndex] = useState<number | null>(null);
   const [subtitleResolved, setSubtitleResolved] = useState(false);
 
-  /** Set only once a transcode audio switch has re-resolved `PlaybackInfo`
-   * with a new `AudioStreamIndex` - overrides the base `data.resolved`
-   * source/resume position until the next switch (or item change). */
-  const [audioOverride, setAudioOverride] = useState<{
+  /** Set once EITHER an audio switch (`handleAudioSwitchUnavailable`) OR a
+   * subtitle switch away from a burned-in stream
+   * (`handleSubtitleSwitchUnavailable`) has re-resolved `PlaybackInfo` -
+   * overrides the base `data.resolved` source/resume position/subtitle
+   * delivery map until the next switch (or item change). Shared by both,
+   * not split into two, because either one produces a genuinely NEW
+   * resolved session (fresh `TranscodingUrl`/`PlaySessionId`/subtitle
+   * DeliveryMethod map) that every downstream consumer (`heartbeat`,
+   * `<VideoSurface>`'s `source`, the burned-in-subtitle prop) must read from
+   * in one place, not two potentially-stale ones. */
+  const [playbackOverride, setPlaybackOverride] = useState<{
     source: PlaybackSource;
     resumeSeconds: number;
     mediaSourceId: string;
     playSessionId: string | null;
+    subtitleDeliveryMethods: Record<number, SubtitleDeliveryMethod>;
   } | null>(null);
 
   // Resets every per-item guard when navigating to a different item.
@@ -87,26 +113,28 @@ export function PlayerScreen() {
     setSelectedAudioIndex(null);
     setSelectedSubtitleIndex(null);
     setSubtitleResolved(false);
-    setAudioOverride(null);
+    setPlaybackOverride(null);
   }, [itemId]);
 
-  // Once MediaStreams are known, pick the default audio track (display-only
-  // - the server already serves its own default track, no client action
-  // needed) and resolve the initial subtitle (saved preference -> language
-  // match -> AUTO rule, player spec §8).
+  // Once MediaStreams are known, resolve which audio/subtitle index the
+  // player SHOULD open on (saved preference -> language match -> AUTO rule,
+  // player spec §8). This effect only decides the index; actually making it
+  // real on the <video> is `VideoSurface`'s job (its own initial-apply
+  // effects, keyed on `selectedAudioIndex`/`selectedSubtitleIndex`), the
+  // exact same machinery a manual TrackMenu pick goes through
+  // (`handleSelectAudio`/`applySubtitle`). This used to call
+  // `handleAudioSwitchUnavailable` directly and unconditionally right here
+  // whenever the resolved audio differed from the file's own default -
+  // which skipped the in-band `HTMLMediaElement.audioTracks`/hls.js attempt
+  // entirely, the ONE mechanism that can make a DirectPlay/HLS audio switch
+  // actually audible without a server round trip. Splitting "decide" from
+  // "apply" here keeps the initial restore and the manual pick on one path
+  // instead of two, so a fix to one can't silently diverge from the other.
   useEffect(() => {
     if (!mediaStreams.data) return;
-    const serverDefault = audioTracks.find((t) => t.isDefault) ?? audioTracks[0] ?? null;
-    // The remembered LANGUAGE wins over the file's own default. Restoring it is
-    // not just display state: the server is already serving its default track,
-    // so a different choice has to go through the same re-resolve the manual
-    // switch uses, otherwise the menu would show Spanish while English played.
     const preferredAudio = resolveInitialAudio(audioTracks);
     if (selectedAudioIndex == null && preferredAudio) {
       setSelectedAudioIndex(preferredAudio.index);
-      if (serverDefault && preferredAudio.index !== serverDefault.index) {
-        void handleAudioSwitchUnavailable(preferredAudio);
-      }
     }
     const defaultAudio = preferredAudio;
     if (!subtitleResolved) {
@@ -119,11 +147,18 @@ export function PlayerScreen() {
 
   const heartbeat = usePlaybackHeartbeat({
     itemId,
-    playSessionId: audioOverride?.playSessionId ?? data?.resolved.playSessionId ?? null,
+    playSessionId: playbackOverride?.playSessionId ?? data?.resolved.playSessionId ?? null,
     getPositionSeconds: () => videoRef.current?.currentTime ?? 0,
   });
 
   const handleBack = () => navigate(-1);
+
+  // `replace: true` - see this file's header comment for why prev/next/jump
+  // must not grow the history stack.
+  const handleNavigateToEpisode = (episodeId: string) => {
+    if (episodeId === itemId) return;
+    navigate(`/player/${episodeId}`, { replace: true });
+  };
 
   const handleAudioApplied = (track: MediaStreamTrack) => {
     setSelectedAudioIndex(track.index);
@@ -139,12 +174,17 @@ export function PlayerScreen() {
   const handleAudioSwitchUnavailable = async (track: MediaStreamTrack) => {
     if (!session || !data) return;
     const positionSeconds = videoRef.current?.currentTime ?? 0;
-    const previousSession = audioOverride?.playSessionId ?? data.resolved.playSessionId;
+    const previousSession = playbackOverride?.playSessionId ?? data.resolved.playSessionId;
     try {
       const playbackInfo = await getPlaybackInfo(itemId, {
         userId: session.jellyfinUserId,
         deviceProfile: createBrowserDeviceProfile(),
         audioStreamIndex: track.index,
+        // Carries the CURRENT subtitle pick through the re-resolve (`-1` for
+        // "Ninguno") - without this, an audio switch would silently hand the
+        // decision back to the server's own default subtitle, possibly
+        // changing (or re-adding) whatever the user had picked/turned off.
+        subtitleStreamIndex: selectedSubtitleIndex ?? -1,
       });
       const resolved = resolvePlayback(itemId, playbackInfo, session.jellyfinToken);
       if (previousSession && previousSession !== resolved.playSessionId) {
@@ -154,11 +194,12 @@ export function PlayerScreen() {
           positionTicks: secondsToTicks(positionSeconds),
         });
       }
-      setAudioOverride({
+      setPlaybackOverride({
         source: resolved.source,
         resumeSeconds: positionSeconds,
         mediaSourceId: resolved.mediaSourceId,
         playSessionId: resolved.playSessionId,
+        subtitleDeliveryMethods: resolved.subtitleDeliveryMethods,
       });
       setSelectedAudioIndex(track.index);
       setAudioPreference(audioPreferenceKeyFor(track));
@@ -172,9 +213,59 @@ export function PlayerScreen() {
     setSubtitlePreference(subtitlePreferenceKeyFor(track));
   };
 
+  /**
+   * Subtitle dedup bug fix, part 2 (`onSubtitleSwitchUnavailable` -
+   * VideoSurface.tsx's header): the CURRENT source has a subtitle burned
+   * into its pixels, so switching away from it (a different track, or
+   * "Ninguno") cannot be done by toggling a client-side `<track>` - the
+   * server must re-transcode WITHOUT that burn-in. Mirrors
+   * `handleAudioSwitchUnavailable` exactly: re-resolve `PlaybackInfo` with
+   * the new `SubtitleStreamIndex` (`-1` for "none" - Jellyfin convention,
+   * verified against jellyfin/jellyfin v10.11.11's `StreamBuilder`: an
+   * explicit `-1` is a real value that skips the file's-own-default
+   * fallback, unlike omitting the field entirely), report the OLD
+   * PlaySessionId `Stopped` first, and reopen at the saved position.
+   */
+  const handleSubtitleSwitchUnavailable = async (track: MediaStreamTrack | null) => {
+    if (!session || !data) return;
+    const positionSeconds = videoRef.current?.currentTime ?? 0;
+    const previousSession = playbackOverride?.playSessionId ?? data.resolved.playSessionId;
+    try {
+      const playbackInfo = await getPlaybackInfo(itemId, {
+        userId: session.jellyfinUserId,
+        deviceProfile: createBrowserDeviceProfile(),
+        // Carries the CURRENT audio pick through the re-resolve, same
+        // reasoning as `handleAudioSwitchUnavailable` carrying the subtitle
+        // one - a subtitle-only switch must not silently reset audio.
+        audioStreamIndex: selectedAudioIndex ?? undefined,
+        subtitleStreamIndex: track?.index ?? -1,
+      });
+      const resolved = resolvePlayback(itemId, playbackInfo, session.jellyfinToken);
+      if (previousSession && previousSession !== resolved.playSessionId) {
+        void reportStopped({
+          itemId,
+          playSessionId: previousSession,
+          positionTicks: secondsToTicks(positionSeconds),
+        });
+      }
+      setPlaybackOverride({
+        source: resolved.source,
+        resumeSeconds: positionSeconds,
+        mediaSourceId: resolved.mediaSourceId,
+        playSessionId: resolved.playSessionId,
+        subtitleDeliveryMethods: resolved.subtitleDeliveryMethods,
+      });
+      setSelectedSubtitleIndex(track?.index ?? null);
+      setSubtitlePreference(subtitlePreferenceKeyFor(track));
+    } catch {
+      // Best-effort: leave current playback (still showing the OLD burned-in
+      // subtitle) untouched if the re-resolve fails, same policy as audio's.
+    }
+  };
+
   const buildSubtitleUrl = (track: MediaStreamTrack): string => {
     if (!session || !data) return '';
-    const mediaSourceId = audioOverride?.mediaSourceId ?? data.resolved.mediaSourceId;
+    const mediaSourceId = playbackOverride?.mediaSourceId ?? data.resolved.mediaSourceId;
     return buildSubtitleDeliveryUrl(itemId, mediaSourceId, track.index, session.jellyfinToken);
   };
 
@@ -239,8 +330,12 @@ export function PlayerScreen() {
     );
   }
 
-  const effectiveSource = audioOverride?.source ?? data.resolved.source;
-  const effectiveResumeSeconds = audioOverride ? audioOverride.resumeSeconds : data.resumeSeconds;
+  const effectiveSource = playbackOverride?.source ?? data.resolved.source;
+  const effectiveResumeSeconds = playbackOverride ? playbackOverride.resumeSeconds : data.resumeSeconds;
+  // Subtitle dedup bug fix: whichever resolve is currently live (the base
+  // one, or an audio/subtitle switch's override) is the one whose burned-in
+  // map actually describes what's in the playing video right now.
+  const effectiveSubtitleDeliveryMethods = playbackOverride?.subtitleDeliveryMethods ?? data.resolved.subtitleDeliveryMethods;
 
   return (
     <main className="pf-player-screen">
@@ -262,7 +357,14 @@ export function PlayerScreen() {
         onAudioApplied={handleAudioApplied}
         onAudioSwitchUnavailable={handleAudioSwitchUnavailable}
         onSubtitleApplied={handleSubtitleApplied}
+        subtitleDeliveryMethods={effectiveSubtitleDeliveryMethods}
+        onSubtitleSwitchUnavailable={handleSubtitleSwitchUnavailable}
         buildSubtitleUrl={buildSubtitleUrl}
+        isEpisode={isEpisode}
+        episodes={seriesEpisodes.data ?? []}
+        currentEpisodeId={itemId}
+        onSelectEpisode={handleNavigateToEpisode}
+        jellyfinToken={session?.jellyfinToken ?? null}
       />
     </main>
   );
