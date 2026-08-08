@@ -395,6 +395,44 @@
   color: rgba(255, 255, 255, 0.86);
 }
 
+/* Word-level highlight (owner request: "resaltar la palabra que se está
+   pronunciando" - follow the English audio with your eyes). Deliberately
+   sober per the owner's own ask ("no lo vuelvas un karaoke de bar") - a
+   COLOR/WEIGHT change, not a background fill or box, so it reads clearly
+   over both a bright and a dark frame without turning the line into a
+   flashing bar. `--current` reuses the app's existing gold accent
+   (`--pf-gold`, the same color `TrackMenu.css` already uses for "this is the
+   selected option"), so "this word is active" borrows a meaning the rest of
+   the app already established instead of inventing a new color language.
+   `--said`/`--upcoming` are just an opacity step apart from the line's own
+   base color - distinguishable without competing with `--current`. */
+.pf-player-surface__word--said {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-player-surface__word--current {
+  color: var(--pf-gold, #f2c14e);
+  font-weight: 800;
+}
+
+.pf-player-surface__word--upcoming {
+  color: inherit;
+}
+
+/* `prefers-reduced-motion` (owner requirement): the highlight itself must
+   still work (that's the whole feature), but the color/weight change from
+   word to word must be an instant cut, not an animated transition, for
+   anyone who has asked their OS for less motion. Scoped to `no-preference`
+   rather than adding a `transition: none` override under `reduce` - the
+   unprefixed rule below simply never exists for a `reduce` user, which is
+   the more robust way to guarantee zero animation (no rule to fight
+   another rule's specificity). */
+@media (prefers-reduced-motion: no-preference) {
+  .pf-player-surface__word {
+    transition: color 0.12s linear;
+  }
+}
+
 /* --- Mobile ------------------------------------------------------------- */
 
 @media (max-width: 640px) {

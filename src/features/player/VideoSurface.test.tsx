@@ -570,8 +570,11 @@ describe('VideoSurface — episode prev/next/jump navigation (owner request)', (
 // aprender inglés" - a language-learning feature, not accessibility). See
 // this file's "Dual subtitles" header section for the full design rationale
 // (why a custom overlay + our own VTT fetch/parse instead of two `<track>`
-// elements). Word-by-word highlighting is explicitly OUT OF SCOPE and not
-// implemented.
+// elements). Word-by-word highlighting (its own describe block further
+// below) is layered on TOP of this same overlay - these tests below predate
+// it and exercise the plain-text rendering path, which stays exactly as it
+// was (word highlight only kicks in for an eligible English row - see
+// `subtitleCues.ts`'s header).
 describe('VideoSurface — dual subtitles (owner request: read two languages at once)', () => {
   const englishTrack: MediaStreamTrack = {
     index: 1,
@@ -673,8 +676,17 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
     Object.defineProperty(video, 'currentTime', { value: 1.5, configurable: true });
     fireEvent.timeUpdate(video);
 
-    expect(await screen.findByText('Hello there.')).toBeInTheDocument();
-    expect(screen.getByText('Hola.')).toBeInTheDocument();
+    // Checked via `.textContent` rather than `screen.getByText` - the
+    // English row's word-level highlight (own describe block below) wraps
+    // each word in its own `<span>`, so "Hello there." is no longer a SINGLE
+    // text node RTL's default text matcher would find; the full rendered
+    // sentence is still what matters here, not its internal markup.
+    await waitFor(() => {
+      expect(document.querySelector('.pf-player-surface__subtitle-line--primary')?.textContent).toBe(
+        'Hello there.',
+      );
+    });
+    expect(document.querySelector('.pf-player-surface__subtitle-line--second')?.textContent).toBe('Hola.');
   });
 
   it('leaves single-subtitle mode completely unchanged when no second subtitle is selected', () => {
@@ -790,5 +802,313 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
     const overlay = document.querySelector('.pf-player-surface__dual-subtitles');
     expect(overlay).not.toBeNull();
     expect(overlay?.querySelectorAll('p')).toHaveLength(0);
+  });
+});
+
+// Word-level highlight (owner request, verbatim: "resaltar la palabra que se
+// está pronunciando" - follow the English audio with your eyes while it
+// plays). English row only - see `subtitleCues.ts`'s header for why the
+// Spanish row never gets word-by-word markup (it's a translation, not a
+// transcription).
+describe('VideoSurface — word-level highlight (owner request: follow the English audio with your eyes)', () => {
+  const englishTrack: MediaStreamTrack = {
+    index: 1,
+    kind: 'Subtitle',
+    language: 'eng',
+    displayTitle: 'English',
+    isDefault: false,
+    isForced: false,
+  };
+  const spanishTrack: MediaStreamTrack = {
+    index: 2,
+    kind: 'Subtitle',
+    language: 'spa',
+    displayTitle: 'Español',
+    isDefault: false,
+    isForced: false,
+  };
+
+  // A single 4-second cue with three words - long enough that 0.1s and 3.9s
+  // land on clearly DIFFERENT words (see `subtitleCues.test.ts`'s own
+  // `estimateWordTimings` tests for the exact per-word math).
+  const englishVtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nHi there friend\n';
+  const spanishVtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nHola amigo\n';
+
+  function fetchResponseFor(url: string): Promise<Response> {
+    const text = url.includes('/subs/1') ? englishVtt : url.includes('/subs/2') ? spanishVtt : '';
+    return Promise.resolve({ text: () => Promise.resolve(text) } as Response);
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // The toggle persists via localStorage (playerPrefs.ts) - must not leak
+    // an explicit "off" pick into the next test, which expects the default.
+    localStorage.clear();
+  });
+
+  function renderDual() {
+    const fetchMock = vi.fn().mockImplementation((url: string) => fetchResponseFor(url));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={spanishTrack.index}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Balls Up"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+    return fetchMock;
+  }
+
+  it('renders the English row as per-word spans, and the Spanish row as plain text (never word-by-word)', async () => {
+    const fetchMock = renderDual();
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
+    fireEvent.timeUpdate(video);
+
+    const overlay = document.querySelector('.pf-player-surface__dual-subtitles');
+    const primaryLine = overlay?.querySelector('.pf-player-surface__subtitle-line--primary');
+    const secondLine = overlay?.querySelector('.pf-player-surface__subtitle-line--second');
+
+    expect(primaryLine?.querySelectorAll('.pf-player-surface__word')).toHaveLength(3);
+    expect(secondLine?.querySelectorAll('.pf-player-surface__word')).toHaveLength(0);
+    expect(secondLine?.textContent).toBe('Hola amigo');
+  });
+
+  it('the highlighted word ADVANCES to a different word as playback time moves forward', async () => {
+    const fetchMock = renderDual();
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const primaryLine = () => document.querySelector('.pf-player-surface__subtitle-line--primary');
+    const currentWordText = () => primaryLine()?.querySelector('.pf-player-surface__word--current')?.textContent;
+
+    Object.defineProperty(video, 'currentTime', { value: 0.1, configurable: true });
+    fireEvent.timeUpdate(video);
+    const earlyWord = currentWordText();
+    expect(earlyWord).toBeTruthy();
+
+    Object.defineProperty(video, 'currentTime', { value: 3.9, configurable: true });
+    fireEvent.timeUpdate(video);
+    const lateWord = currentWordText();
+
+    expect(lateWord).toBeTruthy();
+    expect(lateWord).not.toBe(earlyWord);
+  });
+
+  it('stays OFF when the saved preference is off - the English row renders as plain text too', async () => {
+    localStorage.setItem('poisonflix:wordHighlightPreference', '0');
+    const fetchMock = renderDual();
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
+    fireEvent.timeUpdate(video);
+
+    expect(document.querySelectorAll('.pf-player-surface__word')).toHaveLength(0);
+    expect(screen.getByText('Hi there friend')).toBeInTheDocument();
+  });
+
+  it('the "Subtítulos" menu offers a toggle, and turning it off removes the per-word spans live', async () => {
+    const fetchMock = renderDual();
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
+    fireEvent.timeUpdate(video);
+    expect(document.querySelectorAll('.pf-player-surface__word').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Subtítulos' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Resaltar la palabra que se está pronunciando/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
+
+    expect(document.querySelectorAll('.pf-player-surface__word')).toHaveLength(0);
+  });
+
+  // Coverage gap flagged by the challenger audit: every test above put
+  // English in the PRIMARY slot. `VideoSurface.tsx` checks
+  // `languageFamily(...) === 'en'` independently for `primaryDualTrack` AND
+  // `secondDualTrack` - this exercises the second slot's own check, not just
+  // the primary's.
+  it('highlights the SECOND row when English is the second subtitle instead of the primary', async () => {
+    // englishTrack.index === 1, spanishTrack.index === 2 (this describe
+    // block's shared fixtures) - the URL built for each track embeds ITS
+    // OWN index, regardless of which slot (primary/second) it's assigned to.
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({ text: () => Promise.resolve(url.includes('/subs/1') ? englishVtt : spanishVtt) } as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[spanishTrack, englishTrack]}
+        selectedSubtitleIndex={spanishTrack.index}
+        selectedSecondSubtitleIndex={englishTrack.index}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Balls Up"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
+    fireEvent.timeUpdate(video);
+
+    const overlay = document.querySelector('.pf-player-surface__dual-subtitles');
+    const primaryLine = overlay?.querySelector('.pf-player-surface__subtitle-line--primary');
+    const secondLine = overlay?.querySelector('.pf-player-surface__subtitle-line--second');
+
+    expect(primaryLine?.querySelectorAll('.pf-player-surface__word')).toHaveLength(0);
+    expect(primaryLine?.textContent).toBe('Hola amigo');
+    expect(secondLine?.querySelectorAll('.pf-player-surface__word')).toHaveLength(3);
+  });
+
+  it('highlights NEITHER row when neither dual-subtitle language is English', async () => {
+    const frenchTrack: MediaStreamTrack = {
+      index: 3,
+      kind: 'Subtitle',
+      language: 'fra',
+      displayTitle: 'Français',
+      isDefault: false,
+      isForced: false,
+    };
+    const frenchVtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nBonjour ami\n';
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({ text: () => Promise.resolve(url.includes('/subs/2') ? spanishVtt : frenchVtt) } as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[frenchTrack, spanishTrack]}
+        selectedSubtitleIndex={frenchTrack.index}
+        selectedSecondSubtitleIndex={spanishTrack.index}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Balls Up"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
+    fireEvent.timeUpdate(video);
+
+    // Not just "no spans anywhere" (which would pass even if the overlay
+    // rendered nothing at all) - both rows must still show their plain text,
+    // proving dual mode DID activate and simply chose not to highlight it.
+    expect(document.querySelectorAll('.pf-player-surface__word')).toHaveLength(0);
+    expect(document.querySelector('.pf-player-surface__subtitle-line--primary')?.textContent).toBe('Bonjour ami');
+    expect(document.querySelector('.pf-player-surface__subtitle-line--second')?.textContent).toBe('Hola amigo');
+  });
+
+  it('clicking the toggle WRITES the new value to localStorage, not just component state', async () => {
+    const fetchMock = renderDual();
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    expect(localStorage.getItem('poisonflix:wordHighlightPreference')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Subtítulos' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Resaltar la palabra que se está pronunciando/ }),
+    );
+
+    expect(localStorage.getItem('poisonflix:wordHighlightPreference')).toBe('0');
+  });
+
+  it('the said/current/upcoming ladder is assigned correctly across ALL words, not just the current one', async () => {
+    // A 4-word cue so there's at least one word on each side of "current".
+    const fourWordVtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nAlpha bravo charlie delta\n';
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      Promise.resolve({ text: () => Promise.resolve(url.includes('/subs/1') ? fourWordVtt : spanishVtt) } as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={spanishTrack.index}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Balls Up"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    // Four equal-ish-weight words over 4s land roughly one per second -
+    // landing at 2s should be on word 3 ("charlie"), with two words already
+    // said and one still upcoming.
+    Object.defineProperty(video, 'currentTime', { value: 2, configurable: true });
+    fireEvent.timeUpdate(video);
+
+    const primaryLine = document.querySelector('.pf-player-surface__subtitle-line--primary');
+    const words = Array.from(primaryLine?.querySelectorAll('.pf-player-surface__word') ?? []);
+    expect(words.map((w) => w.textContent)).toEqual(['Alpha', 'bravo', 'charlie', 'delta']);
+    expect(words[0]).toHaveClass('pf-player-surface__word--said');
+    expect(words[1]).toHaveClass('pf-player-surface__word--said');
+    expect(words[2]).toHaveClass('pf-player-surface__word--current');
+    expect(words[3]).toHaveClass('pf-player-surface__word--upcoming');
   });
 });

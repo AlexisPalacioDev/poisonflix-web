@@ -143,6 +143,13 @@ export interface SubtitleTrackMenuProps {
    *  `isBurnedInSubtitle`), instead of silently letting the user create a
    *  combination `VideoSurface` cannot actually render as text. */
   subtitleDeliveryMethods: Record<number, SubtitleDeliveryMethod>;
+  /** Word-highlight toggle (owner request: "resaltar la palabra que se está
+   *  pronunciando" - English only, see `subtitleCues.ts`'s header). Owner
+   *  asked this to live "junto a Segundo subtítulo", so it's a section of
+   *  THIS menu rather than a separate settings surface, even though it's a
+   *  display preference and not a track pick like everything above it. */
+  wordHighlightEnabled: boolean;
+  onToggleWordHighlight: () => void;
 }
 
 export function SubtitleTrackMenu({
@@ -154,6 +161,8 @@ export function SubtitleTrackMenu({
   secondSelectedIndex,
   onSelectSecond,
   subtitleDeliveryMethods,
+  wordHighlightEnabled,
+  onToggleWordHighlight,
 }: SubtitleTrackMenuProps) {
   const deduped = useMemo(() => bestSubtitlePerLanguage(subtitleTracksOf(tracks)), [tracks]);
   const primary = useMemo(() => deduped.filter((t) => isPrimaryLanguage(t.language)), [deduped]);
@@ -248,6 +257,35 @@ export function SubtitleTrackMenu({
             })}
           </>
         )}
+      </div>
+
+      <div className="pf-track-menu__divider" role="separator" />
+      <h3 className="pf-track-menu__subheading">Resaltado de palabra</h3>
+
+      <div className="pf-track-menu__group" role="group" aria-label="Resaltado de palabra">
+        {/* Reuses the same "checked option" pattern as every pick above -
+            not a track choice, but visually it IS an on/off selection, and
+            `TrackOptionButton` already renders that state (checkmark + gold
+            fill) consistently with the rest of this menu. English only (see
+            `subtitleCues.ts`'s header): a Spanish row never gets per-word
+            highlighting regardless of this toggle, so the label says so
+            rather than implying it affects every subtitle shown. */}
+        <TrackOptionButton
+          label="Resaltar la palabra que se está pronunciando (inglés)"
+          isSelected={wordHighlightEnabled}
+          onClick={onToggleWordHighlight}
+        />
+        {/* This preference only has a visible effect once BOTH a primary and
+            a second subtitle are active (dual mode, above) and one of them
+            is English - it's a no-op with a single subtitle or a non-English
+            pair. Stated plainly rather than computing "is it live right now"
+            here: that would need to duplicate `dualSubtitlesActive`'s own
+            burned-in/language checks (`VideoSurface.tsx`'s header) a second
+            time in this component just to answer a question the label
+            already answers well enough on its own. */}
+        <p className="pf-track-menu__note">
+          Solo tiene efecto con inglés activo como subtítulo principal o segundo.
+        </p>
       </div>
     </TrackMenuScaffold>
   );

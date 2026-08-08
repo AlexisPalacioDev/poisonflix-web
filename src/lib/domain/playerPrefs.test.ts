@@ -3,8 +3,10 @@ import {
   clearAudioPreference,
   clearSecondSubtitlePreference,
   clearSubtitlePreference,
+  clearWordHighlightPreference,
   getSecondSubtitlePreference,
   getSubtitlePreference,
+  getWordHighlightPreference,
   resolveInitialAudio,
   resolveInitialSecondSubtitle,
   resolveInitialSubtitle,
@@ -12,6 +14,7 @@ import {
   setAudioPreference,
   setSecondSubtitlePreference,
   setSubtitlePreference,
+  setWordHighlightPreference,
   SUBTITLE_OFF,
   subtitlePreferenceKeyFor,
   type AudioCandidate,
@@ -22,6 +25,30 @@ afterEach(() => {
   clearSubtitlePreference();
   clearSecondSubtitlePreference();
   clearAudioPreference();
+  clearWordHighlightPreference();
+});
+
+describe('word-highlight preference get/set (owner request: "resaltar la palabra que se está pronunciando")', () => {
+  it('defaults to ON (true) when nothing has been saved', () => {
+    expect(getWordHighlightPreference()).toBe(true);
+  });
+
+  it('round-trips an explicit "off" pick', () => {
+    setWordHighlightPreference(false);
+    expect(getWordHighlightPreference()).toBe(false);
+  });
+
+  it('round-trips turning it back on', () => {
+    setWordHighlightPreference(false);
+    setWordHighlightPreference(true);
+    expect(getWordHighlightPreference()).toBe(true);
+  });
+
+  it('clearWordHighlightPreference resets back to the ON default', () => {
+    setWordHighlightPreference(false);
+    clearWordHighlightPreference();
+    expect(getWordHighlightPreference()).toBe(true);
+  });
 });
 
 describe('subtitle preference get/set', () => {

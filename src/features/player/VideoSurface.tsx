@@ -2,9 +2,19 @@ import Hls from 'hls.js';
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import type { PlaybackSource } from '../../lib/domain/streamResolver';
+import { languageFamily } from '../../lib/domain/languageNames';
+import { getWordHighlightPreference, setWordHighlightPreference } from '../../lib/domain/playerPrefs';
 import { audioTracksOf, isBurnedInSubtitle, subtitleTracksOf, trackLabel, type MediaStreamTrack } from './mediaStreamTracks';
 import { formatSeekStep, newSeekRun, nextSeekStep, RESET_AFTER_MS } from '../../lib/domain/seekAccelerator';
-import { activeCueText, parseVttCues, type SubtitleCue } from './subtitleCues';
+import {
+  activeCueText,
+  activeCues,
+  activeWordIndex,
+  estimateWordTimings,
+  parseVttCues,
+  tokenizeCueText,
+  type SubtitleCue,
+} from './subtitleCues';
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import { EpisodeMenu } from './EpisodeMenu';
 import { nextEpisode, previousEpisode, type EpisodeNavItem } from './episodeNavigation';
@@ -126,8 +136,27 @@ import './VideoSurface.css';
 // aprender inglés" - a LANGUAGE-LEARNING feature, not accessibility: read
 // English while listening, Spanish alongside for meaning). Scope is
 // deliberately narrow - two subtitles rendered at once, remembered per
-// language across sessions. Word-by-word highlighting is explicitly OUT OF
-// SCOPE (owner instruction) and not implemented anywhere in this change.
+// language across sessions.
+//
+// ### Word-level highlight (owner request, verbatim: "resaltar la palabra
+// que se está pronunciando" - follow the English audio with your eyes while
+// it plays). Applies to WHICHEVER dual-subtitle row is English
+// (`languageFamily(track.language) === 'en'`, checked below for both
+// `primaryDualTrack` and `secondDualTrack` - the owner could in principle put
+// English in either slot) and ONLY that row - see `subtitleCues.ts`'s header
+// for why Spanish deliberately never gets word-level highlighting (it's a
+// translation, not a transcription: the words/order don't match the audio).
+// The non-English row keeps rendering exactly as it did before this feature
+// - plain text, no highlighting - which also covers "only Spanish selected,
+// no English" (that path doesn't even reach dual mode - see the module-level
+// header on `VideoSurface`'s single-subtitle path staying native/untouched).
+// Gated behind `wordHighlightEnabled` (persisted via `playerPrefs.ts`,
+// default ON, toggled from `SubtitleTrackMenu`'s new "Resaltado de palabra"
+// section) and behind having exactly ONE cue active for that row right now
+// (`activeCues().length === 1`) - the rare legitimately-overlapping-cues case
+// falls back to the same plain joined text `activeCueText` always produced,
+// rather than picking one of several active cues to anchor word timing
+// against.
 //
 // - Why NOT two `<track>` elements: this file already sideloads one
 //   `<track>` per subtitle stream (`subtitles`, below) and lets the browser
@@ -264,6 +293,53 @@ interface BrowserAudioTrackList {
 
 function sourceKey(source: PlaybackSource): string {
   return source.kind === 'DirectPlay' ? `direct:${source.url}` : `hls:${source.hlsUrl}`;
+}
+
+/** The single cue active at `currentTimeSeconds`, or `null` when zero or
+ * more than one cue legitimately overlaps - word-highlight rendering only
+ * ever anchors to an UNAMBIGUOUS single cue (this file's header, "Word-level
+ * highlight" subsection); the rare overlap case falls back to plain text via
+ * `activeCueText` instead, same as it always has. */
+function soleActiveCue(cues: SubtitleCue[], currentTimeSeconds: number): SubtitleCue | null {
+  const active = activeCues(cues, currentTimeSeconds);
+  return active.length === 1 ? active[0] : null;
+}
+
+interface WordHighlightedLineProps {
+  cue: SubtitleCue;
+  currentTimeSeconds: number;
+  className: string;
+}
+
+/**
+ * Renders one dual-subtitle row with per-word highlighting (this file's
+ * header, "Word-level highlight" subsection - English rows only, gated by
+ * the caller before this component is ever used). Tokenizes with
+ * `tokenizeCueText` - the SAME tokenizer `estimateWordTimings` used to
+ * produce `timings` - so whitespace/newlines are reproduced verbatim in
+ * order (`white-space: pre-line` on `.pf-player-surface__subtitle-line`
+ * still turns a `\n` token into a real line break) and only genuine word
+ * tokens become highlightable `<span>`s.
+ */
+function WordHighlightedLine({ cue, currentTimeSeconds, className }: WordHighlightedLineProps) {
+  const timings = estimateWordTimings(cue);
+  const activeIndex = activeWordIndex(timings, currentTimeSeconds);
+  const tokens = tokenizeCueText(cue.text);
+  let wordIndex = -1;
+  return (
+    <p className={className}>
+      {tokens.map((token, i) => {
+        if (/^\s+$/.test(token)) return token; // whitespace/newline - verbatim, never highlighted
+        wordIndex += 1;
+        const state = wordIndex < activeIndex ? 'said' : wordIndex === activeIndex ? 'current' : 'upcoming';
+        return (
+          <span key={i} className={`pf-player-surface__word pf-player-surface__word--${state}`}>
+            {token}
+          </span>
+        );
+      })}
+    </p>
+  );
 }
 
 type ActiveMenu = 'audio' | 'subtitle' | 'episodes' | null;
@@ -609,6 +685,27 @@ export function VideoSurface({
   // every `timeupdate`, instead of a second timer/listener.
   const [primaryDualCues, setPrimaryDualCues] = useState<SubtitleCue[]>([]);
   const [secondDualCues, setSecondDualCues] = useState<SubtitleCue[]>([]);
+
+  // Word-level highlight toggle (this file's "Dual subtitles" header,
+  // "Word-level highlight" subsection) - read once from `localStorage` on
+  // mount, same lazy-initializer pattern every other localStorage-backed bit
+  // of UI state in this codebase uses so the saved preference is honored
+  // from the very first render, not applied a tick later.
+  const [wordHighlightEnabled, setWordHighlightEnabled] = useState(() => getWordHighlightPreference());
+  // The localStorage write is a side effect and belongs in the EVENT
+  // HANDLER, not inside a `setState` updater function - this codebase
+  // already learned that lesson once (see `AdultPinOverlay.tsx`'s
+  // `tryUnlock`/its own doc comment on the same rule): React 18 StrictMode
+  // deliberately double-invokes updater functions in development to surface
+  // exactly this kind of impurity. Reading `wordHighlightEnabled` from
+  // render scope here (rather than a functional updater) is safe - this
+  // handler only ever runs in response to a real click, by which point the
+  // component has already re-rendered with the latest value.
+  const handleToggleWordHighlight = () => {
+    const next = !wordHighlightEnabled;
+    setWordHighlightEnabled(next);
+    setWordHighlightPreference(next);
+  };
 
   const key = sourceKey(source);
 
@@ -1285,6 +1382,21 @@ export function VideoSurface({
   const primaryCueText = dualSubtitlesActive ? activeCueText(primaryDualCues, currentTime) : null;
   const secondCueText = dualSubtitlesActive ? activeCueText(secondDualCues, currentTime) : null;
 
+  // Word-level highlight (this file's header, "Word-level highlight"
+  // subsection): a row is eligible only when dual mode is active, the
+  // toggle is on, ITS OWN track is English, and exactly one cue is active
+  // right now to unambiguously anchor word timing against. `null` here means
+  // "render this row as plain text" - the JSX below falls back to that
+  // automatically, so this never needs its own on/off branch beyond the ternary.
+  const primaryHighlightCue =
+    dualSubtitlesActive && wordHighlightEnabled && languageFamily(primaryDualTrack?.language ?? null) === 'en'
+      ? soleActiveCue(primaryDualCues, currentTime)
+      : null;
+  const secondHighlightCue =
+    dualSubtitlesActive && wordHighlightEnabled && languageFamily(secondDualTrack?.language ?? null) === 'en'
+      ? soleActiveCue(secondDualCues, currentTime)
+      : null;
+
   return (
     <div
       ref={containerRef}
@@ -1546,14 +1658,30 @@ export function VideoSurface({
           aria-hidden="true"
         >
           {primaryCueText ? (
-            <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--primary">
-              {primaryCueText}
-            </p>
+            primaryHighlightCue ? (
+              <WordHighlightedLine
+                cue={primaryHighlightCue}
+                currentTimeSeconds={currentTime}
+                className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--primary"
+              />
+            ) : (
+              <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--primary">
+                {primaryCueText}
+              </p>
+            )
           ) : null}
           {secondCueText ? (
-            <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--second">
-              {secondCueText}
-            </p>
+            secondHighlightCue ? (
+              <WordHighlightedLine
+                cue={secondHighlightCue}
+                currentTimeSeconds={currentTime}
+                className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--second"
+              />
+            ) : (
+              <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--second">
+                {secondCueText}
+              </p>
+            )
           ) : null}
         </div>
       ) : null}
@@ -1588,6 +1716,8 @@ export function VideoSurface({
           secondSelectedIndex={selectedSecondSubtitleIndex}
           onSelectSecond={handleSelectSecondSubtitle}
           subtitleDeliveryMethods={subtitleDeliveryMethods}
+          wordHighlightEnabled={wordHighlightEnabled}
+          onToggleWordHighlight={handleToggleWordHighlight}
         />
       ) : null}
       {activeMenu === 'episodes' ? (

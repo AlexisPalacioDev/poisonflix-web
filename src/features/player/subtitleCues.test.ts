@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { activeCueText, parseVttCues } from './subtitleCues';
+import {
+  activeCueText,
+  activeCues,
+  activeWordIndex,
+  estimateWordTimings,
+  parseVttCues,
+  splitIntoWords,
+  tokenizeCueText,
+} from './subtitleCues';
 
 describe('parseVttCues', () => {
   it('parses a basic single-cue VTT file (MM:SS.mmm timestamps)', () => {
@@ -109,5 +117,173 @@ describe('activeCueText', () => {
       { startSeconds: 2, endSeconds: 4, text: 'B' },
     ];
     expect(activeCueText(overlapping, 2.5)).toBe('A\nB');
+  });
+});
+
+describe('activeCues', () => {
+  it('returns the matching cue OBJECTS (not just text), same [start, end) window as activeCueText', () => {
+    const cues = [
+      { startSeconds: 1, endSeconds: 3, text: 'Hello there.' },
+      { startSeconds: 5, endSeconds: 7, text: 'Second' },
+    ];
+    expect(activeCues(cues, 1.5)).toEqual([cues[0]]);
+    expect(activeCues(cues, 4)).toEqual([]);
+  });
+
+  it('returns more than one cue for a legitimate overlap - callers decide what to do with that', () => {
+    const overlapping = [
+      { startSeconds: 1, endSeconds: 3, text: 'A' },
+      { startSeconds: 2, endSeconds: 4, text: 'B' },
+    ];
+    expect(activeCues(overlapping, 2.5)).toEqual(overlapping);
+  });
+});
+
+describe('tokenizeCueText / splitIntoWords', () => {
+  it('splits on whitespace, keeping separators as their own tokens', () => {
+    expect(tokenizeCueText('Hello there')).toEqual(['Hello', ' ', 'there']);
+  });
+
+  it('keeps newlines as their own token (multi-line cue text)', () => {
+    expect(tokenizeCueText('Line one\nLine two')).toEqual(['Line', ' ', 'one', '\n', 'Line', ' ', 'two']);
+  });
+
+  it('returns an empty array for empty text', () => {
+    expect(tokenizeCueText('')).toEqual([]);
+  });
+
+  it('splitIntoWords drops every whitespace/newline token, keeping only words in order', () => {
+    expect(splitIntoWords('Line one\nLine two')).toEqual(['Line', 'one', 'Line', 'two']);
+    expect(splitIntoWords('')).toEqual([]);
+  });
+});
+
+describe('estimateWordTimings (word-level highlight estimation - see subtitleCues.ts header)', () => {
+  it('a single-word cue: the one word spans the entire cue window', () => {
+    const cue = { startSeconds: 0, endSeconds: 2, text: 'Hello' };
+    expect(estimateWordTimings(cue)).toEqual([{ word: 'Hello', startSeconds: 0, endSeconds: 2 }]);
+  });
+
+  it('an empty cue produces no timings', () => {
+    expect(estimateWordTimings({ startSeconds: 0, endSeconds: 2, text: '' })).toEqual([]);
+  });
+
+  it('many words: timings are contiguous (word i+1 starts exactly where word i ends) and never overrun the cue', () => {
+    const cue = { startSeconds: 10, endSeconds: 14, text: 'Hi there friend today' };
+    const timings = estimateWordTimings(cue);
+    expect(timings).toHaveLength(4);
+    expect(timings[0].startSeconds).toBe(cue.startSeconds);
+    for (let i = 0; i < timings.length - 1; i += 1) {
+      expect(timings[i].endSeconds).toBe(timings[i + 1].startSeconds);
+    }
+    // Never overruns the cue's own end - the last word is pinned exactly.
+    expect(timings[timings.length - 1].endSeconds).toBe(cue.endSeconds);
+    for (const t of timings) {
+      expect(t.startSeconds).toBeGreaterThanOrEqual(cue.startSeconds);
+      expect(t.endSeconds).toBeLessThanOrEqual(cue.endSeconds);
+    }
+  });
+
+  it('a zero-duration cue collapses every word to the same single instant instead of dividing by zero', () => {
+    const cue = { startSeconds: 5, endSeconds: 5, text: 'Hi there' };
+    expect(estimateWordTimings(cue)).toEqual([
+      { word: 'Hi', startSeconds: 5, endSeconds: 5 },
+      { word: 'there', startSeconds: 5, endSeconds: 5 },
+    ]);
+  });
+
+  it('multi-line cue text: words are timed across BOTH lines in reading order', () => {
+    const cue = { startSeconds: 0, endSeconds: 4, text: 'Line one\nLine two' };
+    const timings = estimateWordTimings(cue);
+    expect(timings.map((t) => t.word)).toEqual(['Line', 'one', 'Line', 'two']);
+    expect(timings[0].startSeconds).toBe(0);
+    expect(timings[timings.length - 1].endSeconds).toBe(4);
+  });
+
+  it('a word before strong punctuation (a spoken pause) gets a larger share than an equal-length word without it', () => {
+    // Same total text length either way; only the trailing "." differs.
+    const withoutPause = estimateWordTimings({ startSeconds: 0, endSeconds: 8, text: 'abcd efgh' });
+    const withPause = estimateWordTimings({ startSeconds: 0, endSeconds: 8, text: 'abcd. efgh' });
+
+    const firstWordDuration = (timings: { startSeconds: number; endSeconds: number }[]) =>
+      timings[0].endSeconds - timings[0].startSeconds;
+
+    expect(firstWordDuration(withPause)).toBeGreaterThan(firstWordDuration(withoutPause));
+  });
+
+  it('a very short word (below the minimum weight floor) still gets a visible, non-blink share of time', () => {
+    const cue = { startSeconds: 0, endSeconds: 10, text: 'a much longer word here' };
+    const timings = estimateWordTimings(cue);
+    const aDuration = timings[0].endSeconds - timings[0].startSeconds;
+    // Not a blink: comfortably more than a tenth of a second for a 10s cue.
+    expect(aDuration).toBeGreaterThan(0.5);
+  });
+
+  // Bug fix (challenger audit): a bare dialogue dash ("- Hello", the
+  // standard screenplay/subtitle convention for a new speaker) used to be
+  // credited word-length weight - and even the punctuation PAUSE bonus,
+  // since a lone "—" also matches `PAUSE_PUNCTUATION_RE` - stealing a large,
+  // visible share of the cue's time from the words actually being read.
+  it('a bare dialogue dash gets ZERO weight - it is not a spoken word', () => {
+    const cue = { startSeconds: 0, endSeconds: 10, text: '- Hello there' };
+    const timings = estimateWordTimings(cue);
+    const dash = timings[0];
+    expect(dash.word).toBe('-');
+    // Zero share of the cue's time - collapsed to the instant the next
+    // (real) word starts, not a visible highlighted window of its own.
+    expect(dash.endSeconds - dash.startSeconds).toBe(0);
+  });
+
+  it('activeWordIndex skips a zero-weight dash and lands on the first real word instead', () => {
+    const cue = { startSeconds: 0, endSeconds: 10, text: '- Hello there' };
+    const timings = estimateWordTimings(cue);
+    // At the cue's very start, the dash's window is zero-width - the active
+    // word must be "Hello" (index 1), never the dash (index 0).
+    expect(activeWordIndex(timings, cue.startSeconds)).toBe(1);
+  });
+
+  it('a cue made ENTIRELY of punctuation-only tokens falls back to an even split instead of dividing by zero', () => {
+    const cue = { startSeconds: 0, endSeconds: 4, text: '— -' };
+    const timings = estimateWordTimings(cue);
+    expect(timings).toHaveLength(2);
+    for (const t of timings) {
+      expect(Number.isFinite(t.startSeconds)).toBe(true);
+      expect(Number.isFinite(t.endSeconds)).toBe(true);
+      expect(t.startSeconds).toBeGreaterThanOrEqual(cue.startSeconds);
+      expect(t.endSeconds).toBeLessThanOrEqual(cue.endSeconds);
+    }
+    expect(timings[0].endSeconds).toBe(timings[1].startSeconds);
+    expect(timings[1].endSeconds).toBe(cue.endSeconds);
+  });
+});
+
+describe('activeWordIndex', () => {
+  const timings = [
+    { word: 'Hi', startSeconds: 0, endSeconds: 1 },
+    { word: 'there', startSeconds: 1, endSeconds: 2.5 },
+    { word: 'friend', startSeconds: 2.5, endSeconds: 4 },
+  ];
+
+  it('returns -1 before the first word starts', () => {
+    expect(activeWordIndex(timings, -1)).toBe(-1);
+  });
+
+  it('returns the index of the word whose window contains currentTimeSeconds', () => {
+    expect(activeWordIndex(timings, 0)).toBe(0);
+    expect(activeWordIndex(timings, 0.5)).toBe(0);
+    expect(activeWordIndex(timings, 1.2)).toBe(1);
+    expect(activeWordIndex(timings, 3.9)).toBe(2);
+  });
+
+  it('a zero-duration cue (every word sharing one instant) resolves to the LAST word', () => {
+    const sameInstant = [
+      { word: 'Hi', startSeconds: 5, endSeconds: 5 },
+      { word: 'there', startSeconds: 5, endSeconds: 5 },
+    ];
+    expect(activeWordIndex(sameInstant, 5)).toBe(1);
+  });
+
+  it('returns -1 for an empty timings array', () => {
+    expect(activeWordIndex([], 1)).toBe(-1);
   });
 });

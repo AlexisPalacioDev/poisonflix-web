@@ -200,6 +200,43 @@ export function resolveInitialSecondSubtitle<T extends SubtitleCandidate>(
 }
 
 // ---------------------------------------------------------------------------
+// Word-highlight preference (owner request: "resaltar la palabra que se está
+// pronunciando" - follow the English audio with your eyes. English-only by
+// design, see `subtitleCues.ts`'s header; this flag is just the on/off
+// switch, language routing lives in `VideoSurface.tsx`). Persisted
+// separately from every subtitle-selection preference above - this is a
+// display toggle, not a track choice, and applies across whichever language
+// pair the owner happens to have picked.
+//
+// Defaults to ON: the owner asked for this feature, so a first-time viewer
+// sees it; `setWordHighlightPreference(false)` is the explicit opt-out the
+// owner also asked for ("debe poder apagarse"). Stored as a plain '0'/'1'
+// string, not JSON - mirrors every other boolean-ish flag in this file
+// (`SUBTITLE_OFF`), no need for a parser.
+// ---------------------------------------------------------------------------
+
+const WORD_HIGHLIGHT_STORAGE_KEY = 'poisonflix:wordHighlightPreference';
+
+/** `true` unless the owner explicitly turned it off - see this section's
+ * header for why ON is the default. */
+export function getWordHighlightPreference(): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  return localStorage.getItem(WORD_HIGHLIGHT_STORAGE_KEY) !== '0';
+}
+
+export function setWordHighlightPreference(enabled: boolean): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(WORD_HIGHLIGHT_STORAGE_KEY, enabled ? '1' : '0');
+}
+
+/** Test/reset helper - clears the saved preference back to "never set" (i.e.
+ * back to the ON default). */
+export function clearWordHighlightPreference(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(WORD_HIGHLIGHT_STORAGE_KEY);
+}
+
+// ---------------------------------------------------------------------------
 // Audio preference
 // ---------------------------------------------------------------------------
 
