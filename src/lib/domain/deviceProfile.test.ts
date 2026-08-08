@@ -39,6 +39,29 @@ describe('createBrowserDeviceProfile', () => {
     expect(transcodingProfile?.AudioCodec).toBe('aac');
   });
 
+  // Regression: movies played far quieter than music because the browser, not
+  // ffmpeg, was downmixing 5.1/7.1 to stereo - and a browser downmix drops the
+  // center channel (dialogue) with no server setting able to compensate.
+  it('caps transcoded audio at 2 channels so the server downmixes instead of the browser', () => {
+    const profile = createBrowserDeviceProfile();
+    const transcodingProfile = profile.TranscodingProfiles.find((p) => p.Type === 'Video');
+
+    expect(transcodingProfile?.MaxAudioChannels).toBe('2');
+  });
+
+  // The type matters as much as the value, and only the SERIALIZED form proves
+  // it: Jellyfin declares `public string? MaxAudioChannels`, so a numeric 2
+  // deserializes to null server-side and the cap is dropped in silence - a
+  // failure mode indistinguishable from never having set it. Asserting on the
+  // JSON is what pins down the bytes that actually reach the server, rather
+  // than re-reading the object literal we just wrote.
+  it('serializes MaxAudioChannels as a quoted string in the request body', () => {
+    const body = JSON.stringify(createBrowserDeviceProfile());
+
+    expect(body).toContain('"MaxAudioChannels":"2"');
+    expect(body).not.toContain('"MaxAudioChannels":2');
+  });
+
   it('declares a sane MaxStreamingBitrate (not 0/undefined, which would starve playback)', () => {
     const profile = createBrowserDeviceProfile();
     expect(profile.MaxStreamingBitrate).toBeGreaterThan(0);
