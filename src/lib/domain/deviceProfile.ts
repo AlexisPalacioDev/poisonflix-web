@@ -80,6 +80,36 @@ export interface JellyfinDirectPlayProfile {
   AudioCodec?: string;
 }
 
+/** Mirrors `MediaBrowser.Model.Dlna.ProfileConditionType` (verified against
+ * jellyfin/jellyfin v10.11.11's `ProfileConditionType.cs`) - a typo here
+ * fails silently in a plain `string` field (the server 400s the WHOLE
+ * `PlaybackInfo` request, live-confirmed), so it's a literal union instead. */
+export type JellyfinProfileConditionType = 'Equals' | 'NotEquals' | 'LessThanEqual' | 'GreaterThanEqual' | 'EqualsAny';
+
+/** The subset of `MediaBrowser.Model.Dlna.ProfileConditionValue` (same tag)
+ * this client actually has a reason to send - narrowed on purpose rather
+ * than transcribing the full enum, since every unused member would be an
+ * untested claim about server behavior. Extend it deliberately, not by
+ * guessing a name. */
+export type JellyfinProfileConditionProperty = 'IsSecondaryAudio';
+
+export interface JellyfinCodecProfileCondition {
+  Condition: JellyfinProfileConditionType;
+  Property: JellyfinProfileConditionProperty;
+  Value: string;
+  /** Only matters when the checked value is unknown/missing server-side
+   * (`ConditionProcessor.IsConditionSatisfied`'s bool overload) - `false`
+   * matches jellyfin-web's own equivalent condition, since a genuinely
+   * unknown "is this secondary audio?" should not, by itself, force a
+   * transcode. */
+  IsRequired?: boolean;
+}
+
+export interface JellyfinCodecProfile {
+  Type: 'VideoAudio' | 'Audio' | 'Video';
+  Conditions: JellyfinCodecProfileCondition[];
+}
+
 export interface JellyfinTranscodingProfile {
   Type: 'Video' | 'Audio';
   Container: string;
@@ -95,6 +125,7 @@ export interface JellyfinDeviceProfile {
   MaxStreamingBitrate: number;
   DirectPlayProfiles: JellyfinDirectPlayProfile[];
   TranscodingProfiles: JellyfinTranscodingProfile[];
+  CodecProfiles?: JellyfinCodecProfile[];
 }
 
 const MAX_STREAMING_BITRATE = 20_000_000;
@@ -110,6 +141,95 @@ export function createBrowserDeviceProfile(): JellyfinDeviceProfile {
     DirectPlayProfiles: [
       { Type: 'Video', Container: 'mp4', VideoCodec: 'h264', AudioCodec: 'aac' },
       { Type: 'Audio', Container: 'mp3,aac,flac,m4a', AudioCodec: 'aac,mp3,flac' },
+    ],
+    // ## Why CodecProfiles exists (audio-switch bug for DirectPlay sources)
+    //
+    // Symptom (owner report): pick a non-default audio track, leave the
+    // player, come back - it's playing the file's default audio again.
+    // Root cause #1, verified against jellyfin/jellyfin v10.11.11's
+    // `StreamBuilder.cs`/`ConditionProcessor.cs` (`GetVideoDirectPlayProfile`
+    // -> `GetCompatibilityAudioCodecDirect` -> `GetProfileConditionsForVideoAudio`):
+    // that evaluator only ever looks at THIS profile's own `CodecProfiles`.
+    // Without one, nothing disqualifies a requested audio track from
+    // DirectPlay, so Jellyfin answers `SupportsDirectPlay: true` with no
+    // `TranscodingUrl` regardless of which `AudioStreamIndex` was requested -
+    // and `buildDirectPlayUrl` (streamResolver.ts) always asks for the
+    // `static=true` byte-for-byte stream, which Jellyfin serves untouched and
+    // never reads `audioStreamIndex` from at all (confirmed against
+    // `VideosController`). Combined: a non-default pick on a
+    // DirectPlay-eligible file was structurally unable to ever become
+    // audible, on the initial restore (`resolveInitialAudio`) AND on a manual
+    // `TrackMenu` pick alike.
+    //
+    // (Root cause #2, found while live-testing this fix against a real
+    // server - equally required, just not this file's job: the server
+    // discards `AudioStreamIndex`/`SubtitleStreamIndex` entirely unless the
+    // request ALSO carries a matching `MediaSourceId`. See
+    // `GetPlaybackInfoBody.mediaSourceId`'s doc comment in `api/jellyfin.ts`.)
+    //
+    // The fix leans on a mechanism this app already has wired end-to-end:
+    // `handleAudioSwitchUnavailable` (PlayerScreen.tsx) already re-resolves
+    // `PlaybackInfo` with the picked `AudioStreamIndex` whenever the
+    // browser's own in-band switch isn't available - true for every Chromium
+    // build today, since Chrome does not expose
+    // `HTMLMediaElement.audioTracks` at all (confirmed against a real build:
+    // `'audioTracks' in document.createElement('video')` is `false`). This
+    // `CodecProfiles` entry is what makes that re-resolve actually matter:
+    // declaring `IsSecondaryAudio` unsupported tells Jellyfin's
+    // `StreamBuilder` that such a track disqualifies pure DirectPlay for THIS
+    // profile, so it falls through to the transcode path and returns a real
+    // `TranscodingUrl` built around the requested track - which
+    // `resolveStreamSource` (streamResolver.ts) already knows how to pick up
+    // as a `Transcoded` source, no other file needs to change.
+    //
+    // IMPORTANT precision (`MediaSourceInfo.IsSecondaryAudio`, same tag):
+    // "secondary" here means "not the FIRST non-external audio `MediaStream`
+    // by index", NOT "not the `IsDefault`-flagged one" - they usually
+    // coincide but are not the same field. A file whose default audio isn't
+    // its first audio stream would (correctly, per this same rule) also lose
+    // DirectPlay when the player opens on that default - a real, accepted
+    // trade-off for correctness on the common case, not a gap unique to this
+    // client (jellyfin-web's own device profile ships the identical
+    // condition below).
+    //
+    // Cost check (why this isn't "fix the audio, waste the CPU"): server-side
+    // `EncodingHelper.CanStreamCopyVideo` (verified in the same tag) decides
+    // video stream-copy purely from video-stream compatibility - it never
+    // looks at WHY the session stopped being DirectPlay. Since the video
+    // codec is already h264 (the only thing narrow enough to reach
+    // DirectPlay under `DirectPlayProfiles` above), the resulting transcode
+    // still stream-copies video (`-c:v copy`) and only re-encodes audio
+    // (capped at 2ch by `TranscodingProfiles` below) - not a full video
+    // re-encode. (This app's own library had no title that is BOTH
+    // DirectPlay-eligible under the profile above AND carries more than one
+    // compatible audio track, so this specific transition - DirectPlay ->
+    // audio-only transcode - could not be demonstrated live end-to-end; it
+    // follows from the verified source above, not from an observed
+    // production case. What WAS demonstrated live: `CodecProfiles`
+    // conditions are honored by a real server, and this exact condition
+    // does not regress DirectPlay for any single-audio-track file.)
+    //
+    // `IsRequired: false` and the bare (codec/container-unrestricted)
+    // `VideoAudio` profile use the SAME shape as jellyfin-web's own device
+    // profile builder (`browserDeviceProfile.js`'s `!supportsSecondaryAudio`
+    // branch) - not a bespoke invention. Unlike jellyfin-web, this condition
+    // is sent UNCONDITIONALLY rather than gated behind a
+    // `canPlaySecondaryAudio()`-style DOM probe: `createBrowserDeviceProfile`
+    // is deliberately DOM-free (see this function's own doc comment) so it
+    // stays trivially unit-testable, and every browser this app currently
+    // targets fails that probe anyway (Chrome: no `audioTracks` at all;
+    // Firefox: `audioTracks` exists but only ever sees one track). The
+    // accepted cost is Safari (partial `audioTracks` support): it may take an
+    // unnecessary but harmless audio-only transcode instead of a working
+    // in-band switch. If genuine Safari-class support becomes worth
+    // detecting, thread a `supportsInBandAudioSwitch` boolean into this
+    // function from a call site that CAN touch the DOM, rather than adding
+    // DOM access here.
+    CodecProfiles: [
+      {
+        Type: 'VideoAudio',
+        Conditions: [{ Condition: 'Equals', Property: 'IsSecondaryAudio', Value: 'false', IsRequired: false }],
+      },
     ],
     TranscodingProfiles: [
       {

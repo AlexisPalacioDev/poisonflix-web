@@ -179,6 +179,9 @@ export function PlayerScreen() {
       const playbackInfo = await getPlaybackInfo(itemId, {
         userId: session.jellyfinUserId,
         deviceProfile: createBrowserDeviceProfile(),
+        // Required for `audioStreamIndex` below to have any effect at all -
+        // see `GetPlaybackInfoBody.mediaSourceId`'s doc comment (jellyfin.ts).
+        mediaSourceId: playbackOverride?.mediaSourceId ?? data.resolved.mediaSourceId,
         audioStreamIndex: track.index,
         // Carries the CURRENT subtitle pick through the re-resolve (`-1` for
         // "Ninguno") - without this, an audio switch would silently hand the
@@ -234,6 +237,10 @@ export function PlayerScreen() {
       const playbackInfo = await getPlaybackInfo(itemId, {
         userId: session.jellyfinUserId,
         deviceProfile: createBrowserDeviceProfile(),
+        // Required for `subtitleStreamIndex`/`audioStreamIndex` below to have
+        // any effect at all - see `GetPlaybackInfoBody.mediaSourceId`'s doc
+        // comment (jellyfin.ts).
+        mediaSourceId: playbackOverride?.mediaSourceId ?? data.resolved.mediaSourceId,
         // Carries the CURRENT audio pick through the re-resolve, same
         // reasoning as `handleAudioSwitchUnavailable` carrying the subtitle
         // one - a subtitle-only switch must not silently reset audio.

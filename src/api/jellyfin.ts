@@ -284,6 +284,18 @@ export async function getItem(
 export interface GetPlaybackInfoBody {
   userId: string;
   deviceProfile?: unknown;
+  /** Pins the re-resolve to the MediaSource already playing (its `Id`, e.g.
+   * `resolvePlayback`'s `mediaSourceId`). Required for `audioStreamIndex`/
+   * `subtitleStreamIndex` to have any effect at all on a re-resolve: verified
+   * live against a real Jellyfin server (v10.11.11,
+   * `MediaInfoHelper.SetDeviceSpecificData`, ~L206-211) - without a
+   * `MediaSourceId` that matches a real `MediaSource` on the item, the server
+   * silently ignores BOTH stream-index fields and falls back to the file's
+   * own default audio/subtitle, no matter what was requested. Omitted on the
+   * INITIAL resolve (`usePlaybackInfo`), where there is no prior
+   * `MediaSourceId` to pin yet and the server's own default is exactly what's
+   * wanted. */
+  mediaSourceId?: string;
   audioStreamIndex?: number;
   /** Which subtitle stream the server should deliver (burned in, embedded,
    * external, or as an HLS rendition - the server decides HOW per its own
@@ -306,6 +318,7 @@ export async function getPlaybackInfo(
     body: JSON.stringify({
       UserId: body.userId,
       DeviceProfile: body.deviceProfile ?? null,
+      MediaSourceId: body.mediaSourceId,
       AudioStreamIndex: body.audioStreamIndex,
       SubtitleStreamIndex: body.subtitleStreamIndex,
     }),

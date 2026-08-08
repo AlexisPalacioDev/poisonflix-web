@@ -508,10 +508,22 @@ describe('PlayerScreen — Spanish must never be missing on open (owner rule)', 
     await vi.waitFor(() => {
       expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2);
     });
+    // Root cause of the owner's exact bug report ("elijo un audio, salgo y
+    // vuelvo, y vuelve a salir el audio por defecto en inglés"), verified
+    // against a real Jellyfin server (v10.11.11, `MediaInfoHelper.cs`
+    // `SetDeviceSpecificData`, ~L206-211): the server ONLY honors
+    // `AudioStreamIndex`/`SubtitleStreamIndex` from the request body when
+    // `MediaSourceId` is ALSO present and matches a real `MediaSource` on the
+    // item - live-confirmed via `PlaybackInfo` probes against production:
+    // omitting `MediaSourceId` made the server silently fall back to the
+    // file's OWN default audio/subtitle, discarding the requested index
+    // entirely, for BOTH DirectPlay and already-transcoding sources alike.
+    // Without this field, `handleAudioSwitchUnavailable`'s re-resolve is a
+    // structural no-op no matter what `AudioStreamIndex` it sends.
     expect(mockedGetPlaybackInfo).toHaveBeenNthCalledWith(
       2,
       'jf-item-b',
-      expect.objectContaining({ audioStreamIndex: 2 }),
+      expect.objectContaining({ audioStreamIndex: 2, mediaSourceId: 'ms-1' }),
     );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Audio' }));

@@ -60,23 +60,27 @@ import './VideoSurface.css';
 //   almost always muxes exactly ONE server-picked audio stream, so this path
 //   is rarely available; that's expected, not a bug.
 // - Fallback (whenever neither of the above applies - most Transcoded
-//   sessions, or DirectPlay in Chrome): `onAudioSwitchUnavailable` signals
-//   the parent (`PlayerScreen`) to re-resolve `PlaybackInfo` with the picked
-//   `AudioStreamIndex` and reopen at the saved position - the primary,
-//   WORKING path for Transcoded audio switching (the server bakes the
-//   requested index into the HLS it builds), ported as
-//   `switchAudioUnderTranscode`. For a DirectPlay source this fallback is a
-//   structural no-op: `buildDirectPlayUrl` (streamResolver.ts) always
-//   requests Jellyfin's `static=true` stream, which the server serves
-//   byte-for-byte unprocessed - confirmed against Jellyfin server source
-//   (`VideosController`'s static/progressive branches never read
-//   `audioStreamIndex`). So: on Chromium, with a DirectPlay-eligible file,
-//   NEITHER the manual pick NOR the initial restore can currently change
-//   what's audible - a real, pre-existing architecture gap. Fixing it for
-//   real needs the server's Direct Stream (remux) mode instead of a static
-//   passthrough, which is a genuinely separate change (this app is
-//   DirectPlay-only by design - see this file's MVP-scope note at the top),
-//   not something either code path here can paper over.
+//   sessions, DirectPlay in Chrome, or a DirectPlay source where the pick
+//   isn't the file's own default): `onAudioSwitchUnavailable` signals the
+//   parent (`PlayerScreen`) to re-resolve `PlaybackInfo` with the picked
+//   `AudioStreamIndex` and reopen at the saved position, ported as
+//   `switchAudioUnderTranscode`. For a source that STAYS DirectPlay this
+//   would be a structural no-op: `buildDirectPlayUrl` (streamResolver.ts)
+//   always requests Jellyfin's `static=true` stream, which the server serves
+//   byte-for-byte unprocessed and never reads `audioStreamIndex` from
+//   (confirmed against Jellyfin server source, `VideosController`'s
+//   static/progressive branches). That's exactly why `createBrowserDeviceProfile`
+//   (deviceProfile.ts) declares `IsSecondaryAudio` unsupported for DirectPlay:
+//   it makes Jellyfin's own `StreamBuilder` refuse DirectPlay for such a
+//   track and hand back a real `TranscodingUrl` instead (video still
+//   stream-copied, only audio re-encoded - see that file's header for the
+//   verified mechanism, including the separate `MediaSourceId` requirement
+//   `getPlaybackInfo`'s caller must also send for this to take effect at
+//   all), so THIS fallback re-resolves into a `Transcoded` source it can
+//   actually act on, rather than looping back to the same unusable static
+//   URL. On Chromium (no `HTMLMediaElement.audioTracks`), this fallback is
+//   therefore no longer a DirectPlay dead end - it works the same way the
+//   already-shipped Transcoded case does.
 //
 // Subtitles:
 // - Burned-in dedup bug fix (player spec, live evidence: Solo Leveling
@@ -575,19 +579,19 @@ export function VideoSurface({
    * real Chromium build - `'audioTracks' in document.createElement('video')`
    * is `false`), despite this file previously claiming "Chrome ships it".
    * For a DirectPlay source, this branch is therefore dead code in Chrome,
-   * and the `onAudioSwitchUnavailable` fallback is ALSO a no-op there:
-   * `buildDirectPlayUrl` (streamResolver.ts) always requests Jellyfin's
-   * `static=true` stream, which the server serves byte-for-byte unprocessed
-   * - confirmed against Jellyfin server source (`VideosController`'s static
-   * file/progressive branches bypass the stream-selection parameters
-   * entirely, `audioStreamIndex` included). Actually fixing DirectPlay audio
-   * switching needs the server's Direct Stream (remux) mode instead of a
-   * static passthrough - a real, separate change, out of scope here. What
-   * THIS function fixes: hls.js's in-band switch (`hls.audioTracks`, which
-   * genuinely works when a Transcoded session muxes more than one audio
-   * rendition) now gets tried on the INITIAL restore too, not just on a
-   * manual pick - and the dead DirectPlay branch is at least consistent
-   * between both paths instead of only reachable from one of them.
+   * and the caller falls through to `onAudioSwitchUnavailable` - which is
+   * NOT a no-op there anymore: `createBrowserDeviceProfile` (deviceProfile.ts)
+   * now declares secondary audio tracks unsupported for DirectPlay, so
+   * Jellyfin's `StreamBuilder` refuses to keep the session DirectPlay for
+   * one and hands back a real `TranscodingUrl` (video stream-copied) that
+   * the fallback's `PlaybackInfo` re-resolve picks up as a genuine
+   * `Transcoded` source (see deviceProfile.ts's header for the verified
+   * mechanism/cost analysis). What THIS function fixes on top of that:
+   * hls.js's in-band switch (`hls.audioTracks`, which genuinely works when a
+   * Transcoded session muxes more than one audio rendition) now gets tried
+   * on the INITIAL restore too, not just on a manual pick - and the dead
+   * DirectPlay branch is at least consistent between both paths instead of
+   * only reachable from one of them.
    */
   const attemptInBandAudioSwitch = (track: MediaStreamTrack): boolean => {
     if (source.kind === 'DirectPlay') {
