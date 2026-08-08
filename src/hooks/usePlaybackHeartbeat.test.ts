@@ -133,4 +133,40 @@ describe('usePlaybackHeartbeat (player spec: "Playback progress heartbeat")', ()
 
     expect(mockedReportStopped).not.toHaveBeenCalled();
   });
+
+  // Regression (found while building the player's episode prev/next
+  // navigation - the first caller that changes `itemId` on an
+  // already-mounted PlayerScreen without a full remount): a render-time
+  // write to `paramsRef` used to land BEFORE the `[itemId]` cleanup effect
+  // could run, so navigating to a new item reported a bogus Stopped for the
+  // NEW item/session instead of the OLD one, and the OLD session was never
+  // closed at all (a dangling Jellyfin session + a lost resume position).
+  it('reports Stopped for the OLD item/session when itemId changes mid-playback, not the new one', () => {
+    let position = 12;
+    const { result, rerender } = renderHook(
+      (props: { itemId: string; playSessionId: string }) =>
+        usePlaybackHeartbeat({ ...props, getPositionSeconds: () => position }),
+      { initialProps: { itemId: 'ep-1', playSessionId: 'sess-1' } },
+    );
+
+    act(() => {
+      result.current.onPlay();
+    });
+    expect(mockedReportPlaying).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: 'ep-1', playSessionId: 'sess-1' }),
+    );
+
+    // Simulates navigating to the next episode: a new item id AND a new
+    // PlaySessionId (a fresh PlaybackInfo resolve), same as
+    // `usePlaybackInfo`'s query key changing under `PlayerScreen`.
+    position = 90;
+    rerender({ itemId: 'ep-2', playSessionId: 'sess-2' });
+
+    expect(mockedReportStopped).toHaveBeenCalledTimes(1);
+    expect(mockedReportStopped).toHaveBeenCalledWith({
+      itemId: 'ep-1',
+      playSessionId: 'sess-1',
+      positionTicks: 900_000_000,
+    });
+  });
 });

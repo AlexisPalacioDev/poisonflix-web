@@ -41,8 +41,25 @@ export function usePlaybackHeartbeat({
   // Kept in a ref (not deps) so start/stop's identity stays stable across
   // renders (they're wired straight into <video> event handlers) without
   // ever reading a stale itemId/playSessionId/position-getter closure.
+  //
+  // Written from an EFFECT (post-commit), not during render. This one
+  // matters: React runs, in a single commit, ALL effect cleanups first and
+  // ONLY THEN all effect setups - so as long as the write happens in a
+  // setup (this effect, no deps -> re-runs every commit), the `[itemId]`
+  // cleanup effect below is GUARANTEED to still see the PREVIOUS commit's
+  // values when it tears down for the item being left. A render-time write
+  // (the original approach) lands before ANY effect runs in that same
+  // commit, so on an `itemId` change the cleanup would already observe the
+  // NEW item's (often not-yet-resolved) `playSessionId` instead of the old
+  // one - live-reproduced by the episode prev/next feature (the first
+  // caller to change `itemId` on an already-mounted PlayerScreen without a
+  // full remount): the OLD episode's session was NEVER reported Stopped
+  // (a dangling Jellyfin session + a lost resume position), while a bogus
+  // Stopped fired for the NEW episode with `playSessionId: null`.
   const paramsRef = useRef<HeartbeatParamsSnapshot>({ itemId, playSessionId, getPositionSeconds, playMethod });
-  paramsRef.current = { itemId, playSessionId, getPositionSeconds, playMethod };
+  useEffect(() => {
+    paramsRef.current = { itemId, playSessionId, getPositionSeconds, playMethod };
+  });
 
   const clearProgressInterval = useCallback(() => {
     if (intervalRef.current != null) {
