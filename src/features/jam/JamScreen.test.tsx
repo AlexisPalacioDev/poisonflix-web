@@ -13,12 +13,11 @@ import {
   listJamDirectory,
   listJams,
   respondToJamInvite,
-  sendJamTransport,
   setJamMode,
   setJamRole,
   transferJamOwnership,
 } from '../../api/jam';
-import type { Jam, JamListEntry, JamMember, JamSnapshot } from '../../api/schemas/jam';
+import type { Jam, JamListEntry, JamMember, JamSnapshot, JamTrack } from '../../api/schemas/jam';
 
 // Pattern mirrors src/hooks/usePersonalMusicFeed.test.tsx: mock the API
 // module boundary only, wire the real QueryClient/AuthProvider/session
@@ -50,7 +49,6 @@ const mockedLeaveJam = vi.mocked(leaveJam);
 const mockedSetJamRole = vi.mocked(setJamRole);
 const mockedTransferJamOwnership = vi.mocked(transferJamOwnership);
 const mockedSetJamMode = vi.mocked(setJamMode);
-const mockedSendJamTransport = vi.mocked(sendJamTransport);
 const mockedUseJamStream = vi.mocked(useJamStream);
 
 // `ownUserId` is a Jellyseerr id, deliberately distinct in shape from
@@ -75,6 +73,10 @@ function jamFixture(overrides: Partial<Jam> & { id: string }): Jam {
     seq: 0,
     ...overrides,
   };
+}
+
+function trackFixture(title: string): JamTrack {
+  return { itemId: `item-${title}`, title, artist: 'Alguien', coverUrl: null, addedBy: OWN_ID };
 }
 
 function snapshotFixture(jam: Jam, present: string[], leaderId: string | null): JamSnapshot {
@@ -112,7 +114,6 @@ describe('JamScreen', () => {
     mockedSetJamRole.mockReset();
     mockedTransferJamOwnership.mockReset();
     mockedSetJamMode.mockReset();
-    mockedSendJamTransport.mockReset();
     mockedUseJamStream.mockReset();
   });
 
@@ -135,61 +136,170 @@ describe('JamScreen', () => {
     await waitFor(() => expect(mockedRespondToJamInvite).toHaveBeenCalledWith('jam-invite', true));
   });
 
-  it('disables transport controls for a listener who is not the effective leader', async () => {
+  // The owner's complaint, as a regression guard: "si yo entro a
+  // configuraciones de jam solo deberia estar las configuraciones, no la lista
+  // de reproduccion ni las canciones". The queue and the transport belong to
+  // Música and to the global now-playing bar respectively; neither may come
+  // back onto this screen.
+  it('shows no queue and no transport controls — the room screen is settings only', async () => {
     const jam = jamFixture({
-      id: 'jam-listener',
-      name: 'Sala escucha',
+      id: 'jam-quiet',
+      name: 'Sala silenciosa',
+      ownerId: OWN_ID,
+      members: [member({ userId: OWN_ID, name: 'Yo', role: 'owner' })],
+      queue: [trackFixture('Cancion Secreta'), trackFixture('Otra Cancion')],
+    });
+    const snapshot = snapshotFixture(jam, [OWN_ID], OWN_ID);
+    mockedListJams.mockResolvedValue([listEntryFixture(jam, member({ userId: OWN_ID, role: 'owner' }))]);
+    mockedListJamDirectory.mockResolvedValue([]);
+    mockedUseJamStream.mockReturnValue({ snapshot, connected: true, denied: false });
+
+    renderJamScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala silenciosa') }));
+
+    // The room header renders, so we are inside the room and not still on the list.
+    expect(await screen.findByRole('heading', { name: 'Sala silenciosa' })).toBeInTheDocument();
+
+    expect(screen.queryByText('Cancion Secreta')).not.toBeInTheDocument();
+    expect(screen.queryByText('Otra Cancion')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Cola' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reproducir' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Anterior' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Siguiente' })).not.toBeInTheDocument();
+
+    // …and the way to add music is still one tap away, pointing at Música.
+    expect(screen.getByRole('button', { name: 'Poner música' })).toBeInTheDocument();
+  });
+
+  // The native <select> this replaced was painted and positioned by the OS,
+  // which on a dark theme meant white options rendered off the edge of a
+  // phone. Both options are now visible rows in a radiogroup.
+  it('lets the owner switch the mode from a radio row, with no native select', async () => {
+    const jam = jamFixture({
+      id: 'jam-mode',
+      name: 'Sala modo',
+      mode: 'everyone',
+      ownerId: OWN_ID,
+      members: [member({ userId: OWN_ID, name: 'Yo', role: 'owner' })],
+    });
+    const snapshot = snapshotFixture(jam, [OWN_ID], OWN_ID);
+    mockedListJams.mockResolvedValue([listEntryFixture(jam, member({ userId: OWN_ID, role: 'owner' }))]);
+    mockedListJamDirectory.mockResolvedValue([]);
+    mockedSetJamMode.mockResolvedValue(jam);
+    mockedUseJamStream.mockReturnValue({ snapshot, connected: true, denied: false });
+
+    const { container } = renderJamScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala modo') }));
+
+    const everyone = await screen.findByRole('radio', { name: /Todos los dispositivos suenan/ });
+    expect(everyone).toHaveAttribute('aria-checked', 'true');
+    expect(container.querySelector('select')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Solo mi dispositivo suena/ }));
+
+    await waitFor(() => expect(mockedSetJamMode).toHaveBeenCalledWith('jam-mode', 'king'));
+  });
+
+  // Two actions on a two-person list do not earn a "⋮": both chips are on the
+  // row, readable without a tap. This test is the guard against them being
+  // hidden behind a menu again.
+  it('gives control to another member from a chip on the row, with no overflow menu', async () => {
+    const jam = jamFixture({
+      id: 'jam-roles',
+      name: 'Sala roles',
+      ownerId: OWN_ID,
+      members: [
+        member({ userId: OWN_ID, name: 'Yo', role: 'owner' }),
+        member({ userId: 'user-friend', name: 'Amigo', role: 'listener' }),
+      ],
+    });
+    const snapshot = snapshotFixture(jam, [OWN_ID, 'user-friend'], OWN_ID);
+    mockedListJams.mockResolvedValue([listEntryFixture(jam, member({ userId: OWN_ID, role: 'owner' }))]);
+    mockedListJamDirectory.mockResolvedValue([]);
+    mockedSetJamRole.mockResolvedValue(jam);
+    mockedUseJamStream.mockReturnValue({ snapshot, connected: true, denied: false });
+
+    renderJamScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala roles') }));
+
+    // Both actions are readable on the row, with nothing to open first…
+    const giveControl = await screen.findByRole('button', { name: 'Dar control' });
+    expect(giveControl).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pasarle la sala' })).toBeInTheDocument();
+
+    // …and there is no ⋮ hiding them, for anyone on the list.
+    expect(screen.queryByRole('button', { name: /^Opciones de / })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
+
+    // Only the other person gets them: the owner cannot demote or replace
+    // themselves, so their own row carries exactly one of each — the friend's.
+    expect(screen.getAllByRole('button', { name: 'Dar control' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Pasarle la sala' })).toHaveLength(1);
+
+    fireEvent.click(giveControl);
+
+    await waitFor(() =>
+      expect(mockedSetJamRole).toHaveBeenCalledWith('jam-roles', 'user-friend', 'controller'),
+    );
+  });
+
+  // The mirror of the chip above: someone who already controls the music gets
+  // the chip that takes it back, not a second copy of the one that grants it.
+  it('offers "Quitar control" for a member who already has it', async () => {
+    const jam = jamFixture({
+      id: 'jam-roles-off',
+      name: 'Sala roles quitar',
+      ownerId: OWN_ID,
+      members: [
+        member({ userId: OWN_ID, name: 'Yo', role: 'owner' }),
+        member({ userId: 'user-friend', name: 'Amigo', role: 'controller' }),
+      ],
+    });
+    const snapshot = snapshotFixture(jam, [OWN_ID, 'user-friend'], OWN_ID);
+    mockedListJams.mockResolvedValue([listEntryFixture(jam, member({ userId: OWN_ID, role: 'owner' }))]);
+    mockedListJamDirectory.mockResolvedValue([]);
+    mockedSetJamRole.mockResolvedValue(jam);
+    mockedUseJamStream.mockReturnValue({ snapshot, connected: true, denied: false });
+
+    renderJamScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala roles quitar') }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Quitar control' }));
+
+    await waitFor(() =>
+      expect(mockedSetJamRole).toHaveBeenCalledWith('jam-roles-off', 'user-friend', 'listener'),
+    );
+  });
+
+  // A guest sees the room, never its levers — the chips are the owner's alone.
+  it('shows no member action chips to a non-owner', async () => {
+    const jam = jamFixture({
+      id: 'jam-guest-chips',
+      name: 'Sala sin chips',
       ownerId: 'user-owner',
       members: [
         member({ userId: 'user-owner', name: 'Owner', role: 'owner' }),
         member({ userId: OWN_ID, name: 'Yo', role: 'listener' }),
       ],
     });
-    // Owner is present, so per `effectiveLeader` the owner outranks the
-    // listener regardless of who is also attached.
     const snapshot = snapshotFixture(jam, ['user-owner', OWN_ID], 'user-owner');
-    mockedListJams.mockResolvedValue([listEntryFixture(jam, member({ userId: OWN_ID, role: 'listener' }))]);
+    mockedListJams.mockResolvedValue([
+      listEntryFixture(jam, member({ userId: OWN_ID, role: 'listener' })),
+    ]);
     mockedUseJamStream.mockReturnValue({ snapshot, connected: true, denied: false });
 
     renderJamScreen();
 
-    // The jam row's accessible name is the concatenation of its name AND
-    // mode spans (both live inside the same <button>), so target it via its
-    // By role, not by loose text: the jam's name now also appears as an
-    // <option> in the header's destination picker, so a bare findByText is
-    // ambiguous and lands on something that is not clickable.
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala escucha') }));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala sin chips') }));
 
-    const playButton = await screen.findByRole('button', { name: 'Reproducir' });
-    expect(playButton).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Anterior' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled();
-  });
-
-  it('enables transport controls for the effective leader', async () => {
-    const jam = jamFixture({
-      id: 'jam-leader',
-      name: 'Sala líder',
-      ownerId: 'user-owner',
-      members: [
-        member({ userId: 'user-owner', name: 'Owner', role: 'owner' }),
-        member({ userId: OWN_ID, name: 'Yo', role: 'controller' }),
-      ],
-    });
-    // Owner absent; the controller present becomes the effective leader, and
-    // a controller may always operate transport per `canControlTransport`.
-    const snapshot = snapshotFixture(jam, [OWN_ID], OWN_ID);
-    mockedListJams.mockResolvedValue([listEntryFixture(jam, member({ userId: OWN_ID, role: 'controller' }))]);
-    mockedUseJamStream.mockReturnValue({ snapshot, connected: true, denied: false });
-
-    renderJamScreen();
-
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp('Sala líder') }));
-
-    const playButton = await screen.findByRole('button', { name: 'Reproducir' });
-    expect(playButton).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Anterior' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Siguiente' })).toBeEnabled();
+    expect(await screen.findByText('Owner')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Dar control' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Quitar control' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pasarle la sala' })).not.toBeInTheDocument();
   });
 
   it('shows the user search for the owner', async () => {

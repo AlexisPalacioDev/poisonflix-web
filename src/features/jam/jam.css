@@ -2,39 +2,63 @@
    than the app's brand gold — the same reasoning, and the same values, as the
    scoped block at the top of music.css. Declared here too because those custom
    properties are scoped to `.pf-music`, which this screen is not inside. */
+
+/* ---------------------------------------------------------------------------
+   The page.
+
+   Rebuilt so that standing this screen next to /musica reads as one app. The
+   previous version shared tokens with Música and nothing else: no ambient
+   wash, no artwork, no column, no card rhythm — a stack of text on flat black
+   while the screen one tap away is a green-lit page of covers. Tokens were
+   never the problem; composition was.
+   --------------------------------------------------------------------------- */
+
 .pf-jam {
   --pf-green: #1db954;
   --pf-green-bright: #1ed760;
   --pf-green-press: #1aa34a;
-}
 
-/* Jam (collaborative listening) - list + room, same page-shell pattern as
-   downloads.css: padding pinned under the fixed Header, a vertical stack of
-   sections rather than a horizontal Row rail. */
-
-.pf-jam {
   position: relative;
   flex: 1;
   min-height: 100%;
-  padding-top: calc(var(--pf-header-h) + var(--pf-space-lg));
-  padding-bottom: var(--pf-space-2xl);
-  padding-left: var(--pf-gutter);
-  padding-right: var(--pf-gutter);
+  /* Same ambient construction as `.pf-music` (see the comment on that rule):
+     a green overhead glow, a cool counter-light low on the left, and a lift
+     out of pure black. Pure paint, no `backdrop-filter`. */
+  background:
+    radial-gradient(120% 62% at 50% 0%, rgba(29, 185, 84, 0.2) 0%, rgba(29, 185, 84, 0) 62%),
+    radial-gradient(70% 40% at 0% 62%, rgba(64, 130, 255, 0.06) 0%, rgba(64, 130, 255, 0) 68%),
+    linear-gradient(to bottom, rgba(26, 38, 32, 0.55) 0%, rgba(26, 38, 32, 0) 46%),
+    var(--pf-bg);
+}
+
+/* The reading column, the same 760px Música uses for every section, so both
+   screens start their content on the same line. */
+.pf-jam__shell {
+  max-width: 760px;
+  margin: 0 auto;
+  /* Clearance for the fixed now-playing bar plus the iOS safe-area inset it
+     reserves. It lives HERE, not on `.pf-jam`: that element is `flex: 1` inside
+     a viewport-height flex column, so it stops growing at 100% and any content
+     taller than the screen overflows straight past its padding box — the last
+     line ended flush against the bottom edge, under the bar. On an in-flow
+     child the reserve is part of the scrollable content and cannot be escaped. */
+  padding: calc(var(--pf-header-h, 68px) + 1.25rem) 1rem
+    calc(104px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-lg);
-  max-width: 720px;
-  margin: 0 auto;
+  gap: 1.75rem;
 }
 
 .pf-jam__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--pf-space-sm);
 }
 
 .pf-jam__title {
   margin: 0;
+  font-size: 2rem;
   font-size: clamp(1.6rem, 2.6vw, 2.3rem);
   font-weight: 800;
   letter-spacing: -0.03em;
@@ -47,36 +71,67 @@
   border: none;
   color: var(--pf-text-dim);
   cursor: pointer;
-  font-size: 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
   padding: 0;
 }
 
-.pf-jam__back:hover,
-.pf-jam__back:focus-visible {
-  color: var(--pf-gold);
+.pf-jam__back:hover {
+  color: var(--pf-green-bright);
 }
 
+.pf-jam__back:focus-visible {
+  color: var(--pf-green-bright);
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+/* Green, not gold. Música's identity is deliberate and Jam lives inside it;
+   a gold pill on a green-lit page is the first thing the eye catches, for the
+   wrong reason. */
 .pf-jam__create-toggle,
 .pf-jam__create-submit,
 .pf-jam__accept,
-.pf-jam__leave {
-  background: linear-gradient(to bottom, var(--pf-gold) 0%, var(--pf-gold-dim) 100%);
-  color: #14161b;
+.pf-jam__cta {
   border: none;
   border-radius: var(--pf-radius-pill);
-  padding: 10px 20px;
+  padding: 0.6rem 1.2rem;
+  background: var(--pf-green-bright);
+  color: #04160b;
+  font: inherit;
   font-weight: 700;
+  font-size: 0.9rem;
   cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease, transform var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-jam__create-toggle:hover,
+.pf-jam__create-submit:hover,
+.pf-jam__accept:hover,
+.pf-jam__cta:hover {
+  background: #35e874;
+}
+
+.pf-jam__create-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .pf-jam__reject {
   background: transparent;
-  border: 1px solid var(--pf-danger);
-  color: var(--pf-danger);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--pf-text-dim);
   border-radius: var(--pf-radius-pill);
-  padding: 9px 18px;
+  padding: 0.55rem 1.1rem;
+  font: inherit;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.pf-jam__reject:hover {
+  color: var(--pf-text);
+  border-color: rgba(255, 255, 255, 0.32);
 }
 
 .pf-jam__create-form {
@@ -86,39 +141,46 @@
   padding: var(--pf-space-md);
   border-radius: var(--pf-radius-lg);
   border: 1px solid var(--pf-glass-border);
-  background: var(--pf-glass-bg);
+  background: var(--pf-surface);
+}
+
+.pf-jam__create-form .pf-jam__create-submit {
+  align-self: flex-start;
 }
 
 .pf-jam__input {
-  padding: 10px 14px;
-  border-radius: var(--pf-radius-md);
-  border: 1px solid var(--pf-glass-border);
-  background: rgba(0, 0, 0, 0.25);
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border-radius: var(--pf-radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--pf-surface-2);
   color: var(--pf-text);
   font: inherit;
-}
-
-.pf-jam__mode-radios {
-  display: flex;
-  flex-direction: column;
-  gap: var(--pf-space-2xs);
-  color: var(--pf-text-dim);
   font-size: 0.9rem;
+  transition: border-color var(--pf-dur-fast, 0.16s) ease, box-shadow var(--pf-dur-fast, 0.16s) ease;
 }
 
-.pf-jam__mode-radio {
-  display: flex;
-  align-items: center;
-  gap: var(--pf-space-xs);
+.pf-jam__input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.pf-jam__input:focus {
+  outline: none;
+  border-color: var(--pf-green);
+  box-shadow: 0 0 0 3px rgba(29, 185, 84, 0.28);
 }
 
 .pf-jam__status {
-  color: var(--pf-text-dim);
+  margin: 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.85rem;
 }
 
 .pf-jam__status--error {
-  color: var(--pf-danger);
+  color: #ff8a8a;
 }
+
+/* --- Sections ------------------------------------------------------------ */
 
 .pf-jam__section {
   display: flex;
@@ -126,145 +188,618 @@
   gap: var(--pf-space-sm);
 }
 
+/* Byte-for-byte the heading idiom of `.pf-music__heading`, glow included. Same
+   shape everywhere in the app, Música's green here because that is the
+   identity Jam belongs to. */
 .pf-jam__section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--pf-text);
+  /* A step under Música's 1.35rem headings rather than level with them: those
+     carry the top level of their page, while these sit below the room's own
+     h1. Close enough that the two screens read as one app, distinct enough
+     that the hero still wins. */
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: #fff;
+}
+
+.pf-jam__section-title::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 1.05em;
+  border-radius: var(--pf-radius-pill);
+  background: linear-gradient(to bottom, var(--pf-green-bright) 0%, rgba(30, 215, 96, 0.12) 100%);
+  box-shadow: 0 0 14px rgba(30, 215, 96, 0.4);
 }
 
 .pf-jam__list,
-.pf-jam__members,
-.pf-jam__queue,
+.pf-jam__people,
 .pf-jam__directory {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-xs);
+  gap: 0.4rem;
 }
 
-.pf-jam__invite-row,
-.pf-jam__member-row,
-.pf-jam__directory-row {
-  display: flex;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  padding: var(--pf-space-sm) var(--pf-space-md);
-  border-radius: var(--pf-radius-md);
-  border: 1px solid var(--pf-glass-border);
-  background: var(--pf-glass-bg);
-  color: var(--pf-text);
-}
+/* --- Room list rows (your jams / pending invitations) -------------------- */
 
-.pf-jam__invite-actions,
-.pf-jam__member-actions {
-  margin-left: auto;
-  display: flex;
-  gap: var(--pf-space-xs);
-}
-
-.pf-jam__jam-row {
+.pf-jam__jam-row,
+.pf-jam__invite-row {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--pf-space-sm);
-  padding: var(--pf-space-sm) var(--pf-space-md);
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid transparent;
   border-radius: var(--pf-radius-md);
-  border: 1px solid var(--pf-glass-border);
-  background: var(--pf-glass-bg);
+  background: var(--pf-surface);
   color: var(--pf-text);
-  cursor: pointer;
   font: inherit;
   text-align: left;
+  transition: background var(--pf-dur-fast, 0.16s) ease, border-color var(--pf-dur-fast, 0.16s) ease;
 }
 
-.pf-jam__jam-row:hover,
-.pf-jam__jam-row:focus-visible {
-  border-color: var(--pf-gold);
-}
-
-.pf-jam__jam-mode {
-  color: var(--pf-text-dim);
-  font-size: 0.85rem;
-}
-
-.pf-jam__room-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--pf-space-sm);
-}
-
-.pf-jam__leader {
-  margin: 0;
-  color: var(--pf-text-dim);
-}
-
-.pf-jam__transport {
-  display: flex;
-  gap: var(--pf-space-sm);
-}
-
-.pf-jam__transport button {
-  padding: 10px 18px;
-  border-radius: var(--pf-radius-pill);
-  border: 1px solid var(--pf-glass-border);
-  background: var(--pf-glass-bg);
-  color: var(--pf-text);
+.pf-jam__jam-row {
   cursor: pointer;
 }
 
-.pf-jam__transport button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.pf-jam__jam-row:hover {
+  background: var(--pf-surface-2);
+  border-color: rgba(30, 215, 96, 0.35);
 }
 
-.pf-jam__member-name {
-  font-weight: 600;
+.pf-jam__jam-row:focus-visible {
+  outline: 2px solid var(--pf-green-bright);
+  outline-offset: 2px;
 }
 
-.pf-jam__member-role,
-.pf-jam__member-presence {
-  color: var(--pf-text-dim);
-  font-size: 0.85rem;
-}
-
-.pf-jam__track {
+.pf-jam__row-art {
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
   display: flex;
-  align-items: baseline;
-  gap: var(--pf-space-xs);
-  padding: var(--pf-space-xs) var(--pf-space-sm);
+  align-items: center;
+  justify-content: center;
   border-radius: var(--pf-radius-sm);
-  color: var(--pf-text-dim);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.4);
 }
 
-.pf-jam__track--current {
-  color: var(--pf-text);
-  background: color-mix(in srgb, var(--pf-green-bright) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--pf-green-bright) 35%, transparent);
+.pf-jam__row-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
-.pf-jam__track-artist {
-  font-size: 0.85rem;
+/* Someone is in there right now. A steady dot, not a pulse — a blinking light
+   in a list you scroll past is a distraction, not information. */
+.pf-jam__row-live {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-green-bright);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
 }
 
-.pf-jam__mode-select-label {
+.pf-jam__row-text {
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-2xs);
-  color: var(--pf-text-dim);
-  font-size: 0.9rem;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
-.pf-jam__mode-select {
-  padding: 8px 12px;
+.pf-jam__row-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-jam__row-meta {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Says what the tap does. The row used to end in the mode label, so nothing on
+   it suggested it was the way in. */
+.pf-jam__row-go {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.pf-jam__jam-row:hover .pf-jam__row-go {
+  color: var(--pf-green-bright);
+}
+
+.pf-jam__invite-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--pf-space-xs);
+}
+
+/* --- Room hero ----------------------------------------------------------- */
+
+.pf-jam__hero {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: flex-start;
+  gap: 1.1rem;
+  padding: 1.1rem;
+  border-radius: var(--pf-radius-lg);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* The room takes its colour from whatever it is playing — the same treatment
+   the full player uses (`.pf-fullplayer__wash`), blurred past recognition and
+   dimmed hard so nothing on top has to fight it for contrast. */
+.pf-jam__hero-glow {
+  position: absolute;
+  inset: -20%;
+  z-index: -2;
+  background-position: center;
+  background-size: cover;
+  filter: blur(48px) saturate(1.2) brightness(0.42);
+  transform: scale(1.1);
+}
+
+/* A scrim between the wash and the text, so a warm cover cannot turn the whole
+   panel brown on a page that is lit green. The artwork still colours the room;
+   it just stops shouting over the identity of the section it sits in.
+   Deliberately a sibling layer of the wash rather than a child of it: `filter`
+   applies to an element's whole subtree, so a scrim nested inside the wash
+   would be blurred and dimmed along with it and do almost nothing. */
+.pf-jam__hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(to right, rgba(10, 12, 16, 0.7) 0%, rgba(10, 12, 16, 0.34) 100%),
+    radial-gradient(90% 120% at 50% 0%, rgba(29, 185, 84, 0.14) 0%, rgba(29, 185, 84, 0) 72%);
+}
+
+.pf-jam__hero-art {
+  flex: 0 0 auto;
+  width: 104px;
+  height: 104px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: var(--pf-radius-md);
-  border: 1px solid var(--pf-glass-border);
-  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 2rem;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.pf-jam__hero-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pf-jam__hero-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.pf-jam__hero-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-green-bright);
+}
+
+.pf-jam__hero-name {
+  margin: 0;
+  font-size: 1.7rem;
+  font-size: clamp(1.5rem, 4.5vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+
+/* Plain inline text, deliberately not a flex row: these three facts are wider
+   than a phone once the numbers grow, and text wrapping handles that where a
+   flex row would either overflow or break between the facts. */
+.pf-jam__hero-meta {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.pf-jam__hero-live {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 0.4rem;
+  vertical-align: 0.05em;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-green-bright);
+  box-shadow: 0 0 10px rgba(30, 215, 96, 0.8);
+}
+
+.pf-jam__cta {
+  margin-top: 0.5rem;
+}
+
+.pf-jam__hero-hint {
+  margin: 0;
+  max-width: 44ch;
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* --- People -------------------------------------------------------------- */
+
+.pf-jam__person {
+  display: flex;
+  align-items: center;
+  /* Row gap first, column gap second: when the owner's chips do not fit
+     alongside the name they wrap onto their own line inside the same card,
+     and this is the breathing room between the two lines. */
+  gap: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--pf-radius-md);
+  background: var(--pf-surface);
+}
+
+.pf-jam__avatar {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-surface-2);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  /* The ring is the whole signal, so its space is reserved always and only
+     coloured when the person is here — otherwise avatars jump sideways as
+     people come and go. */
+  box-shadow: 0 0 0 2px transparent;
+  transition: box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pf-jam__avatar--sm {
+  width: 34px;
+  height: 34px;
+  font-size: 0.72rem;
+}
+
+.pf-jam__avatar--here {
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--pf-green-bright);
+}
+
+.pf-jam__avatar--pending {
+  opacity: 0.45;
+}
+
+.pf-jam__crown {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-gold);
+  box-shadow: 0 0 0 2px var(--pf-surface);
+}
+
+.pf-jam__person-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  /* 8rem basis, not `auto`: it lets the name shrink to a sensible minimum and
+     hand the leftover width to the chips, and once even that does not fit it
+     is the line break that pushes the chips down instead of squashing them. */
+  flex: 1 1 8rem;
+}
+
+.pf-jam__person-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.pf-jam__person-you {
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--pf-radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pf-jam__person-state {
+  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pf-jam__person--here .pf-jam__person-state {
+  color: var(--pf-green-bright);
+}
+
+/* The owner's two actions, on the row. `margin-left: auto` pins them to the
+   right edge while they share the line with the name; the moment they wrap
+   they become the whole second line, still right-aligned under it. */
+.pf-jam__person-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+/* Same pill family as `.pf-jam__invite-btn` — this screen states its actions
+   as outlined pills, and these belong to that vocabulary rather than looking
+   bolted on. `nowrap` keeps a label from breaking into "Pasarle la / sala":
+   the chip wraps as a unit or not at all. */
+.pf-jam__person-chip {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease,
+    border-color var(--pf-dur-fast, 0.16s) ease, color var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-jam__person-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+
+/* Gold, the same gold as the crown dot on the avatar, because this chip is
+   what moves that crown. Handing over the room is the one action here you
+   cannot take back, and it should not look like its neighbour. */
+.pf-jam__person-chip--crown {
+  border-color: rgba(242, 193, 78, 0.45);
+  color: var(--pf-gold);
+}
+
+.pf-jam__person-chip--crown:hover {
+  background: rgba(242, 193, 78, 0.14);
+  border-color: var(--pf-gold);
+  color: var(--pf-gold);
+}
+
+/* --- Mode: two option rows, both visible, both explained ----------------- */
+
+.pf-jam__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pf-jam__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: var(--pf-radius-md);
+  background: var(--pf-surface);
   color: var(--pf-text);
   font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) ease, border-color var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-jam__choice:hover {
+  background: var(--pf-surface-2);
+}
+
+.pf-jam__choice:focus-visible {
+  outline: 2px solid var(--pf-green-bright);
+  outline-offset: 2px;
+}
+
+/* The chosen one is green, the way Spotify Connect marks the device you are
+   playing on: the accent says "this is the live one" without a second label. */
+.pf-jam__choice--on {
+  border-color: rgba(30, 215, 96, 0.5);
+  background: rgba(30, 215, 96, 0.08);
+}
+
+.pf-jam__choice-mark {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 0.1rem;
+  border-radius: var(--pf-radius-pill);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  transition: border-color var(--pf-dur-fast, 0.16s) ease, box-shadow var(--pf-dur-fast, 0.16s) ease;
+}
+
+.pf-jam__choice--on .pf-jam__choice-mark {
+  border-color: var(--pf-green-bright);
+  box-shadow: inset 0 0 0 3px var(--pf-green-bright);
+}
+
+.pf-jam__choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.pf-jam__choice-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.pf-jam__choice--on .pf-jam__choice-title {
+  color: var(--pf-green-bright);
+}
+
+.pf-jam__choice-hint {
+  max-width: 52ch;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* --- Directory ----------------------------------------------------------- */
+
+.pf-jam__directory-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--pf-radius-md);
+  background: var(--pf-surface);
+}
+
+.pf-jam__directory-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.88rem;
+  color: var(--pf-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-jam__invite-btn {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid rgba(30, 215, 96, 0.45);
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: var(--pf-green-bright);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pf-jam__invite-btn:hover {
+  background: rgba(30, 215, 96, 0.14);
+  border-color: var(--pf-green-bright);
+}
+
+/* --- Leaving ------------------------------------------------------------- */
+
+/* Last, and set apart by a rule rather than by colour: it is the only thing
+   here you cannot undo, and it should not compete with the settings above it. */
+.pf-jam__danger {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  margin-top: 0.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-jam__danger-note {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pf-jam__leave {
+  align-self: flex-start;
+  padding: 0.55rem 1.2rem;
+  border: 1px solid rgba(229, 72, 77, 0.5);
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: #ff8a8a;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-jam__leave:hover {
+  background: rgba(229, 72, 77, 0.14);
+  border-color: var(--pf-danger);
+}
+
+/* --- Narrow screens ------------------------------------------------------ */
+
+@media (max-width: 560px) {
+  .pf-jam__hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pf-jam__hero-art {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    max-width: 200px;
+  }
+
+  /* The invite/reject pair wraps under the room name instead of squeezing the
+     name into two characters. */
+  .pf-jam__invite-row {
+    flex-wrap: wrap;
+  }
+
+  .pf-jam__invite-actions {
+    width: 100%;
+  }
+
+  .pf-jam__invite-actions button {
+    flex: 1 1 0;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -306,7 +841,14 @@
   line-height: 1;
 }
 
-.pf-jam-card:hover .pf-jam-card__art--new,
+/* Split from a comma-joined list: Chrome 53 (webOS 2018) drops the WHOLE rule
+   when one selector in the list is unsupported, and `:focus-visible` is —
+   `scripts/check-legacy-css.mjs` rule (c) enforces this tree-wide. */
+.pf-jam-card:hover .pf-jam-card__art--new {
+  border-color: var(--pf-green-bright);
+  background: color-mix(in srgb, var(--pf-green-bright) 12%, var(--pf-surface));
+}
+
 .pf-jam-card:focus-visible .pf-jam-card__art--new {
   border-color: var(--pf-green-bright);
   background: color-mix(in srgb, var(--pf-green-bright) 12%, var(--pf-surface));
@@ -328,200 +870,6 @@
 
 .pf-jam-card--pending .pf-music__rec-sub {
   color: var(--pf-green-bright);
-}
-
-/* ---------------------------------------------------------------------------
-   People in the room. Faces first, state second — the reference (Spotify Jam)
-   shows participants as avatars precisely because "who is here" is answered
-   faster by a ring than by reading a column of words.
-   --------------------------------------------------------------------------- */
-
-.pf-jam__people {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--pf-space-md);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.pf-jam__person {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-areas: 'avatar name' 'avatar state' 'actions actions';
-  align-items: center;
-  column-gap: var(--pf-space-sm);
-  min-width: 200px;
-  flex: 1 1 200px;
-  padding: var(--pf-space-sm);
-  border-radius: var(--pf-radius-md);
-  background: var(--pf-surface);
-}
-
-.pf-jam__avatar {
-  grid-area: avatar;
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--pf-radius-pill);
-  background: var(--pf-surface-2);
-  color: var(--pf-text-dim);
-  font-size: 0.85rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  /* A ring is the whole signal, so reserve its space always and only colour it
-     when present — otherwise avatars jump sideways as people come and go. */
-  box-shadow: 0 0 0 2px transparent;
-  transition: box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.pf-jam__avatar--here {
-  color: var(--pf-text);
-  box-shadow: 0 0 0 2px var(--pf-green-bright);
-}
-
-.pf-jam__avatar--pending {
-  opacity: 0.45;
-}
-
-.pf-jam__crown {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 12px;
-  height: 12px;
-  border-radius: var(--pf-radius-pill);
-  background: var(--pf-gold);
-  box-shadow: 0 0 0 2px var(--pf-surface);
-}
-
-.pf-jam__person-name {
-  grid-area: name;
-  font-weight: 600;
-  color: var(--pf-text);
-}
-
-.pf-jam__person-state {
-  grid-area: state;
-  font-size: 0.8rem;
-  color: var(--pf-text-dim);
-}
-
-.pf-jam__person-actions {
-  grid-area: actions;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--pf-space-2xs);
-  margin-top: var(--pf-space-xs);
-}
-
-.pf-jam__chip {
-  padding: 4px 10px;
-  border: 1px solid color-mix(in srgb, var(--pf-text-dim) 30%, transparent);
-  border-radius: var(--pf-radius-pill);
-  background: none;
-  color: var(--pf-text-dim);
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-
-.pf-jam__chip:hover {
-  color: var(--pf-text);
-  border-color: var(--pf-text-dim);
-}
-
-/* --- Queue: the same anatomy as every other song list in the app --- */
-
-.pf-jam__track {
-  display: grid;
-  grid-template-columns: 48px 1fr auto;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  padding: var(--pf-space-xs);
-  border-radius: var(--pf-radius-sm);
-}
-
-.pf-jam__track-art {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--pf-radius-sm);
-  overflow: hidden;
-  background: var(--pf-surface-2);
-}
-
-.pf-jam__track-art img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.pf-jam__track-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.pf-jam__track-title {
-  color: var(--pf-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pf-jam__track-artist {
-  font-size: 0.8rem;
-  color: var(--pf-text-dim);
-}
-
-/* Three bars instead of a coloured left border: the app already says "this one
-   is playing" with motion elsewhere, and a stripe down the side of a row is the
-   thing every generated UI reaches for first. */
-.pf-jam__track-now {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 14px;
-}
-
-.pf-jam__track-now span {
-  width: 3px;
-  border-radius: 1px;
-  background: var(--pf-green-bright);
-  animation: pf-jam-bars 900ms ease-in-out infinite;
-}
-
-.pf-jam__track-now span:nth-child(1) { height: 60%; animation-delay: 0ms; }
-.pf-jam__track-now span:nth-child(2) { height: 100%; animation-delay: 150ms; }
-.pf-jam__track-now span:nth-child(3) { height: 40%; animation-delay: 300ms; }
-
-@keyframes pf-jam-bars {
-  0%, 100% { transform: scaleY(0.4); }
-  50% { transform: scaleY(1); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pf-jam__track-now span { animation: none; }
-}
-
-
-/* Section titles wear the same accent bar as Música's headings. The shape is
-   shared across the app; only the colour is per-feature, which is exactly the
-   rule music.css states above `.pf-music__heading`. */
-.pf-jam__section-title {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.pf-jam__section-title::before {
-  content: '';
-  flex: 0 0 auto;
-  width: 3px;
-  height: 1.05em;
-  border-radius: var(--pf-radius-pill);
-  background: linear-gradient(to bottom, var(--pf-green-bright) 0%, rgba(30, 215, 96, 0.12) 100%);
 }
 
 /* --- Invitation bell --- */
@@ -632,26 +980,17 @@
   font-size: 0.85rem;
 }
 
-.pf-jam__add-music {
-  display: block;
-  width: 100%;
-  margin-bottom: var(--pf-space-sm);
-  padding: var(--pf-space-sm);
-  border: 1px dashed color-mix(in srgb, var(--pf-green-bright) 45%, transparent);
-  border-radius: var(--pf-radius-md);
-  background: color-mix(in srgb, var(--pf-green-bright) 6%, var(--pf-surface));
-  color: var(--pf-green-bright);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
+/* --- Output picker ---
+   DEAD except `.pf-jam-dest__unlock`. The header dropdown these styled was
+   deleted in "the cards are the selector; the dropdown is gone" — a Jam card
+   on /musica is the output picker now — and only the unlock button survived,
+   in JamPlaybackHost.tsx.
 
-.pf-jam__add-music:hover {
-  border-color: var(--pf-green-bright);
-  background: color-mix(in srgb, var(--pf-green-bright) 12%, var(--pf-surface));
-}
-
-/* --- Output picker --- */
+   Left in place deliberately rather than swept up with the rest of this
+   rewrite: JamPlaybackHost.tsx is being edited in another session right now,
+   and deleting ~90 lines of CSS that the other side may be about to reuse is
+   how you hand someone an invisible regression. Removing it is a one-line
+   decision for whoever owns that file next; it is not free for me to make. */
 
 .pf-jam-dest {
   display: inline-flex;
@@ -675,8 +1014,6 @@
   font-size: 0.85rem;
   line-height: 1;
 }
-
-
 
 /* Icon-only, and sized to the pill so nothing reflows when it appears. The
    labelled version of this wrapped onto three lines and pushed the header
@@ -721,6 +1058,9 @@
    of the phone. */
 .pf-jam-dest__list {
   min-width: 200px;
+  /* Static fallback first — Chrome 53 cannot parse a literal `min()` and drops
+     the declaration, so the prior one wins (`check-legacy-css.mjs` rule b). */
+  max-width: 280px;
   max-width: min(280px, 88vw);
   margin: 0;
   padding: var(--pf-space-2xs);
