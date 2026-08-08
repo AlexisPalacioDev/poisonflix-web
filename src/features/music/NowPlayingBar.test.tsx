@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -109,14 +111,14 @@ function Probe() {
   return <div data-testid="position">{Math.round(position)}</div>;
 }
 
-function renderBar(seedTracks?: MusicTrack[]) {
+function renderBar(seedTracks?: MusicTrack[], path = '/musica') {
   setSession({ jellyfinToken: 'tok', jellyfinUserId: 'user', jellyseerrCookiePresent: true });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      {/* The bar is a Música-section surface, so tests exercise it on a /musica
+      {/* The bar is a music-half surface, so tests exercise it on a /musica
           route (on the cine side it intentionally renders null). */}
-      <MemoryRouter initialEntries={['/musica']}>
+      <MemoryRouter initialEntries={[path]}>
         <AuthProvider>
           <MusicPlayerProvider>
             <Seed seedTracks={seedTracks} />
@@ -171,6 +173,20 @@ describe('NowPlayingBar — desktop layout', () => {
     // The old mobile rule hid the whole `__extra` group; regression guard.
     expect(queueBtn.closest('.pf-nowplaying__extra')).not.toBeNull();
     expect(getComputedStyle(queueBtn).display).not.toBe('none');
+  });
+
+  // A Jam is the music half too (`lib/domain/lastSection.ts` has said so since
+  // it was written), so local playback keeps its controls on the room screen
+  // instead of the bar vanishing the moment you go to manage a room.
+  it('keeps the local transport on /jam', () => {
+    renderBar(undefined, '/jam');
+    expect(screen.getByRole('region', { name: 'Reproduciendo ahora' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pausar' })).toBeInTheDocument();
+  });
+
+  it('still renders nothing on the cine side', () => {
+    renderBar(undefined, '/downloads');
+    expect(screen.queryByRole('region', { name: 'Reproduciendo ahora' })).not.toBeInTheDocument();
   });
 
   // Reliability change: buffering is state nobody can see without a UI cue.
@@ -255,7 +271,15 @@ describe('NowPlayingBar — compact mobile layout', () => {
   it('opens the reachable queue from the expanded player', () => {
     renderBar();
     fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Track A' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cola' }));
+    // Scoped to the full player: the compact bar behind it now carries its own
+    // queue button (the mobile bar no longer hides the queue behind an expand),
+    // so a flat query would match two buttons named "Cola". A real screen
+    // reader never sees both — the full player is `aria-modal`.
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Reproduciendo' })).getByRole('button', {
+        name: 'Cola',
+      }),
+    );
     const drawer = screen.getByRole('dialog', { name: 'Cola de reproducción' });
     expect(drawer).toBeInTheDocument();
     // Queue is a real drawer, not hidden.
@@ -326,10 +350,58 @@ describe('NowPlayingBar — compact mobile layout', () => {
     it('the full player is gone once its own queue button hands off to the queue drawer', () => {
       renderBar();
       fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Track A' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Cola' }));
+      // Its OWN queue button — the compact bar behind it has one too now.
+      fireEvent.click(
+        within(screen.getByRole('dialog', { name: 'Reproduciendo' })).getByRole('button', {
+          name: 'Cola',
+        }),
+      );
 
       expect(screen.getByRole('dialog', { name: 'Cola de reproducción' })).toBeInTheDocument();
       expect(screen.queryByRole('dialog', { name: 'Reproduciendo' })).not.toBeInTheDocument();
+    });
+  });
+
+  // jsdom loads no CSS, so a control's real size is invisible to every other
+  // test in this file — which is how the compact transport got shaved from
+  // 38px to 34px without a single red test. These read the stylesheet, the
+  // same trick `src/test/cssRules.ts` uses for `opacity: 0`.
+  describe('touch targets (WCAG 2.5.5)', () => {
+    const css = readFileSync(resolve(__dirname, 'NowPlayingBar.css'), 'utf8');
+
+    /** The declarations of the top-level rule whose selector is exactly this. */
+    function declarationsFor(selector: string): string {
+      const at = css.indexOf(`\n${selector} {`);
+      expect(at, `no rule found for \`${selector}\``).toBeGreaterThan(-1);
+      const open = css.indexOf('{', at);
+      return css.slice(open + 1, css.indexOf('}', open));
+    }
+
+    it.each([
+      '.pf-nowplaying--compact .pf-nowplaying__btn',
+      '.pf-nowplaying__toggle--compact',
+      '.pf-nowplaying__art--compact',
+    ])('gives %s a 44px box', (selector) => {
+      const declarations = declarationsFor(selector);
+      expect(declarations).toMatch(/width:\s*44px/);
+      expect(declarations).toMatch(/height:\s*44px/);
+    });
+
+    it('leaves real separation between prev, play and next', () => {
+      const declarations = declarationsFor(
+        '.pf-nowplaying--compact .pf-nowplaying__compact-controls',
+      );
+      const gap = /gap:\s*([\d.]+)rem/.exec(declarations);
+      expect(gap).not.toBeNull();
+      // 2px was the measured distance between "Anterior" and "Pausar", which
+      // on a thumb is no distance at all.
+      expect(Number(gap?.[1]) * 16).toBeGreaterThanOrEqual(8);
+    });
+
+    it('sizes the compact grid row to the 44px controls it holds', () => {
+      expect(declarationsFor('.pf-nowplaying--compact')).toMatch(
+        /grid-template-rows:\s*44px auto/,
+      );
     });
   });
 

@@ -71,12 +71,87 @@
   text-overflow: ellipsis;
 }
 
+/* The subtitle line: artist, and the room chip when a Jam is the output. */
+.pf-nowplaying__sub {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .pf-nowplaying__artist {
+  flex: 0 1 auto;
   font-size: 0.78rem;
   color: rgba(255, 255, 255, 0.6);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* "This is coming out over there." A chip beside the artist, at the size of a
+   qualifier — the destination is a property of what is playing, not an
+   announcement. Green because it is live and because Música's accent already
+   means "on" everywhere else in this bar. */
+.pf-nowplaying__room {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.05rem 0.45rem 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(30, 215, 96, 0.14);
+  color: #74e69b;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* `text-overflow` acts on a block's own text, and the chip above is a flex
+   container — so the name needs its own box or a long room gets hard-clipped
+   mid-letter instead of ellipsised. */
+.pf-nowplaying__room-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-nowplaying__room-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px rgba(30, 215, 96, 0.16);
+}
+
+/* The stream dropped: what the chip says is the last thing we were told, not
+   what the room is doing. Colour is the honest way to say so — the numbers
+   beside it would otherwise keep looking authoritative. */
+.pf-nowplaying__room--stale {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pf-nowplaying__room--stale .pf-nowplaying__room-dot {
+  box-shadow: none;
+}
+
+/* Read aloud, never drawn: the chip's dot and room name are a sentence for a
+   screen reader ("Sonando en la sala Ruta a la costa") and a badge for
+   everyone else. */
+.pf-nowplaying__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* --- Center: transport controls + seek bar --- */
@@ -128,6 +203,19 @@
   color: #1ed760;
 }
 
+/* A room this user may hear but not steer (`canControlTransport`), or one
+   whose stream is down. The controls stay put and go inert: a transport that
+   disappears when someone else takes the wheel reads as the app breaking. */
+.pf-nowplaying__btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pf-nowplaying__btn:disabled:hover {
+  color: rgba(255, 255, 255, 0.75);
+  background: transparent;
+}
+
 /* Shuffle/repeat active cue: a small dot below the glyph, the established
    media-player convention that the mode is engaged. Color alone is easy to
    miss on a busy bar; the dot makes "on" unmistakable. Opt-in via --dot so
@@ -166,6 +254,15 @@
 
 .pf-nowplaying__toggle:focus-visible {
   transform: scale(1.05);
+}
+
+.pf-nowplaying__toggle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pf-nowplaying__toggle:disabled:hover {
+  transform: none;
 }
 
 /* Buffering is otherwise invisible state — a settled stall (600ms, see
@@ -247,44 +344,137 @@
 }
 
 /* =========================================================================
-   Mobile compact bar (< 900px): cover + meta (expands) | play/pause + next,
-   with a thin green progress line hugging the top edge.
+   Transport failure notice.
+
+   A command the room refused used to leave the console the only place that
+   knew. This is the visible half: one line, above every surface that can send
+   a transport command (the bar at z-index 90, the queue drawer at 95, the
+   full-screen player at 100), so wherever it was pressed the answer is
+   legible. `position: fixed` on purpose — it must cost the bar ZERO height,
+   because QueueDrawer.css reserves exactly 88px above the bottom edge and the
+   bar already spends 80 of them.
+
+   Sober rather than loud: an outlined strip in the app's own dark glass, not
+   a modal. Nothing is blocked while it is up; the transport underneath stays
+   pressable, which matters most for the "try again" case.
+   ========================================================================= */
+.pf-nowplaying__alert {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  z-index: 120;
+  /* `left: 50%` on its own leaves the box only the right half of the viewport
+     to lay out in, which turned one sentence into a five-line column on a
+     phone. `max-content` sizes it to the sentence and the cap wraps it. */
+  width: max-content;
+  max-width: 92vw;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(255, 138, 128, 0.5);
+  border-radius: 10px;
+  background: rgba(48, 18, 18, 0.97);
+  color: #ffd6d0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: left;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.pf-nowplaying__alert svg {
+  flex: 0 0 auto;
+}
+
+/* =========================================================================
+   Mobile compact bar (< 900px).
+
+   Two rows: [art+meta | transport | queue] over [elapsed — seek — total].
+
+   The PLAY BUTTON SITS ON THE BAR'S TRUE CENTRE. The transport is a
+   full-width absolutely positioned strip whose contents are centred, so the
+   axis is the bar's, not "whatever is left after the title". The previous
+   layout was a flex row with `justify-content: space-between`, which pinned
+   the buttons to the right edge and put the play button wherever the title
+   happened to leave it — the owner's report.
+
+   Three equal grid columns would have centred it too, but at a price: equal
+   sides is what centring MEANS, so the title would have been capped at the
+   same ~60px the queue button needs on the right. Floating the transport
+   instead lets the title run all the way up to it and recovers about a third
+   more room, which on a 390px phone is the difference between "Mi Comedia"
+   and "Mi Com…". The strip is `pointer-events: none` so the dead space either
+   side of the three buttons still belongs to the controls underneath it.
+
+   The seek row is a second grid row rather than a squeeze into the first. It
+   costs ~20px of bar height and buys back what the old compact bar had
+   quietly dropped: seeing where you are in the song, and being able to move.
+   The whole bar stays under the 88px that QueueDrawer.css reserves above it
+   (80px measured at 390px wide).
+
+   EVERY CONTROL HERE IS A 44px TARGET (WCAG 2.5.5). It got shaved to 34px in
+   the redesign, which passes the 24px floor of 2.5.8 and still costs a thumb
+   the next song in somebody else's room. The glyphs did NOT grow with it —
+   PrevIcon/NextIcon are still 22px and the queue icon 20px; what grew is the
+   box around them, which is transparent at rest.
    ========================================================================= */
 .pf-nowplaying--compact {
+  display: grid;
+  /* The meta column stops just short of the floating transport: half the bar
+     less half the transport's width (148px: three 44px buttons and two 8px
+     gaps), plus 2px so the two never touch. `50%` resolves against the grid's
+     own content box, whose centre is the bar's centre, so they agree at every
+     phone width. Bigger targets are paid for out of the title's width — that
+     is the trade, and a mis-tap costs more than an ellipsis. */
+  grid-template-columns: minmax(0, calc(50% - 76px)) 1fr;
+  grid-template-rows: 44px auto;
+  grid-template-areas:
+    'meta actions'
+    'seek seek';
+  align-items: center;
+  /* Overrides the base rule's `gap` shorthand — a grid needs the two axes to
+     differ here, and the shorthand would set both to 1rem. */
+  column-gap: 0.25rem;
+  row-gap: 0.1rem;
+  padding: 0.4rem 0.5rem;
+  padding-bottom: calc(0.3rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Every pixel taken back here goes to the title, which is the column that
+   pays for the centred play button. */
+.pf-nowplaying--compact .pf-nowplaying__expand {
   gap: 0.5rem;
-  padding: 0.55rem 0.75rem;
-  /* The shorthand above resets padding-bottom, so re-apply the safe-area lift
-     for the compact (mobile) bar too. */
-  padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
 }
 
-.pf-nowplaying__progressline {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.12);
-  overflow: hidden;
+/* 44px of hit area around a 20-22px glyph. The icon is unchanged; the button
+   box is what carries the target size, which is why this is a width/height on
+   the flex-centred button rather than a bigger `<svg>`. */
+.pf-nowplaying--compact .pf-nowplaying__btn {
+  width: 44px;
+  height: 44px;
 }
 
-.pf-nowplaying__progressline > span {
-  display: block;
-  height: 100%;
-  width: 100%;
-  transform-origin: left center;
-  background: #1ed760;
-  transition: transform 0.25s linear;
+/* No pill on the compact bar: its padding and background are chrome the
+   subtitle line cannot afford at 390px. The dot alone already says "live
+   somewhere else", and the green says which somewhere. */
+.pf-nowplaying--compact .pf-nowplaying__room {
+  padding: 0;
+  background: none;
+  font-size: 0.74rem;
 }
 
 /* The whole art+meta cluster is one big tap target that opens the full player. */
 .pf-nowplaying__expand {
-  flex: 1 1 auto;
+  grid-area: meta;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  padding: 0.15rem;
+  /* Horizontal only: the 44px artwork already fills the 44px grid row, and a
+     vertical pad would push this button past it and grow the bar. */
+  padding: 0 0.15rem;
   border: none;
   background: transparent;
   color: inherit;
@@ -303,16 +493,71 @@
   height: 44px;
 }
 
-.pf-nowplaying__compact-controls {
-  flex: 0 0 auto;
+/* prev · play · next, centred on the bar rather than on what is left of it.
+   Symmetric by construction (both side buttons are 44px), so the play button
+   lands on the exact centre of this full-width strip — 195 of 390, which the
+   owner asked for by name. `.pf-nowplaying` is `position: fixed`, so it is
+   already the containing block.
+
+   The 8px gap is the other half of the target-size fix: three 44px boxes
+   pressed against each other still let a thumb aimed at pause take the next
+   song, and 2px (what this was) is not separation, it is a rounding error. */
+.pf-nowplaying--compact .pf-nowplaying__compact-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0.4rem;
+  height: 44px;
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  justify-content: center;
+  gap: 0.5rem;
+  /* The strip covers the whole bar width; only its three buttons should
+     swallow taps, or the title and the queue button underneath would stop
+     responding across most of the row. */
+  pointer-events: none;
 }
 
+.pf-nowplaying--compact .pf-nowplaying__compact-controls > * {
+  pointer-events: auto;
+}
+
+.pf-nowplaying__compact-actions {
+  grid-area: actions;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Same 44px as the base toggle, restated here because the compact grid row
+   and the centred strip are both sized to it: change one and the other three
+   numbers have to move with it. */
 .pf-nowplaying__toggle--compact {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
+}
+
+/* The seek row. Times either side of the bar rather than under it: on a phone
+   the vertical space is the expensive axis, and two 2.2rem gutters cost less
+   than a third row. */
+.pf-nowplaying__compact-seek {
+  grid-area: seek;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.pf-nowplaying__compact-seek .pf-nowplaying__time {
+  min-width: 2.2rem;
+  font-size: 0.66rem;
+}
+
+/* Taller than the 4px desktop track on purpose: this one is dragged with a
+   thumb, not a mouse pointer. The native control draws a thin track and a
+   round thumb inside the taller box, so the extra height is all hit area. */
+.pf-nowplaying__compact-seek .pf-nowplaying__seekbar {
+  height: 18px;
 }
 
 /* =========================================================================
@@ -529,6 +774,12 @@
 .pf-fullplayer__volume-range {
   flex: 1 1 auto;
   width: auto;
+  /* An <input> carries an intrinsic minimum width (~129px in Chrome) that a
+     flex item will not shrink below without this. Its parent already had
+     `min-width: 0`, which does nothing for the child — so on a 390px phone
+     with the thumbs row present, the slider refused to shrink and ran under
+     the "Cola" button. */
+  min-width: 0;
   max-width: 180px;
   height: 5px;
 }
