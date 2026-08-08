@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearAudioPreference,
+  clearSecondSubtitlePreference,
   clearSubtitlePreference,
+  getSecondSubtitlePreference,
   getSubtitlePreference,
   resolveInitialAudio,
+  resolveInitialSecondSubtitle,
   resolveInitialSubtitle,
+  secondSubtitlePreferenceKeyFor,
   setAudioPreference,
+  setSecondSubtitlePreference,
   setSubtitlePreference,
   SUBTITLE_OFF,
   subtitlePreferenceKeyFor,
@@ -15,6 +20,7 @@ import {
 
 afterEach(() => {
   clearSubtitlePreference();
+  clearSecondSubtitlePreference();
   clearAudioPreference();
 });
 
@@ -156,5 +162,85 @@ describe('resolveInitialAudio — Spanish must never be silently skipped (AUTO r
 
   it('returns null when there are no audio tracks at all', () => {
     expect(resolveInitialAudio([])).toBeNull();
+  });
+});
+
+// Second, simultaneous subtitle (owner request: read English while
+// listening, Spanish alongside for meaning). Persisted separately from the
+// primary subtitle preference, by language family - see this file's own
+// header comment for why.
+describe('second subtitle preference get/set (persisted separately from the primary)', () => {
+  it('returns null when nothing has been saved', () => {
+    expect(getSecondSubtitlePreference()).toBeNull();
+  });
+
+  it('round-trips a saved language family', () => {
+    setSecondSubtitlePreference('en');
+    expect(getSecondSubtitlePreference()).toBe('en');
+  });
+
+  it('is independent from the primary subtitle preference (setting one leaves the other untouched)', () => {
+    setSubtitlePreference('es');
+    setSecondSubtitlePreference('en');
+    expect(getSubtitlePreference()).toBe('es');
+    expect(getSecondSubtitlePreference()).toBe('en');
+  });
+
+  it('clearSecondSubtitlePreference resets back to "never set" (null)', () => {
+    setSecondSubtitlePreference('en');
+    clearSecondSubtitlePreference();
+    expect(getSecondSubtitlePreference()).toBeNull();
+  });
+});
+
+describe('secondSubtitlePreferenceKeyFor', () => {
+  it('returns SUBTITLE_OFF for "no second subtitle" (null track)', () => {
+    expect(secondSubtitlePreferenceKeyFor(null)).toBe(SUBTITLE_OFF);
+  });
+
+  it('returns the language family when the track has a known language', () => {
+    expect(secondSubtitlePreferenceKeyFor({ language: 'eng', displayTitle: 'English' })).toBe('en');
+  });
+
+  it('falls back to the display title when language is unknown', () => {
+    expect(secondSubtitlePreferenceKeyFor({ language: null, displayTitle: 'Comentarios' })).toBe('Comentarios');
+  });
+});
+
+describe('resolveInitialSecondSubtitle', () => {
+  it('returns null when nothing has ever been saved (no auto-on, unlike the primary subtitle)', () => {
+    const result = resolveInitialSecondSubtitle([spanishTrack, englishTrack], null);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the saved preference is SUBTITLE_OFF', () => {
+    setSecondSubtitlePreference(SUBTITLE_OFF);
+    const result = resolveInitialSecondSubtitle([spanishTrack, englishTrack], null);
+    expect(result).toBeNull();
+  });
+
+  it('returns the best track in the saved language family', () => {
+    setSecondSubtitlePreference('en');
+    const result = resolveInitialSecondSubtitle([spanishTrack, englishTrack], null);
+    expect(result).toBe(englishTrack);
+  });
+
+  it('never returns the same track as the primary selection, even if it matches the saved language', () => {
+    setSecondSubtitlePreference('es');
+    const result = resolveInitialSecondSubtitle([spanishTrack, englishTrack], spanishTrack.index);
+    expect(result).toBeNull();
+  });
+
+  it('falls back to null when the saved family has no matching track in this file', () => {
+    setSecondSubtitlePreference('fre');
+    const result = resolveInitialSecondSubtitle([spanishTrack, englishTrack], null);
+    expect(result).toBeNull();
+  });
+
+  it('prefers the non-forced track within the matched family, mirroring the primary subtitle tie-break', () => {
+    const englishForcedTrack = englishForced;
+    setSecondSubtitlePreference('en');
+    const result = resolveInitialSecondSubtitle([englishForcedTrack, englishTrack], null);
+    expect(result).toBe(englishTrack);
   });
 });

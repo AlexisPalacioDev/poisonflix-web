@@ -337,6 +337,64 @@
   outline-offset: 4px;
 }
 
+/* --- Dual subtitles overlay (owner request: two subtitles at once, a
+   language-learning feature - read English while listening, Spanish
+   alongside for meaning) -------------------------------------------------- */
+
+/* A sibling of `.pf-player-surface__controls`, not a child of it, so its own
+   visibility is independent of the controls' auto-hiding opacity fade - the
+   two lines must stay legible whether or not the chrome is currently shown.
+   `pointer-events: none`: never interactive, a click here falls through to
+   the video underneath (same as the rest of this surface's empty space). */
+.pf-player-surface__dual-subtitles {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 9%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  text-align: center;
+  transition: bottom var(--pf-dur) var(--pf-ease);
+}
+
+/* Raised above the bottom control bar while it's visible, so the second line
+   never sits under the scrubber/buttons row ("no deben tapar los controles"
+   - owner requirement). */
+.pf-player-surface__dual-subtitles--raised {
+  bottom: 24%;
+}
+
+.pf-player-surface__subtitle-line {
+  margin: 0;
+  padding: 3px 10px;
+  max-width: 92%;
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: pre-line;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: var(--pf-radius-sm, 6px);
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+/* English (the language being learned, read first) on top; Spanish below -
+   owner's explicit layout ask. The primary line is very slightly larger and
+   fully opaque so it reads as "the one you're focused on"; the second line
+   is a touch dimmer so the two never compete for attention. */
+.pf-player-surface__subtitle-line--primary {
+  font-size: 1.15rem;
+}
+
+.pf-player-surface__subtitle-line--second {
+  color: rgba(255, 255, 255, 0.86);
+}
+
 /* --- Mobile ------------------------------------------------------------- */
 
 @media (max-width: 640px) {
@@ -367,5 +425,13 @@
   .pf-player-surface__time {
     margin-left: 4px;
     font-size: 0.78rem;
+  }
+
+  .pf-player-surface__subtitle-line {
+    font-size: 0.92rem;
+  }
+
+  .pf-player-surface__subtitle-line--primary {
+    font-size: 0.96rem;
   }
 }

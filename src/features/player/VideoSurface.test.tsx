@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VideoSurface } from './VideoSurface';
 import type { MediaStreamTrack } from './mediaStreamTracks';
@@ -71,6 +71,11 @@ const trackMenuDefaultProps = {
   onAudioApplied: noop,
   onAudioSwitchUnavailable: noop,
   onSubtitleApplied: noop,
+  // Second, SIMULTANEOUS subtitle (owner request - dual subtitles, this
+  // file's own "Dual subtitles" header section). `null`/no-op by default -
+  // exercised explicitly in its own describe block further down.
+  selectedSecondSubtitleIndex: null,
+  onSecondSubtitleApplied: noop,
   // Per-index DeliveryMethod for the CURRENT resolved source's subtitle
   // MediaStreams (player spec: burned-in subtitle dedup bug fix) - empty by
   // default, matching a DirectPlay/no-transcode session where nothing is
@@ -557,5 +562,233 @@ describe('VideoSurface — episode prev/next/jump navigation (owner request)', (
 
     expect(onSelectEpisode).toHaveBeenCalledWith(s2e1.id);
     expect(screen.queryByRole('dialog', { name: 'Episodios' })).not.toBeInTheDocument();
+  });
+});
+
+// Dual subtitles (owner request, verbatim: "me gustaría mucho tener 2
+// subtítulos al tiempo, ejemplo inglés y español, porque mi intención es
+// aprender inglés" - a language-learning feature, not accessibility). See
+// this file's "Dual subtitles" header section for the full design rationale
+// (why a custom overlay + our own VTT fetch/parse instead of two `<track>`
+// elements). Word-by-word highlighting is explicitly OUT OF SCOPE and not
+// implemented.
+describe('VideoSurface — dual subtitles (owner request: read two languages at once)', () => {
+  const englishTrack: MediaStreamTrack = {
+    index: 1,
+    kind: 'Subtitle',
+    language: 'eng',
+    displayTitle: 'English',
+    isDefault: false,
+    isForced: false,
+  };
+  const spanishTrack: MediaStreamTrack = {
+    index: 2,
+    kind: 'Subtitle',
+    language: 'spa',
+    displayTitle: 'Español',
+    isDefault: false,
+    isForced: false,
+  };
+
+  const englishVtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello there.\n';
+  const spanishVtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHola.\n';
+
+  function fetchResponseFor(url: string): Promise<Response> {
+    const text = url.includes('/subs/1') ? englishVtt : url.includes('/subs/2') ? spanishVtt : '';
+    return Promise.resolve({ text: () => Promise.resolve(text) } as Response);
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('renders BOTH languages at once - English on top, Spanish below - once a second subtitle is selected', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => fetchResponseFor(url));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    const { rerender } = render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={null}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Backrooms: Sin salida"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    // Establishes the SINGLE-subtitle baseline first (this is the existing,
+    // unchanged path - `onCanPlay` is DirectPlay's readiness checkpoint for
+    // `applyCurrentSubtitleSelection`, same as every other test in this
+    // file): the native `<track>` for English is showing, exactly as before
+    // dual subtitles existed.
+    fireEvent.canPlay(video);
+    const tracks = video.querySelectorAll('track');
+    expect(tracks).toHaveLength(2);
+    const englishTrackEl = Array.from(tracks).find((t) => t.getAttribute('srclang') === 'eng') as HTMLTrackElement;
+    expect(englishTrackEl.track?.mode).toBe('showing');
+
+    // Turning the second subtitle ON activates dual mode: BOTH native
+    // `<track>`s must be forced back to 'disabled' - otherwise the browser
+    // would ALSO paint English natively underneath our own overlay,
+    // doubling it (this file's header: the exact failure shape the burned-in
+    // dedup fix already prevents once).
+    rerender(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={spanishTrack.index}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Backrooms: Sin salida"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(englishTrackEl.track?.mode).toBe('disabled');
+
+    // Land the video's clock inside both cues' [1s, 3s) window and let the
+    // overlay pick up the active line - the SAME `currentTime` state this
+    // file already updates on every `timeupdate`, no extra listener.
+    Object.defineProperty(video, 'currentTime', { value: 1.5, configurable: true });
+    fireEvent.timeUpdate(video);
+
+    expect(await screen.findByText('Hello there.')).toBeInTheDocument();
+    expect(screen.getByText('Hola.')).toBeInTheDocument();
+  });
+
+  it('leaves single-subtitle mode completely unchanged when no second subtitle is selected', () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => fetchResponseFor(url));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={null}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Backrooms: Sin salida"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+
+    const tracks = video.querySelectorAll('track');
+    const englishTrackEl = Array.from(tracks).find((t) => t.getAttribute('srclang') === 'eng') as HTMLTrackElement;
+    expect(englishTrackEl.track?.mode).toBe('showing');
+    // No dual overlay, and the VTT-fetch effect never runs - the second slot
+    // being `null` is a structural no-op, not merely an empty render.
+    expect(document.querySelector('.pf-player-surface__dual-subtitles')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a pair with one Encode-delivered ("burned in") track is blocked, not silently broken', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => fetchResponseFor(url));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={spanishTrack.index}
+        // Spanish (the SECOND slot) is server-burned into the video's
+        // pixels for this resolved source - there is no independent text
+        // for the overlay to fetch, so dual rendering must not activate.
+        subtitleDeliveryMethods={{ [spanishTrack.index]: 'Encode' }}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Backrooms: Sin salida"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+
+    // No crash, no overlay, no wasted fetch - and the PRIMARY (non-burned)
+    // subtitle keeps rendering exactly like single-subtitle mode always did.
+    expect(document.querySelector('.pf-player-surface__dual-subtitles')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const tracks = video.querySelectorAll('track');
+    const englishTrackEl = Array.from(tracks).find((t) => t.getAttribute('srclang') === 'eng') as HTMLTrackElement;
+    expect(englishTrackEl.track?.mode).toBe('showing');
+  });
+
+  it('a failed VTT fetch does not crash playback - falls back to no overlay text', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const videoRef = createRef<HTMLVideoElement>();
+    render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        subtitleTracks={[englishTrack, spanishTrack]}
+        selectedSubtitleIndex={englishTrack.index}
+        selectedSecondSubtitleIndex={spanishTrack.index}
+        buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+        source={directPlaySource}
+        resumeSeconds={0}
+        title="Backrooms: Sin salida"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+    fireEvent.canPlay(video);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // The overlay container still mounts (dual mode IS selected/valid), it
+    // just has no active line to show - never a thrown error or a blank
+    // white-screen.
+    const overlay = document.querySelector('.pf-player-surface__dual-subtitles');
+    expect(overlay).not.toBeNull();
+    expect(overlay?.querySelectorAll('p')).toHaveLength(0);
   });
 });

@@ -112,6 +112,94 @@ export function resolveInitialSubtitle<T extends SubtitleCandidate>(
 }
 
 // ---------------------------------------------------------------------------
+// Second subtitle preference (owner request: two subtitles at once - "leer
+// el inglés mientras escucha, con el español al lado" - a language-learning
+// feature, not accessibility). Persisted SEPARATELY from the primary
+// subtitle preference above, same reasoning as audio vs. subtitle each
+// getting their own key: the two languages are picked independently (e.g.
+// primary=English to read along, second=Spanish for meaning), so sharing one
+// storage key would make picking one silently clobber the other. Also
+// keyed by LANGUAGE, not stream index, for the same reason every other
+// preference in this file is - stream indices are meaningless across titles.
+// ---------------------------------------------------------------------------
+
+const SECOND_SUBTITLE_STORAGE_KEY = 'poisonflix:secondSubtitlePreference';
+
+/** Raw saved preference: `null` (never set), `SUBTITLE_OFF`, or a language
+ * family key - see `resolveInitialSecondSubtitle`. Reuses the primary
+ * subtitle's `SUBTITLE_OFF` sentinel value (an implementation-detail string,
+ * not tied to a particular storage key). */
+export function getSecondSubtitlePreference(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem(SECOND_SUBTITLE_STORAGE_KEY);
+}
+
+/** Persists the user's explicit second-subtitle choice. Pass `SUBTITLE_OFF`
+ * for "no second subtitle", or a language family key for a chosen track. */
+export function setSecondSubtitlePreference(value: string): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(SECOND_SUBTITLE_STORAGE_KEY, value);
+}
+
+/** Test/reset helper - clears the saved preference back to "never set". */
+export function clearSecondSubtitlePreference(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(SECOND_SUBTITLE_STORAGE_KEY);
+}
+
+/** Mirrors `subtitlePreferenceKeyFor` for the second subtitle slot. */
+export function secondSubtitlePreferenceKeyFor(
+  track: { language: string | null; displayTitle: string } | null,
+): string {
+  if (!track) return SUBTITLE_OFF;
+  return languageFamily(track.language) ?? track.displayTitle;
+}
+
+/**
+ * Picks the second subtitle to enable when playback opens:
+ *  1. Saved preference `SUBTITLE_OFF`, or never set -> none. UNLIKE the
+ *     primary subtitle, there is no AUTO rule here - the owner asked for a
+ *     manual toggle that is REMEMBERED once used, not one that turns itself
+ *     on for someone who never asked for two subtitles.
+ *  2. Saved preference is a language family with a matching track -> the
+ *     best track in that family (same tie-break as `resolveInitialSubtitle`:
+ *     default wins, then non-forced over forced, then lowest index).
+ *  3. The match can never be the SAME stream as `primaryIndex` - picking one
+ *     subtitle as both "primary" and "second" would render the same line
+ *     twice instead of two different languages.
+ */
+export function resolveInitialSecondSubtitle<T extends SubtitleCandidate>(
+  subtitles: T[],
+  primaryIndex: number | null,
+): T | null {
+  if (subtitles.length === 0) return null;
+
+  const pref = getSecondSubtitlePreference();
+  if (pref === null || pref === SUBTITLE_OFF) return null;
+
+  let best: T | null = null;
+  for (const track of subtitles) {
+    if (languageFamily(track.language) !== pref) continue;
+    if (!best) {
+      best = track;
+      continue;
+    }
+    if (track.isDefault !== best.isDefault) {
+      if (track.isDefault) best = track;
+      continue;
+    }
+    if (track.isForced !== best.isForced) {
+      if (!track.isForced) best = track;
+      continue;
+    }
+    if (track.index < best.index) best = track;
+  }
+
+  if (best && best.index === primaryIndex) return null;
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // Audio preference
 // ---------------------------------------------------------------------------
 

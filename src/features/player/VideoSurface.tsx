@@ -4,6 +4,7 @@ import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import type { PlaybackSource } from '../../lib/domain/streamResolver';
 import { audioTracksOf, isBurnedInSubtitle, subtitleTracksOf, trackLabel, type MediaStreamTrack } from './mediaStreamTracks';
 import { formatSeekStep, newSeekRun, nextSeekStep, RESET_AFTER_MS } from '../../lib/domain/seekAccelerator';
+import { activeCueText, parseVttCues, type SubtitleCue } from './subtitleCues';
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import { EpisodeMenu } from './EpisodeMenu';
 import { nextEpisode, previousEpisode, type EpisodeNavItem } from './episodeNavigation';
@@ -119,6 +120,54 @@ import './VideoSurface.css';
 //   falls through to `onAudioSwitchUnavailable`/is a no-op for subtitles.
 //   Flagged here explicitly as the one genuinely-partial corner of this
 //   feature.
+//
+// ## Dual subtitles (owner request, verbatim: "me gustaría mucho tener 2
+// subtítulos al tiempo, ejemplo inglés y español, porque mi intención es
+// aprender inglés" - a LANGUAGE-LEARNING feature, not accessibility: read
+// English while listening, Spanish alongside for meaning). Scope is
+// deliberately narrow - two subtitles rendered at once, remembered per
+// language across sessions. Word-by-word highlighting is explicitly OUT OF
+// SCOPE (owner instruction) and not implemented anywhere in this change.
+//
+// - Why NOT two `<track>` elements: this file already sideloads one
+//   `<track>` per subtitle stream (`subtitles`, below) and lets the browser
+//   paint whichever one has `mode = 'showing'`. Browsers do technically allow
+//   more than one track to be `'showing'` at once, but there is no
+//   cross-browser contract for HOW two simultaneous cues stack vertically -
+//   both default to the same bottom region, so two languages could render on
+//   top of each other instead of "English above, Spanish below" (owner's
+//   explicit layout ask). Rather than depend on undefined rendering, DUAL
+//   mode fetches + parses both VTT files itself (`subtitleCues.ts`) and
+//   paints two fixed rows with our own `<div>`s (`pf-player-surface__dual-subtitles`,
+//   below) - the SAME approach this file already takes for every other piece
+//   of chrome (seek bar, volume, menus), just extended to subtitle text.
+// - `selectedSecondSubtitleIndex` is a SEPARATE index from
+//   `selectedSubtitleIndex` (the primary) - `null` means dual mode is off,
+//   and the primary keeps rendering through the EXACT SAME native `<track>`
+//   path as before this change (`syncSubtitles`, `applyCurrentSubtitleSelection`
+//   below) - single-subtitle behavior is untouched, not merely "still works
+//   by coincidence".
+// - Dual mode activates only when BOTH a primary and a second track are
+//   selected, they are different streams, and NEITHER is burned in
+//   (`DeliveryMethod: 'Encode'` - see `isBurnedInSubtitle`). An Encode stream
+//   has no independent text for our overlay to fetch - it is already baked
+//   into the transcoded video's pixels (subtitle dedup bug fix, above) - so a
+//   pair containing one is explicitly blocked (`TrackMenu.tsx`'s "Segundo
+//   subtítulo" section refuses to offer it, with an inline explanation,
+//   rather than letting the user create a combination that can't render).
+// - While dual mode is active, EVERY native `<track>` is forced to
+//   `mode = 'disabled'` and hls.js's own `subtitleTrack` is set to `-1`
+//   (`syncSubtitles`) - otherwise the browser would ALSO paint the primary
+//   natively underneath our overlay, doubling it exactly like the burned-in
+//   dedup bug this file already fixes once.
+// - Cue lookup reuses the `currentTime` state this file already updates on
+//   every `timeupdate` (no new listener needed) - `subtitleCues.ts`'s
+//   `activeCueText` is a pure, cheap array scan, not worth memoizing further
+//   for a two-track pair.
+// - No AUTO rule for the second subtitle, unlike the primary's (player spec
+//   §8): the owner asked for a manual toggle that is REMEMBERED once used
+//   (`playerPrefs.ts`'s `resolveInitialSecondSubtitle`), not one that
+//   silently turns itself on for someone who never asked for two subtitles.
 
 // ## Episode navigation (owner request: prev/next/jump between a series'
 // chapters, from the player). Only rendered when `isEpisode` is true (a
@@ -244,6 +293,16 @@ export interface VideoSurfaceProps {
    * `PlaybackInfo` with this track's index and reopen (see file header). */
   onAudioSwitchUnavailable: (track: MediaStreamTrack) => void;
   onSubtitleApplied: (track: MediaStreamTrack | null) => void;
+  /** Second, SIMULTANEOUS subtitle (owner request - see this file's "Dual
+   * subtitles" header section). `null` == off; the primary subtitle above is
+   * completely unaffected by this prop. */
+  selectedSecondSubtitleIndex: number | null;
+  /** Fired whenever the second subtitle selection changes (including back to
+   * `null`) - purely a client-side apply, never a server round trip (this
+   * file's own VTT fetch works the same regardless of DirectPlay/Transcoded,
+   * see the header section), so there is no `onSecondSubtitleSwitchUnavailable`
+   * counterpart. */
+  onSecondSubtitleApplied: (track: MediaStreamTrack | null) => void;
   /** Subtitle stream index -> `DeliveryMethod`, for the CURRENT resolved
    * source (subtitle dedup bug fix - see this file's header). Empty for a
    * DirectPlay/no-transcode session. */
@@ -425,6 +484,8 @@ export function VideoSurface({
   onAudioApplied,
   onAudioSwitchUnavailable,
   onSubtitleApplied,
+  selectedSecondSubtitleIndex,
+  onSecondSubtitleApplied,
   subtitleDeliveryMethods,
   onSubtitleSwitchUnavailable,
   buildSubtitleUrl,
@@ -523,6 +584,11 @@ export function VideoSurface({
   subtitleTracksRef.current = subtitleTracks;
   const selectedSubtitleIndexRef = useRef(selectedSubtitleIndex);
   selectedSubtitleIndexRef.current = selectedSubtitleIndex;
+  // Dual subtitles (this file's header) - mirrors `selectedSubtitleIndexRef`
+  // for the second slot, read the same way (event handlers/effects need the
+  // LATEST value, not a stale closure).
+  const selectedSecondSubtitleIndexRef = useRef(selectedSecondSubtitleIndex);
+  selectedSecondSubtitleIndexRef.current = selectedSecondSubtitleIndex;
   // Subtitle dedup bug fix - see this file's header. Read via ref (not a
   // closure) for the same reason `subtitleTracksRef`/`selectedSubtitleIndexRef`
   // are: `applySubtitle`/`handleSelectSubtitle` are called from DOM event
@@ -535,6 +601,14 @@ export function VideoSurface({
   const selectedAudioIndexRef = useRef(selectedAudioIndex);
   selectedAudioIndexRef.current = selectedAudioIndex;
   const trackElsRef = useRef<Map<number, HTMLTrackElement>>(new Map());
+
+  // Dual subtitles (this file's header) - parsed cues for each half of the
+  // pair, fetched by the effect further down ONLY while dual mode is active.
+  // Kept as full cue arrays (not just "the current line") so the lookup
+  // against `currentTime` can reuse the state this file already updates on
+  // every `timeupdate`, instead of a second timer/listener.
+  const [primaryDualCues, setPrimaryDualCues] = useState<SubtitleCue[]>([]);
+  const [secondDualCues, setSecondDualCues] = useState<SubtitleCue[]>([]);
 
   const key = sourceKey(source);
 
@@ -565,6 +639,15 @@ export function VideoSurface({
     setDuration(0);
     setIsPlaying(false);
     setActiveMenu(null);
+    // Dual subtitles (this file's header): without this, a source change
+    // (episode prev/next, or an audio/subtitle switch re-resolve - both keep
+    // this component mounted, only `key` changes) would leave the PREVIOUS
+    // source's parsed cues in state until the new fetch resolves, flashing
+    // stale text over the new video for a frame. The cue-fetching effect
+    // below re-populates these the moment it has a fresh answer; this just
+    // guarantees the gap in between is blank, not wrong.
+    setPrimaryDualCues([]);
+    setSecondDualCues([]);
   }, [key]);
 
   const applyResumeSeekOnce = () => {
@@ -652,6 +735,63 @@ export function VideoSurface({
     if (idx != null && !track) return;
     appliedSubtitleIndexRef.current = idx;
     applySubtitle(track);
+  };
+
+  /**
+   * Dual subtitles (this file's header): true only when BOTH a primary and a
+   * second subtitle are selected, they are different streams, and NEITHER is
+   * burned in. Reads every input via ref so it stays correct when called
+   * from a DOM readiness event whose closure was created on an earlier
+   * render (same reasoning as `applyCurrentSubtitleSelection` above).
+   */
+  const isDualSubtitleActive = (): boolean => {
+    const primaryIdx = selectedSubtitleIndexRef.current;
+    const secondIdx = selectedSecondSubtitleIndexRef.current;
+    if (primaryIdx == null || secondIdx == null || primaryIdx === secondIdx) return false;
+    const methods = subtitleDeliveryMethodsRef.current;
+    if (isBurnedInSubtitle(methods[primaryIdx]) || isBurnedInSubtitle(methods[secondIdx])) return false;
+    return true;
+  };
+
+  /**
+   * Single entry point every call site below uses to keep the <video>'s
+   * subtitle rendering in sync - replaces every direct
+   * `applyCurrentSubtitleSelection()` call this file had before dual
+   * subtitles existed. When dual mode is OFF (the default - `null` second
+   * selection, exactly today's behavior) it does exactly what it always did:
+   * delegates straight to `applyCurrentSubtitleSelection`. When dual mode is
+   * ON, it does the OPPOSITE of that function on purpose: forces every
+   * native `<track>` to `'disabled'` and hls.js's `subtitleTrack` to `-1`,
+   * because BOTH lines are about to be painted by this component's own
+   * overlay (`pf-player-surface__dual-subtitles` in the JSX below) - letting
+   * the browser ALSO render the primary natively here would double it, the
+   * exact same failure shape as the burned-in dedup bug this file already
+   * fixes once (see the header). `appliedSubtitleIndexRef` is still updated
+   * so a later exit from dual mode (second subtitle turned back off) is
+   * recognized by `applyCurrentSubtitleSelection` as "not yet applied for
+   * real" and re-shows the primary natively - see that transition's own note
+   * on `appliedSubtitleIndexRef.current = undefined` two lines below.
+   */
+  const syncSubtitles = () => {
+    if (!isDualSubtitleActive()) {
+      applyCurrentSubtitleSelection();
+      return;
+    }
+    for (const [, el] of trackElsRef.current) {
+      if (el.track) el.track.mode = 'disabled';
+    }
+    if (hlsRef.current) hlsRef.current.subtitleTrack = -1;
+    // Deliberately the OPPOSITE of `applyCurrentSubtitleSelection`'s own
+    // bookkeeping: reset to `undefined` ("nothing applied for THIS source
+    // yet") rather than marking the primary index as applied. Every native
+    // `<track>` was just forced 'disabled' above, so - unlike the normal
+    // single-subtitle path - the primary is NOT actually showing right now.
+    // Leaving `appliedSubtitleIndexRef` at its old value would make
+    // `applyCurrentSubtitleSelection` think its work is already done the
+    // moment dual mode turns back off (second subtitle -> null) and skip
+    // re-enabling the native track entirely, leaving the primary subtitle
+    // silently blank.
+    appliedSubtitleIndexRef.current = undefined;
   };
 
   /**
@@ -788,7 +928,7 @@ export function VideoSurface({
 
     if (source.kind === 'DirectPlay') {
       video.src = source.url;
-      applyCurrentSubtitleSelection();
+      syncSubtitles();
       // `false`: too early for `video.audioTracks` to be populated yet (see
       // `applyCurrentAudioSelection`'s doc comment) - `onCanPlay` below is
       // the real readiness checkpoint for this path.
@@ -802,7 +942,7 @@ export function VideoSurface({
       hlsRef.current = hls;
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         applyResumeSeekOnce();
-        applyCurrentSubtitleSelection();
+        syncSubtitles();
         // `true`: hls.js has parsed the multivariant playlist by now, so
         // `hls.audioTracks` (if the transcode muxed more than one) is ready.
         audioReadyForInBandRef.current = true;
@@ -845,10 +985,77 @@ export function VideoSurface({
   // on every render until the real data lands and it can genuinely apply,
   // instead of giving up after one attempt.
   useEffect(() => {
-    applyCurrentSubtitleSelection();
+    syncSubtitles();
     applyCurrentAudioSelection(audioReadyForInBandRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, selectedSubtitleIndex, subtitleTracks, selectedAudioIndex, audioTracks]);
+  }, [
+    key,
+    selectedSubtitleIndex,
+    subtitleTracks,
+    selectedAudioIndex,
+    audioTracks,
+    // Dual subtitles (this file's header): the second slot changing (on, off,
+    // or a different language) must re-run the same sync - it flips whether
+    // the native track stays disabled (dual mode) or comes back (single
+    // mode).
+    selectedSecondSubtitleIndex,
+  ]);
+
+  // Dual subtitles (this file's header): derived once per render from props
+  // directly - reused by BOTH the cue-fetching effect right below and the
+  // overlay JSX further down, so the two can never disagree about whether
+  // dual mode is active. Unlike the imperative helpers above (`syncSubtitles`
+  // etc.), nothing here runs inside a DOM event handler or a closure that
+  // could go stale, so the plain render-scoped value is exactly what's
+  // wanted - no ref needed.
+  const primaryDualTrack =
+    selectedSubtitleIndex == null ? null : (subtitleTracks.find((t) => t.index === selectedSubtitleIndex) ?? null);
+  const secondDualTrack =
+    selectedSecondSubtitleIndex == null
+      ? null
+      : (subtitleTracks.find((t) => t.index === selectedSecondSubtitleIndex) ?? null);
+  const dualSubtitlesActive = Boolean(
+    primaryDualTrack &&
+      secondDualTrack &&
+      primaryDualTrack.index !== secondDualTrack.index &&
+      !isBurnedInSubtitle(subtitleDeliveryMethods[primaryDualTrack.index]) &&
+      !isBurnedInSubtitle(subtitleDeliveryMethods[secondDualTrack.index]),
+  );
+
+  // Fetches + parses both VTT files ONLY while dual mode is active (this
+  // file's header explains why native `<track>` rendering isn't trusted for
+  // two simultaneous languages). Reuses `buildSubtitleUrl` - the SAME
+  // url-builder the native sideload below already uses - so this hits the
+  // exact same server endpoint rather than inventing a second one.
+  useEffect(() => {
+    if (!dualSubtitlesActive || !primaryDualTrack || !secondDualTrack) {
+      setPrimaryDualCues([]);
+      setSecondDualCues([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const primaryUrl = buildSubtitleUrl(primaryDualTrack);
+    const secondUrl = buildSubtitleUrl(secondDualTrack);
+    Promise.all([fetch(primaryUrl).then((r) => r.text()), fetch(secondUrl).then((r) => r.text())])
+      .then(([primaryText, secondText]) => {
+        if (cancelled) return;
+        setPrimaryDualCues(parseVttCues(primaryText));
+        setSecondDualCues(parseVttCues(secondText));
+      })
+      .catch(() => {
+        // Best-effort: never let a subtitle-fetch failure (network hiccup,
+        // CORS, a malformed VTT) break playback - same policy as every other
+        // subtitle path in this file. Falls back to no overlay text; the
+        // video keeps playing regardless.
+        if (cancelled) return;
+        setPrimaryDualCues([]);
+        setSecondDualCues([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dualSubtitlesActive, primaryDualTrack?.index, secondDualTrack?.index, key]);
 
   const scheduleHideControls = () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -977,9 +1184,48 @@ export function VideoSurface({
       onSubtitleSwitchUnavailable(track);
       return;
     }
-    applySubtitle(track);
-    appliedSubtitleIndexRef.current = targetIndex;
+    // Dual subtitles (this file's header): if a second subtitle is ALSO
+    // active, picking a new primary here must not call `applySubtitle`
+    // directly - that would flip the new track's native `<track>` to
+    // 'showing' for one paint before the retry effect's `syncSubtitles` (which
+    // reacts to `selectedSubtitleIndex` via `onSubtitleApplied` below) catches
+    // up and disables it again, a visible flash of the browser's own
+    // rendering underneath our overlay. Leaving `appliedSubtitleIndexRef`
+    // unset lets that effect do the ONE correct disable-everything pass
+    // instead of this handler doing a now-wrong 'showing' pass first.
+    const secondIdx = selectedSecondSubtitleIndexRef.current;
+    const willStayDual =
+      secondIdx != null &&
+      targetIndex != null &&
+      targetIndex !== secondIdx &&
+      !isBurnedInSubtitle(subtitleDeliveryMethodsRef.current[targetIndex]) &&
+      !isBurnedInSubtitle(subtitleDeliveryMethodsRef.current[secondIdx]);
+    if (willStayDual) {
+      appliedSubtitleIndexRef.current = undefined;
+    } else {
+      applySubtitle(track);
+      appliedSubtitleIndexRef.current = targetIndex;
+    }
     onSubtitleApplied(track);
+  };
+
+  /**
+   * Dual subtitles (this file's header): picking the SECOND slot is purely a
+   * client-side apply, unlike `handleSelectSubtitle` above - there is no
+   * `onSecondSubtitleSwitchUnavailable` counterpart because there is nothing
+   * for a `PlaybackInfo` re-resolve to fix here: the cue-loading effect below
+   * fetches the plain `Stream.vtt` endpoint directly, which works the same
+   * way regardless of DirectPlay/Transcoded (see the header's "Dual
+   * subtitles" section). `syncSubtitles`/the retry effect (keyed on
+   * `selectedSecondSubtitleIndex`) do the actual rendering work; this
+   * handler only closes the menu and reports the pick upward so
+   * `PlayerScreen` can persist it.
+   */
+  const handleSelectSecondSubtitle = (track: MediaStreamTrack | null) => {
+    setActiveMenu(null);
+    const targetIndex = track?.index ?? null;
+    if (targetIndex === selectedSecondSubtitleIndexRef.current) return; // no-op: re-picking the active selection
+    onSecondSubtitleApplied(track);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -1032,6 +1278,13 @@ export function VideoSurface({
   const seekStyle = { '--pf-range-fill': `${seekFillPct}%` } as React.CSSProperties;
   const volumeStyle = { '--pf-range-fill': `${volumeValue * 100}%` } as React.CSSProperties;
 
+  // Dual subtitles (this file's header): the currently active line for each
+  // half of the pair, looked up from the parsed cue arrays against
+  // `currentTime` - the SAME state this file already updates on every
+  // `timeupdate`, so no extra listener/timer is needed just for this.
+  const primaryCueText = dualSubtitlesActive ? activeCueText(primaryDualCues, currentTime) : null;
+  const secondCueText = dualSubtitlesActive ? activeCueText(secondDualCues, currentTime) : null;
+
   return (
     <div
       ref={containerRef}
@@ -1073,7 +1326,7 @@ export function VideoSurface({
         }}
         onCanPlay={() => {
           applyResumeSeekOnce();
-          applyCurrentSubtitleSelection();
+          syncSubtitles();
           // `true`: canplay is the readiness checkpoint for DirectPlay's
           // native `video.audioTracks` (see doc comment above).
           audioReadyForInBandRef.current = true;
@@ -1274,6 +1527,37 @@ export function VideoSurface({
         </div>
       </div>
 
+      {/* Dual subtitles (this file's header, owner request: read English
+          while listening, Spanish alongside for meaning). A sibling of
+          `.pf-player-surface__controls`, not a child of it - the two lines
+          must stay readable regardless of whether the controls' opacity
+          fade is currently hiding them. `aria-hidden`: this duplicates
+          information already available via the (disabled, for dual mode)
+          native `<track>` elements' own accessible text; a second live
+          region would just double-announce the same captions to a screen
+          reader. `--raised` pushes the block up when the control bar is
+          visible so the bottom line never sits under the seek/volume row -
+          "no deben tapar los controles" (owner requirement). */}
+      {dualSubtitlesActive ? (
+        <div
+          className={`pf-player-surface__dual-subtitles${
+            controlsVisible ? ' pf-player-surface__dual-subtitles--raised' : ''
+          }`}
+          aria-hidden="true"
+        >
+          {primaryCueText ? (
+            <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--primary">
+              {primaryCueText}
+            </p>
+          ) : null}
+          {secondCueText ? (
+            <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--second">
+              {secondCueText}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* `container={containerRef.current}` (not the OverlayShell default of
           `document.body`) keeps the menu inside this surface: in real
           Fullscreen, `containerRef.current` IS `fullscreenElement` (see
@@ -1301,6 +1585,9 @@ export function VideoSurface({
           onSelect={handleSelectSubtitle}
           onDismiss={() => setActiveMenu(null)}
           container={containerRef.current}
+          secondSelectedIndex={selectedSecondSubtitleIndex}
+          onSelectSecond={handleSelectSecondSubtitle}
+          subtitleDeliveryMethods={subtitleDeliveryMethods}
         />
       ) : null}
       {activeMenu === 'episodes' ? (

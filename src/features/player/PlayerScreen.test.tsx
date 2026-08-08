@@ -9,7 +9,9 @@ import { getItem, getItems, getPlaybackInfo } from '../../api/jellyfin';
 import { ApiError } from '../../lib/http/errors';
 import {
   clearAudioPreference,
+  clearSecondSubtitlePreference,
   clearSubtitlePreference,
+  getSecondSubtitlePreference,
   setAudioPreference,
   setSubtitlePreference,
 } from '../../lib/domain/playerPrefs';
@@ -301,6 +303,7 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     // This block SELECTS tracks, so it is the one most likely to persist an
     // audio preference into the next block. Same reason as above.
     clearAudioPreference();
+    clearSecondSubtitlePreference();
     vi.clearAllMocks();
   });
 
@@ -341,19 +344,27 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     fireEvent.click(await screen.findByRole('button', { name: 'Subtítulos' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Subtítulos' });
-    expect(within(dialog).getByRole('button', { name: 'Ninguno' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Español' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Inglés' })).toBeInTheDocument();
+    // Scoped to the PRIMARY group: dual subtitles (owner request) added a
+    // "Segundo subtítulo" section below this one that reuses several of the
+    // SAME language labels (e.g. "Inglés" can be both the primary pick and a
+    // second-slot candidate at once) - an unscoped query against the whole
+    // dialog would be ambiguous. `within(dialog)` alone still finds the
+    // group (nested containers don't exclude an ancestor's queries), so this
+    // narrows on purpose rather than for a "not found" reason.
+    const primaryGroup = within(dialog).getByRole('group', { name: 'Subtítulo principal' });
+    expect(within(primaryGroup).getByRole('button', { name: 'Ninguno' })).toBeInTheDocument();
+    expect(within(primaryGroup).getByRole('button', { name: 'Español' })).toBeInTheDocument();
+    expect(within(primaryGroup).getByRole('button', { name: 'Inglés' })).toBeInTheDocument();
 
     // Folded: French/German aren't shown until "Más subtítulos" is opened.
-    expect(within(dialog).queryByText('Francés')).not.toBeInTheDocument();
-    expect(within(dialog).queryByText('Alemán')).not.toBeInTheDocument();
-    const expandButton = within(dialog).getByRole('button', { name: /Más subtítulos/ });
+    expect(within(primaryGroup).queryByText('Francés')).not.toBeInTheDocument();
+    expect(within(primaryGroup).queryByText('Alemán')).not.toBeInTheDocument();
+    const expandButton = within(primaryGroup).getByRole('button', { name: /Más subtítulos/ });
     expect(expandButton).toHaveTextContent('Más subtítulos (2)');
 
     fireEvent.click(expandButton);
-    expect(within(dialog).getByRole('button', { name: 'Francés' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Alemán' })).toBeInTheDocument();
+    expect(within(primaryGroup).getByRole('button', { name: 'Francés' })).toBeInTheDocument();
+    expect(within(primaryGroup).getByRole('button', { name: 'Alemán' })).toBeInTheDocument();
   });
 
   it('selecting a subtitle option closes the menu', async () => {
@@ -366,6 +377,42 @@ describe('PlayerScreen — audio/subtitle track menus (player spec §8)', () => 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Español' }));
 
     expect(screen.queryByRole('dialog', { name: 'Subtítulos' })).not.toBeInTheDocument();
+  });
+
+  // Dual subtitles (owner request, verbatim: "me gustaría poder leer también
+  // los sub en inglés y en español"): the second subtitle preference must be
+  // remembered BY LANGUAGE across sessions, the same contract the primary
+  // subtitle already has (`playerPrefs.ts`) - exercised here end-to-end
+  // through the real screen, not just the domain function in
+  // playerPrefs.test.ts.
+  it('picking a second subtitle persists it by language and restores it on a fresh mount', async () => {
+    renderPlayer('jf-item-tracks');
+    await screen.findByTestId('pf-video');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Subtítulos' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Subtítulos' });
+    const secondGroup = within(dialog).getByRole('group', { name: 'Segundo subtítulo' });
+
+    fireEvent.click(within(secondGroup).getByRole('button', { name: 'Inglés' }));
+
+    // Closing the menu (same behavior as picking a primary subtitle) AND
+    // persisting by language family, not by this file's stream index.
+    expect(screen.queryByRole('dialog', { name: 'Subtítulos' })).not.toBeInTheDocument();
+    expect(getSecondSubtitlePreference()).toBe('en');
+
+    // Fresh mount (simulates leaving the player and reopening it) - the
+    // saved preference alone, with no interaction, must restore the pick.
+    cleanup();
+    renderPlayer('jf-item-tracks');
+    await screen.findByTestId('pf-video');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Subtítulos' }));
+    const reopenedDialog = await screen.findByRole('dialog', { name: 'Subtítulos' });
+    const reopenedSecondGroup = within(reopenedDialog).getByRole('group', { name: 'Segundo subtítulo' });
+    expect(await within(reopenedSecondGroup).findByRole('button', { name: 'Inglés' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 
   it('opening the audio menu lists the enumerated audio tracks', async () => {

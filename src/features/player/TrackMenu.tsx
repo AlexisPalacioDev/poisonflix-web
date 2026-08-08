@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { OverlayShell } from '../../components/overlay/OverlayShell';
+import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import {
   audioTracksOf,
   bestAudioPerLanguage,
   bestSubtitlePerLanguage,
   disambiguateLabels,
+  isBurnedInSubtitle,
   isPrimaryLanguage,
   subtitleTracksOf,
   trackLabel,
@@ -127,40 +129,126 @@ export interface SubtitleTrackMenuProps {
   onDismiss: () => void;
   /** Portal target - see `AudioTrackMenuProps.container`. */
   container?: Element | null;
+  /** Second, SIMULTANEOUS subtitle (owner request: "me gustaría poder leer
+   *  también los sub en inglés y en español" - a language-learning feature,
+   *  read one language while listening + the other alongside for meaning.
+   *  `null` == off; the default single-subtitle behavior above is completely
+   *  unchanged when this stays `null`. See `VideoSurface.tsx`'s header for
+   *  why this is rendered by a custom overlay instead of a second `<track>`. */
+  secondSelectedIndex: number | null;
+  onSelectSecond: (track: MediaStreamTrack | null) => void;
+  /** Per-stream DeliveryMethod for the CURRENT resolved source - needed here
+   *  to warn about (and block picking) a pair where either track is already
+   *  server-burned into the video's pixels (`DeliveryMethod: 'Encode'` -
+   *  `isBurnedInSubtitle`), instead of silently letting the user create a
+   *  combination `VideoSurface` cannot actually render as text. */
+  subtitleDeliveryMethods: Record<number, SubtitleDeliveryMethod>;
 }
 
-export function SubtitleTrackMenu({ tracks, selectedIndex, onSelect, onDismiss, container }: SubtitleTrackMenuProps) {
+export function SubtitleTrackMenu({
+  tracks,
+  selectedIndex,
+  onSelect,
+  onDismiss,
+  container,
+  secondSelectedIndex,
+  onSelectSecond,
+  subtitleDeliveryMethods,
+}: SubtitleTrackMenuProps) {
   const deduped = useMemo(() => bestSubtitlePerLanguage(subtitleTracksOf(tracks)), [tracks]);
   const primary = useMemo(() => deduped.filter((t) => isPrimaryLanguage(t.language)), [deduped]);
   const others = useMemo(() => deduped.filter((t) => !isPrimaryLanguage(t.language)), [deduped]);
   const [showAll, setShowAll] = useState(false);
 
+  // The currently active PRIMARY subtitle track object (not just its index)
+  // - needed below to check whether IT is burned in, which blocks the second
+  // slot entirely (an Encode-delivered primary has no text for our overlay
+  // to render alongside - see VideoSurface.tsx's header).
+  const selectedTrack = useMemo(() => tracks.find((t) => t.index === selectedIndex) ?? null, [tracks, selectedIndex]);
+  const selectedIsBurnedIn = selectedTrack ? isBurnedInSubtitle(subtitleDeliveryMethods[selectedTrack.index]) : false;
+  // Candidates for the SECOND slot: every deduped language except whichever
+  // one is already the primary - picking the same track (or same language)
+  // twice would render the identical line in both rows.
+  const secondCandidates = useMemo(() => deduped.filter((t) => t.index !== selectedIndex), [deduped, selectedIndex]);
+
   return (
     <TrackMenuScaffold title="Subtítulos" onDismiss={onDismiss} container={container}>
-      <TrackOptionButton label="Ninguno" isSelected={selectedIndex == null} onClick={() => onSelect(null)} />
-      {primary.map((track) => (
-        <TrackOptionButton
-          key={track.index}
-          label={trackLabel(track)}
-          isSelected={track.index === selectedIndex}
-          onClick={() => onSelect(track)}
-        />
-      ))}
-      {others.length > 0 && !showAll ? (
-        <button type="button" className="pf-track-menu__option pf-track-menu__option--expand" onClick={() => setShowAll(true)}>
-          Más subtítulos ({others.length})
-        </button>
-      ) : null}
-      {showAll
-        ? others.map((track) => (
+      {/* `role="group"` + `aria-label` - NOT purely decorative: the second
+          slot below deliberately reuses several of these SAME language
+          labels (e.g. "Inglés" can be both the primary pick and a candidate
+          for the second slot at once), so a query for "the primary Inglés
+          button" needs an unambiguous container to scope into. Existing
+          single-subtitle behavior/markup is otherwise unchanged - this is
+          the exact same flat button list as before dual subtitles existed,
+          just wrapped. */}
+      <div className="pf-track-menu__group" role="group" aria-label="Subtítulo principal">
+        <TrackOptionButton label="Ninguno" isSelected={selectedIndex == null} onClick={() => onSelect(null)} />
+        {primary.map((track) => (
+          <TrackOptionButton
+            key={track.index}
+            label={trackLabel(track)}
+            isSelected={track.index === selectedIndex}
+            onClick={() => onSelect(track)}
+          />
+        ))}
+        {others.length > 0 && !showAll ? (
+          <button type="button" className="pf-track-menu__option pf-track-menu__option--expand" onClick={() => setShowAll(true)}>
+            Más subtítulos ({others.length})
+          </button>
+        ) : null}
+        {showAll
+          ? others.map((track) => (
+              <TrackOptionButton
+                key={track.index}
+                label={trackLabel(track)}
+                isSelected={track.index === selectedIndex}
+                onClick={() => onSelect(track)}
+              />
+            ))
+          : null}
+      </div>
+
+      <div className="pf-track-menu__divider" role="separator" />
+      <h3 className="pf-track-menu__subheading">Segundo subtítulo</h3>
+
+      <div className="pf-track-menu__group" role="group" aria-label="Segundo subtítulo">
+        {selectedIndex == null ? (
+          <p className="pf-track-menu__note">Elegí primero un subtítulo para poder sumar un segundo idioma.</p>
+        ) : selectedIsBurnedIn ? (
+          <p className="pf-track-menu__note">
+            Este subtítulo está incrustado en el video: no se puede combinar con otro.
+          </p>
+        ) : (
+          <>
             <TrackOptionButton
-              key={track.index}
-              label={trackLabel(track)}
-              isSelected={track.index === selectedIndex}
-              onClick={() => onSelect(track)}
+              label="Ninguno"
+              isSelected={secondSelectedIndex == null}
+              onClick={() => onSelectSecond(null)}
             />
-          ))
-        : null}
+            {secondCandidates.map((track) => {
+              const blocked = isBurnedInSubtitle(subtitleDeliveryMethods[track.index]);
+              if (blocked) {
+                // Shown, not hidden - the owner asked that a broken pair be
+                // explained in the UI rather than silently unavailable.
+                return (
+                  <div key={track.index} className="pf-track-menu__option pf-track-menu__option--blocked" aria-disabled="true">
+                    <span>{trackLabel(track)}</span>
+                    <span className="pf-track-menu__note-inline">Incrustado en el video</span>
+                  </div>
+                );
+              }
+              return (
+                <TrackOptionButton
+                  key={track.index}
+                  label={trackLabel(track)}
+                  isSelected={track.index === secondSelectedIndex}
+                  onClick={() => onSelectSecond(track)}
+                />
+              );
+            })}
+          </>
+        )}
+      </div>
     </TrackMenuScaffold>
   );
 }

@@ -11,8 +11,11 @@ import { reportFailure } from '../../lib/obs/report';
 import {
   audioPreferenceKeyFor,
   resolveInitialAudio,
+  resolveInitialSecondSubtitle,
   resolveInitialSubtitle,
+  secondSubtitlePreferenceKeyFor,
   setAudioPreference,
+  setSecondSubtitlePreference,
   setSubtitlePreference,
   subtitlePreferenceKeyFor,
 } from '../../lib/domain/playerPrefs';
@@ -53,6 +56,13 @@ import './player.css';
 //   PlaySessionId `Stopped` first so Jellyfin doesn't accumulate ghost
 //   sessions (mirrors `PlayerViewModel.openResolved`'s same guard).
 // - Persisting the user's subtitle choice (`setSubtitlePreference`).
+// - `selectedSecondSubtitleIndex`/`handleSecondSubtitleApplied`: the SAME
+//   split (screen decides + persists, `VideoSurface` applies) for the
+//   second, SIMULTANEOUS subtitle (owner request - see `VideoSurface.tsx`'s
+//   "Dual subtitles" header section for the rendering approach). Resolved
+//   from its own saved preference only (`resolveInitialSecondSubtitle`) -
+//   no AUTO rule, no server round trip on switch, unlike audio/the primary
+//   subtitle above.
 //
 // ## Episode prev/next/jump navigation (owner request)
 // `data.type`/`data.seriesId` (from `usePlaybackInfo`) gate `episodeNavigation.ts`'s
@@ -89,6 +99,14 @@ export function PlayerScreen() {
 
   const [selectedAudioIndex, setSelectedAudioIndex] = useState<number | null>(null);
   const [selectedSubtitleIndex, setSelectedSubtitleIndex] = useState<number | null>(null);
+  // Second, SIMULTANEOUS subtitle (owner request, verbatim: "me gustaría
+  // poder leer también los sub en inglés y en español" - a language-learning
+  // feature, not accessibility). `null` == off; entirely independent state
+  // from `selectedSubtitleIndex` above, exactly like audio/subtitle already
+  // are independent of each other - see `VideoSurface.tsx`'s "Dual
+  // subtitles" header section for the full design rationale (why this is
+  // rendered by a custom overlay instead of a second `<track>`).
+  const [selectedSecondSubtitleIndex, setSelectedSecondSubtitleIndex] = useState<number | null>(null);
   // Mirrors the state above so an ASYNC re-resolve reads the subtitle pick as
   // it is WHEN THE REQUEST GOES OUT, not as it was in the render that created
   // the callback. `handleAudioSwitchUnavailable` can be invoked from a
@@ -127,6 +145,7 @@ export function PlayerScreen() {
   useEffect(() => {
     setSelectedAudioIndex(null);
     setSelectedSubtitleIndex(null);
+    setSelectedSecondSubtitleIndex(null);
     setSubtitleResolved(false);
     setPlaybackOverride(null);
   }, [itemId]);
@@ -155,6 +174,13 @@ export function PlayerScreen() {
     if (!subtitleResolved) {
       const initial = resolveInitialSubtitle(subtitleTracks, defaultAudio?.language ?? null, APP_LANGUAGE);
       setSelectedSubtitleIndex(initial?.index ?? null);
+      // Second subtitle (owner request - see the state declaration above):
+      // resolved from ITS OWN saved preference only, never the AUTO rule
+      // (`resolveInitialSecondSubtitle`'s own doc comment explains why) -
+      // gated on `subtitleResolved` alongside the primary so both settle
+      // together, in the same pass, exactly once per item.
+      const secondInitial = resolveInitialSecondSubtitle(subtitleTracks, initial?.index ?? null);
+      setSelectedSecondSubtitleIndex(secondInitial?.index ?? null);
       setSubtitleResolved(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -243,6 +269,15 @@ export function PlayerScreen() {
   const handleSubtitleApplied = (track: MediaStreamTrack | null) => {
     setSelectedSubtitleIndex(track?.index ?? null);
     setSubtitlePreference(subtitlePreferenceKeyFor(track));
+  };
+
+  /** Second subtitle (owner request - see the state declaration above).
+   * Always a pure client-side apply on `VideoSurface`'s side (no server
+   * round trip possible for this slot), so - unlike audio/the primary
+   * subtitle - there is no `SwitchUnavailable` counterpart to handle here. */
+  const handleSecondSubtitleApplied = (track: MediaStreamTrack | null) => {
+    setSelectedSecondSubtitleIndex(track?.index ?? null);
+    setSecondSubtitlePreference(secondSubtitlePreferenceKeyFor(track));
   };
 
   /**
@@ -393,6 +428,8 @@ export function PlayerScreen() {
         onAudioApplied={handleAudioApplied}
         onAudioSwitchUnavailable={handleAudioSwitchUnavailable}
         onSubtitleApplied={handleSubtitleApplied}
+        selectedSecondSubtitleIndex={selectedSecondSubtitleIndex}
+        onSecondSubtitleApplied={handleSecondSubtitleApplied}
         subtitleDeliveryMethods={effectiveSubtitleDeliveryMethods}
         onSubtitleSwitchUnavailable={handleSubtitleSwitchUnavailable}
         buildSubtitleUrl={buildSubtitleUrl}

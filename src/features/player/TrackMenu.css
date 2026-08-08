@@ -108,6 +108,62 @@
   font-weight: 700;
 }
 
+/* --- Second subtitle section (owner request: two subtitles at once) ---- */
+
+/* Wraps the primary and second option lists separately (query-scoping
+   reasons, see TrackMenu.tsx) - `flex`/`gap` here reproduce the SAME
+   spacing `.pf-track-menu__list` already gives its direct children, so
+   nesting one level deeper changes nothing visually. */
+.pf-track-menu__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-track-menu__divider {
+  height: 1px;
+  margin: 4px 0;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pf-track-menu__subheading {
+  margin: 0;
+  color: var(--pf-text-dim, rgba(244, 246, 251, 0.65));
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pf-track-menu__note {
+  margin: 0;
+  padding: 8px 4px;
+  color: var(--pf-text-dim, rgba(244, 246, 251, 0.65));
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* A second-subtitle candidate whose delivery method is `Encode` (already
+   burned into the video's pixels) - shown, not hidden, so the owner's "say
+   why instead of showing something broken" requirement is visible right at
+   the point of choice. Not a <button>: this option is inert, so it must not
+   read as interactive/focusable like `.pf-track-menu__option`'s real rows. */
+.pf-track-menu__option--blocked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pf-track-menu__note-inline {
+  flex: none;
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
 /* Episode jump menu rows.
    A row here is a still frame plus two lines of text, unlike the single
    centered label of an audio/subtitle option - so it keeps
