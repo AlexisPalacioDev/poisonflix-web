@@ -38,6 +38,18 @@
 // running clock), so a bad estimate is contained within one 2-6s line
 // instead of drifting further out of sync the longer the movie plays.
 //
+// ## The seam is now used (`wordTimingsSource.ts`)
+// An offline generator (outside this codebase) produces real forced-alignment
+// timings per item (~100ms median error, vs. this file's ~310ms estimate),
+// served as static JSON. `VideoSurface.tsx`'s `WordHighlightedLine` tries
+// `resolveWordTimingsForCue` (`wordTimingsSource.ts`) first and calls
+// `estimateWordTimings` (this file, UNCHANGED by that addition) only when it
+// returns `null` - no data for this item, wrong subtitle track selected, or
+// this exact cue isn't in the file. This file stays the permanent fallback,
+// not a "temporary until real alignment ships" stopgap: most titles will
+// never have generated data, and even ones that do can have individual cues
+// the generator wasn't confident enough to align.
+//
 // KNOWN, ACCEPTED LIMITATION: `VideoSurface.tsx` only re-evaluates which word
 // is active on the `<video>`'s own `timeupdate` event, which browsers fire at
 // roughly 4Hz (~every 250ms), not on every animation frame. On a short, fast

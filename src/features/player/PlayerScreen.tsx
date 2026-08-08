@@ -412,6 +412,7 @@ export function PlayerScreen() {
     <main className="pf-player-screen">
       <VideoSurface
         videoRef={videoRef}
+        itemId={itemId}
         source={effectiveSource}
         resumeSeconds={effectiveResumeSeconds}
         title={data.title}

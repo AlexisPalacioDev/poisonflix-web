@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VideoSurface } from './VideoSurface';
 import type { MediaStreamTrack } from './mediaStreamTracks';
+import { __resetWordTimingsCacheForTests } from './wordTimingsSource';
 
 // Fake `hls.js` module - jsdom has no MediaSource Extensions, so the real
 // `Hls.isSupported()` always returns false in this test environment; a
@@ -64,6 +65,11 @@ function noop() {
 // gets inert defaults (no tracks, no-op handlers). Track-menu-specific
 // behavior is exercised in `PlayerScreen.test.tsx` instead.
 const trackMenuDefaultProps = {
+  // Real-alignment word timings (`wordTimingsSource.ts`) fetch keyed on this
+  // - a fixed, inert id is fine for every suite in this file that isn't
+  // exercising that fetch directly (its own describe block below stubs
+  // `fetch` and overrides `itemId` where it matters).
+  itemId: 'item-1',
   audioTracks: [],
   subtitleTracks: [],
   selectedAudioIndex: null,
@@ -102,6 +108,14 @@ afterEach(() => {
   hlsInstances.length = 0;
   hoisted.setSupported(true);
   vi.clearAllMocks();
+  // Every render in this file shares `trackMenuDefaultProps.itemId`
+  // ('item-1'), and `fetchWordTimingsData` (`wordTimingsSource.ts`) caches
+  // its promise PER ITEM at module scope - without this reset, whichever
+  // test renders first "wins" that item's cached (real-`fetch`-rejected,
+  // since most suites here never stub `fetch`) result for every later test
+  // in the same file, including the ones below that deliberately stub
+  // `fetch` to test different word-timings outcomes for that same id.
+  __resetWordTimingsCacheForTests();
 });
 
 describe('VideoSurface — DirectPlay (player spec: "Resume seek on ready")', () => {
@@ -596,6 +610,12 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
   const englishVtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello there.\n';
   const spanishVtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHola.\n';
 
+  // Also receives the `wordTimingsSource.ts` fetch (`/updates/wordtimings/...`)
+  // - it falls into the `''` branch below, which this test double has no
+  // `.ok`/`.json()` for, so `fetchWordTimingsData` treats it as "no data" and
+  // falls back to the estimate, same as a real 404 would. That's WHY every
+  // `waitFor(... toHaveBeenCalledTimes(...))` below counts 3, not 2: the two
+  // VTT fetches PLUS this one, all through the SAME stubbed global `fetch`.
   function fetchResponseFor(url: string): Promise<Response> {
     const text = url.includes('/subs/1') ? englishVtt : url.includes('/subs/2') ? spanishVtt : '';
     return Promise.resolve({ text: () => Promise.resolve(text) } as Response);
@@ -667,7 +687,7 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
       />,
     );
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(englishTrackEl.track?.mode).toBe('disabled');
 
     // Land the video's clock inside both cues' [1s, 3s) window and let the
@@ -720,10 +740,14 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
     const tracks = video.querySelectorAll('track');
     const englishTrackEl = Array.from(tracks).find((t) => t.getAttribute('srclang') === 'eng') as HTMLTrackElement;
     expect(englishTrackEl.track?.mode).toBe('showing');
-    // No dual overlay, and the VTT-fetch effect never runs - the second slot
-    // being `null` is a structural no-op, not merely an empty render.
+    // No dual overlay, and the dual-subtitle VTT-fetch effect never runs -
+    // the second slot being `null` is a structural no-op, not merely an
+    // empty render. The word-timings fetch (`wordTimingsSource.ts`) DOES
+    // still fire - it's unconditional on every item open, independent of
+    // dual-subtitle mode - so it's the only call, not zero.
     expect(document.querySelector('.pf-player-surface__dual-subtitles')).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/updates/wordtimings/item-1.json');
   });
 
   it('a pair with one Encode-delivered ("burned in") track is blocked, not silently broken', async () => {
@@ -758,10 +782,13 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
 
-    // No crash, no overlay, no wasted fetch - and the PRIMARY (non-burned)
-    // subtitle keeps rendering exactly like single-subtitle mode always did.
+    // No crash, no overlay, no wasted DUAL-SUBTITLE fetch - and the PRIMARY
+    // (non-burned) subtitle keeps rendering exactly like single-subtitle mode
+    // always did. The word-timings fetch still fires regardless (see the
+    // previous test's comment) - it's the only call.
     expect(document.querySelector('.pf-player-surface__dual-subtitles')).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/updates/wordtimings/item-1.json');
     const tracks = video.querySelectorAll('track');
     const englishTrackEl = Array.from(tracks).find((t) => t.getAttribute('srclang') === 'eng') as HTMLTrackElement;
     expect(englishTrackEl.track?.mode).toBe('showing');
@@ -795,7 +822,7 @@ describe('VideoSurface — dual subtitles (owner request: read two languages at 
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     // The overlay container still mounts (dual mode IS selected/valid), it
     // just has no active line to show - never a thrown error or a blank
     // white-screen.
@@ -834,6 +861,12 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
   const englishVtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nHi there friend\n';
   const spanishVtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nHola amigo\n';
 
+  // Also receives the `wordTimingsSource.ts` fetch (`/updates/wordtimings/...`)
+  // - it falls into the `''` branch below, which this test double has no
+  // `.ok`/`.json()` for, so `fetchWordTimingsData` treats it as "no data" and
+  // falls back to the estimate, same as a real 404 would. That's WHY every
+  // `waitFor(... toHaveBeenCalledTimes(...))` below counts 3, not 2: the two
+  // VTT fetches PLUS this one, all through the SAME stubbed global `fetch`.
   function fetchResponseFor(url: string): Promise<Response> {
     const text = url.includes('/subs/1') ? englishVtt : url.includes('/subs/2') ? spanishVtt : '';
     return Promise.resolve({ text: () => Promise.resolve(text) } as Response);
@@ -877,7 +910,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
     const fetchMock = renderDual();
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
     fireEvent.timeUpdate(video);
@@ -895,7 +928,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
     const fetchMock = renderDual();
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     const primaryLine = () => document.querySelector('.pf-player-surface__subtitle-line--primary');
     const currentWordText = () => primaryLine()?.querySelector('.pf-player-surface__word--current')?.textContent;
@@ -918,7 +951,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
     const fetchMock = renderDual();
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
     fireEvent.timeUpdate(video);
@@ -931,7 +964,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
     const fetchMock = renderDual();
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
     fireEvent.timeUpdate(video);
@@ -983,7 +1016,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
 
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
     fireEvent.timeUpdate(video);
@@ -1035,7 +1068,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
 
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     Object.defineProperty(video, 'currentTime', { value: 1, configurable: true });
     fireEvent.timeUpdate(video);
@@ -1052,7 +1085,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
     const fetchMock = renderDual();
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     expect(localStorage.getItem('poisonflix:wordHighlightPreference')).toBeNull();
 
@@ -1095,7 +1128,7 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
 
     const video = screen.getByTestId('pf-video') as HTMLVideoElement;
     fireEvent.canPlay(video);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     // Four equal-ish-weight words over 4s land roughly one per second -
     // landing at 2s should be on word 3 ("charlie"), with two words already
@@ -1110,5 +1143,281 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
     expect(words[1]).toHaveClass('pf-player-surface__word--said');
     expect(words[2]).toHaveClass('pf-player-surface__word--current');
     expect(words[3]).toHaveClass('pf-player-surface__word--upcoming');
+  });
+
+  // Real alignment data (`wordTimingsSource.ts`, VideoSurface.tsx's "Real
+  // alignment data" header section) - proving the WIRING, not the matching
+  // logic itself (that's `wordTimingsSource.test.ts`'s job). Reuses
+  // `englishTrack`/`spanishTrack`/`englishVtt`/`spanishVtt` from this
+  // describe block: `englishVtt` is the same single 4s "Hi there friend" cue,
+  // so its ESTIMATE boundaries are already known (see the "ADVANCES" test
+  // above / `subtitleCues.test.ts`) - under the estimate, `Hi` (weight 3,
+  // floored) owns [0, 0.857s), so 0.6s lands on `Hi`; a real-data file that
+  // instead puts word 0 at [0, 500ms) and word 1 ("there") at [500ms, 1000ms)
+  // makes 0.6s land on `there` instead - an unambiguous signal of WHICH
+  // source actually drove the render.
+  describe('real alignment data (wordTimingsSource.ts) - wiring into WordHighlightedLine', () => {
+    const itemId = 'item-1'; // trackMenuDefaultProps' own default - kept explicit here since the payload's `item` must match it.
+
+    function fetchResponseForWithWordTimings(wordTimingsResponse: () => Promise<Response>) {
+      return (url: string): Promise<Response> => {
+        if (url.includes('/updates/wordtimings/')) return wordTimingsResponse();
+        return fetchResponseFor(url);
+      };
+    }
+
+    function renderDualWithWordTimings(wordTimingsResponse: () => Promise<Response>) {
+      const fetchMock = vi.fn().mockImplementation(fetchResponseForWithWordTimings(wordTimingsResponse));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const videoRef = createRef<HTMLVideoElement>();
+      render(
+        <VideoSurface
+          videoRef={videoRef}
+          {...trackMenuDefaultProps}
+          itemId={itemId}
+          subtitleTracks={[englishTrack, spanishTrack]}
+          selectedSubtitleIndex={englishTrack.index}
+          selectedSecondSubtitleIndex={spanishTrack.index}
+          buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+          source={directPlaySource}
+          resumeSeconds={0}
+          title="Balls Up"
+          onBack={noop}
+          onPlay={noop}
+          onPause={noop}
+          onEnded={noop}
+          onError={noop}
+          onUnsupported={noop}
+        />,
+      );
+      return fetchMock;
+    }
+
+    async function currentWordAt(fetchMock: ReturnType<typeof vi.fn>, currentTimeSeconds: number): Promise<string | null | undefined> {
+      const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+      fireEvent.canPlay(video);
+      // 2 sideloaded-VTT fetches (English + Spanish) + 1 word-timings fetch.
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+      Object.defineProperty(video, 'currentTime', { value: currentTimeSeconds, configurable: true });
+      fireEvent.timeUpdate(video);
+
+      const primaryLine = document.querySelector('.pf-player-surface__subtitle-line--primary');
+      return primaryLine?.querySelector('.pf-player-surface__word--current')?.textContent;
+    }
+
+    it('uses the REAL per-word timings from the fetched file, when it covers this exact cue and track', async () => {
+      const fetchMock = renderDualWithWordTimings(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              v: 1,
+              item: itemId,
+              track: englishTrack.index,
+              cues: [{ t: 0, w: [[0, 500], [500, 1000], [1000, 4000]] }],
+            }),
+        } as Response),
+      );
+
+      expect(await currentWordAt(fetchMock, 0.6)).toBe('there'); // real data's word boundary, NOT the estimate's
+    });
+
+    it('falls back to the estimate when the file is for a DIFFERENT subtitle track than the one selected', async () => {
+      const fetchMock = renderDualWithWordTimings(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              v: 1,
+              item: itemId,
+              track: 99, // not englishTrack.index
+              cues: [{ t: 0, w: [[0, 500], [500, 1000], [1000, 4000]] }],
+            }),
+        } as Response),
+      );
+
+      expect(await currentWordAt(fetchMock, 0.6)).toBe('Hi'); // estimate's word boundary
+    });
+
+    it('falls back to the estimate when the matched cue\'s word count does not equal the current subtitle\'s word count', async () => {
+      const fetchMock = renderDualWithWordTimings(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              v: 1,
+              item: itemId,
+              track: englishTrack.index,
+              cues: [{ t: 0, w: [[0, 2000], [2000, 4000]] }], // 2 entries, cue has 3 words
+            }),
+        } as Response),
+      );
+
+      expect(await currentWordAt(fetchMock, 0.6)).toBe('Hi'); // estimate's word boundary
+    });
+
+    it('keeps working off the estimate when the word-timings file 404s - the normal case for most titles', async () => {
+      const fetchMock = renderDualWithWordTimings(() => Promise.resolve({ ok: false, status: 404 } as Response));
+
+      expect(await currentWordAt(fetchMock, 0.6)).toBe('Hi'); // estimate's word boundary - never blocked, never crashed
+    });
+
+    // Challenger-audit gap: every test above puts English (and therefore the
+    // real-data track match) in the PRIMARY slot. `WordHighlightedLine`'s two
+    // call sites in VideoSurface.tsx each pass their OWN track's index
+    // (`primaryDualTrack?.index` / `secondDualTrack?.index`) - this exercises
+    // the SECOND call site specifically, so a copy-paste of the primary's
+    // index into the second slot (or vice versa) would fail this test even
+    // though every test above would stay green.
+    it('applies real data to the SECOND row using ITS OWN track index, when English is the second subtitle', async () => {
+      // englishTrack.index === 1, spanishTrack.index === 2 (this describe
+      // block's outer fixtures). Spanish is primary, English is second.
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/updates/wordtimings/')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                v: 1,
+                item: itemId,
+                track: englishTrack.index, // matches the SECOND row's track, not the primary's (spanishTrack)
+                cues: [{ t: 0, w: [[0, 500], [500, 1000], [1000, 4000]] }],
+              }),
+          } as Response);
+        }
+        return fetchResponseFor(url);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const videoRef = createRef<HTMLVideoElement>();
+      render(
+        <VideoSurface
+          videoRef={videoRef}
+          {...trackMenuDefaultProps}
+          itemId={itemId}
+          subtitleTracks={[spanishTrack, englishTrack]}
+          selectedSubtitleIndex={spanishTrack.index}
+          selectedSecondSubtitleIndex={englishTrack.index}
+          buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+          source={directPlaySource}
+          resumeSeconds={0}
+          title="Balls Up"
+          onBack={noop}
+          onPlay={noop}
+          onPause={noop}
+          onEnded={noop}
+          onError={noop}
+          onUnsupported={noop}
+        />,
+      );
+
+      const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+      fireEvent.canPlay(video);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+      Object.defineProperty(video, 'currentTime', { value: 0.6, configurable: true });
+      fireEvent.timeUpdate(video);
+
+      const secondLine = document.querySelector('.pf-player-surface__subtitle-line--second');
+      expect(secondLine?.querySelector('.pf-player-surface__word--current')?.textContent).toBe('there'); // real data's boundary, not the estimate's
+    });
+
+    // Challenger-audit gap: `wordTimingsFile` resets to `null` on every
+    // `itemId` change (VideoSurface.tsx) so a NEW item never transiently
+    // renders using the OLD item's real data while its own fetch is still in
+    // flight - PlayerScreen does not remount VideoSurface on an item change
+    // (`usePlaybackHeartbeat.ts`'s own header), so this reset is the only
+    // thing preventing that. Proven here by never letting item B's fetch
+    // resolve at all: if the reset were missing/broken, item A's real data
+    // would still be showing.
+    it('stops using the OLD item\'s real data as soon as itemId changes, even before the NEW item\'s fetch resolves', async () => {
+      let resolveItemB: ((response: Response) => void) | undefined;
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/updates/wordtimings/item-1.json')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                v: 1,
+                item: 'item-1',
+                track: englishTrack.index,
+                cues: [{ t: 0, w: [[0, 500], [500, 1000], [1000, 4000]] }],
+              }),
+          } as Response);
+        }
+        if (url.includes('/updates/wordtimings/item-2.json')) {
+          // Deliberately never resolves within this test - proves the reset
+          // does not depend on item B's fetch settling.
+          return new Promise<Response>((resolve) => {
+            resolveItemB = resolve;
+          });
+        }
+        return fetchResponseFor(url);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const videoRef = createRef<HTMLVideoElement>();
+      const { rerender } = render(
+        <VideoSurface
+          videoRef={videoRef}
+          {...trackMenuDefaultProps}
+          itemId="item-1"
+          subtitleTracks={[englishTrack, spanishTrack]}
+          selectedSubtitleIndex={englishTrack.index}
+          selectedSecondSubtitleIndex={spanishTrack.index}
+          buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+          source={directPlaySource}
+          resumeSeconds={0}
+          title="Balls Up"
+          onBack={noop}
+          onPlay={noop}
+          onPause={noop}
+          onEnded={noop}
+          onError={noop}
+          onUnsupported={noop}
+        />,
+      );
+
+      const video = screen.getByTestId('pf-video') as HTMLVideoElement;
+      fireEvent.canPlay(video);
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      Object.defineProperty(video, 'currentTime', { value: 0.6, configurable: true });
+      fireEvent.timeUpdate(video);
+      expect(document.querySelector('.pf-player-surface__word--current')?.textContent).toBe('there'); // item-1's real data, confirmed applied
+
+      // Same track/cue text, but a NEW item whose word-timings fetch is
+      // deliberately left pending (see `resolveItemB`, never called).
+      rerender(
+        <VideoSurface
+          videoRef={videoRef}
+          {...trackMenuDefaultProps}
+          itemId="item-2"
+          subtitleTracks={[englishTrack, spanishTrack]}
+          selectedSubtitleIndex={englishTrack.index}
+          selectedSecondSubtitleIndex={spanishTrack.index}
+          buildSubtitleUrl={(track) => `/jellyfin/subs/${track.index}/Stream.vtt`}
+          source={directPlaySource}
+          resumeSeconds={0}
+          title="Balls Up"
+          onBack={noop}
+          onPlay={noop}
+          onPause={noop}
+          onEnded={noop}
+          onError={noop}
+          onUnsupported={noop}
+        />,
+      );
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/updates/wordtimings/item-2.json'));
+
+      Object.defineProperty(video, 'currentTime', { value: 0.6, configurable: true });
+      fireEvent.timeUpdate(video);
+      // Item-1's real data must NOT still be applied to item-2's (identical
+      // text) cue - falls back to the estimate's boundary instead.
+      expect(document.querySelector('.pf-player-surface__word--current')?.textContent).toBe('Hi');
+
+      expect(resolveItemB).toBeDefined(); // sanity: item-2's fetch really was still pending, not accidentally settled
+    });
   });
 });

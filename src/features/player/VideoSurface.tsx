@@ -15,6 +15,7 @@ import {
   tokenizeCueText,
   type SubtitleCue,
 } from './subtitleCues';
+import { fetchWordTimingsData, resolveWordTimingsForCue, type WordTimingsFile } from './wordTimingsSource';
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import { EpisodeMenu } from './EpisodeMenu';
 import { nextEpisode, previousEpisode, type EpisodeNavItem } from './episodeNavigation';
@@ -309,20 +310,34 @@ interface WordHighlightedLineProps {
   cue: SubtitleCue;
   currentTimeSeconds: number;
   className: string;
+  /** The subtitle stream index `cue` was parsed from - the join key against
+   * a real-alignment file's own `track` field (`wordTimingsSource.ts`). */
+  trackIndex: number;
+  /** The current item's real-alignment file, or `null` (not fetched yet, no
+   * file exists, or it failed to load - see `wordTimingsSource.ts`'s
+   * fallback policy). `null` simply means every cue in this row uses the
+   * estimate below - never blocks rendering. */
+  wordTimingsFile: WordTimingsFile | null;
 }
 
 /**
  * Renders one dual-subtitle row with per-word highlighting (this file's
  * header, "Word-level highlight" subsection - English rows only, gated by
  * the caller before this component is ever used). Tokenizes with
- * `tokenizeCueText` - the SAME tokenizer `estimateWordTimings` used to
- * produce `timings` - so whitespace/newlines are reproduced verbatim in
- * order (`white-space: pre-line` on `.pf-player-surface__subtitle-line`
- * still turns a `\n` token into a real line break) and only genuine word
- * tokens become highlightable `<span>`s.
+ * `tokenizeCueText` - the SAME tokenizer both `resolveWordTimingsForCue` and
+ * `estimateWordTimings` use to produce `timings` - so whitespace/newlines are
+ * reproduced verbatim in order (`white-space: pre-line` on
+ * `.pf-player-surface__subtitle-line` still turns a `\n` token into a real
+ * line break) and only genuine word tokens become highlightable `<span>`s.
+ *
+ * Timing SOURCE is picked here, once, and nothing below this line cares
+ * which one won: real alignment data (`resolveWordTimingsForCue`) when it
+ * covers this exact cue and track, else the estimate
+ * (`estimateWordTimings`) - see `subtitleCues.ts`'s header for why the
+ * estimate is a permanent fallback, not a stopgap.
  */
-function WordHighlightedLine({ cue, currentTimeSeconds, className }: WordHighlightedLineProps) {
-  const timings = estimateWordTimings(cue);
+function WordHighlightedLine({ cue, currentTimeSeconds, className, trackIndex, wordTimingsFile }: WordHighlightedLineProps) {
+  const timings = resolveWordTimingsForCue(wordTimingsFile, cue, trackIndex) ?? estimateWordTimings(cue);
   const activeIndex = activeWordIndex(timings, currentTimeSeconds);
   const tokens = tokenizeCueText(cue.text);
   let wordIndex = -1;
@@ -346,6 +361,11 @@ type ActiveMenu = 'audio' | 'subtitle' | 'episodes' | null;
 
 export interface VideoSurfaceProps {
   videoRef: RefObject<HTMLVideoElement>;
+  /** The Jellyfin item currently playing - used ONLY to fetch this item's
+   * real-alignment word-timings file, if one exists (`wordTimingsSource.ts`,
+   * this file's "Real alignment data" header section). Not used for any
+   * other purpose here - the media itself is driven entirely by `source`. */
+  itemId: string;
   source: PlaybackSource;
   /** Resume position in seconds; `0` means "no seek" (player spec). */
   resumeSeconds: number;
@@ -544,6 +564,7 @@ const IconEpisodes = () => (
 
 export function VideoSurface({
   videoRef,
+  itemId,
   source,
   resumeSeconds,
   title,
@@ -685,6 +706,26 @@ export function VideoSurface({
   // every `timeupdate`, instead of a second timer/listener.
   const [primaryDualCues, setPrimaryDualCues] = useState<SubtitleCue[]>([]);
   const [secondDualCues, setSecondDualCues] = useState<SubtitleCue[]>([]);
+
+  // Real alignment data (this file's header, "Real alignment data" section) -
+  // `null` until (if ever) `fetchWordTimingsData` resolves with a usable
+  // file. Fetched unconditionally on every item open, NOT gated behind dual
+  // mode or the highlight toggle being on: both can be turned on later
+  // mid-playback, and the fetch (cached per item, `wordTimingsSource.ts`)
+  // should already be settled by then instead of only starting at that
+  // point. Never blocks anything else here - `WordHighlightedLine` simply
+  // keeps using the estimate until (if ever) this resolves to non-null.
+  const [wordTimingsFile, setWordTimingsFile] = useState<WordTimingsFile | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setWordTimingsFile(null); // a new item's data (if any) hasn't arrived yet
+    fetchWordTimingsData(itemId).then((file) => {
+      if (!cancelled) setWordTimingsFile(file);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId]);
 
   // Word-level highlight toggle (this file's "Dual subtitles" header,
   // "Word-level highlight" subsection) - read once from `localStorage` on
@@ -1663,6 +1704,8 @@ export function VideoSurface({
                 cue={primaryHighlightCue}
                 currentTimeSeconds={currentTime}
                 className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--primary"
+                trackIndex={primaryDualTrack?.index ?? -1}
+                wordTimingsFile={wordTimingsFile}
               />
             ) : (
               <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--primary">
@@ -1676,6 +1719,8 @@ export function VideoSurface({
                 cue={secondHighlightCue}
                 currentTimeSeconds={currentTime}
                 className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--second"
+                trackIndex={secondDualTrack?.index ?? -1}
+                wordTimingsFile={wordTimingsFile}
               />
             ) : (
               <p className="pf-player-surface__subtitle-line pf-player-surface__subtitle-line--second">
