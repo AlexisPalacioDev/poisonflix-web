@@ -33,37 +33,18 @@
 
 /* --- Landing hero: search + source toggle ------------------------------- */
 
+/* The top padding is the header height plus a breath. It used to be
+   `+ 1.5rem` with a 4.5rem cassette below it absorbing the difference; with the
+   mark gone that same value left the search field looking dropped into the
+   middle of nothing, so the band tightens to the gap the field actually needs
+   to clear the fixed header. */
 .pf-music__hero {
   max-width: 760px;
   margin: 0 auto;
-  padding: calc(var(--pf-header-h, 68px) + 1.5rem) 1rem 0.5rem;
+  padding: calc(var(--pf-header-h, 68px) + 1rem) 1rem 0.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-}
-
-/* Section mark. Sized in rem so it tracks the TV's larger root font, and given
-   a soft drop shadow so the cutout does not read as a sticker pasted on. */
-.pf-music__brand {
-  display: flex;
-  justify-content: center;
-}
-
-/* The mark is inline SVG now, and height is set explicitly rather than left to
-   `auto`: the webOS 2018 Chrome does not derive an SVG's intrinsic ratio from
-   its viewBox, so `auto` there collapses to the 150px default. */
-.pf-music__brand > svg {
-  /* Static fallback first (Chrome 53/webOS 2018 can't parse a literal
-     `clamp()` value - see scripts/check-legacy-css.mjs rule b / design.md
-     D2 - so the declaration is dropped and the PRIOR one wins; this app's
-     TV/desktop-first target viewport is wide enough that this clamp mostly
-     resolves to its 4.5rem cap already, so the static value below is what
-     modern browsers already render most of the time, not a guess). */
-  width: 4.5rem;
-  width: clamp(3.25rem, 9vw, 4.5rem);
-  height: 4.5rem;
-  height: clamp(3.25rem, 9vw, 4.5rem);
-  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 0.55));
 }
 
 .pf-music__query {
@@ -524,11 +505,15 @@
   object-fit: cover;
 }
 
-/* Spotify's green play button: hidden until hover/focus, then lifts in. */
+/* Spotify's green play button: hidden until hover/focus, then lifts in.
+   Centred on the artwork rather than tucked into its bottom-right corner - the
+   owner asked for it in the middle, and the corner also put it a thumb's width
+   from the card edge on a phone. The like keeps the top-left corner, so a 42px
+   disc at dead centre never reaches it. */
 .pf-music__rec-btn {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  top: 50%;
+  left: 50%;
   width: 42px;
   height: 42px;
   display: flex;
@@ -540,7 +525,10 @@
   color: #04160b;
   cursor: pointer;
   opacity: 0;
-  transform: translateY(8px);
+  /* Centring has to ride inside every transform on this element, so the
+     8px "lifts in" offset is folded into the translate instead of replacing
+     it. */
+  transform: translate(-50%, calc(-50% + 8px));
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45);
   transition: opacity var(--pf-dur-fast, 0.16s) ease, transform var(--pf-dur-fast, 0.16s) ease,
     background var(--pf-dur-fast, 0.16s) ease;
@@ -552,27 +540,52 @@
    you can only reach by hovering is a pause button the user cannot find. */
 .pf-music__rec:hover .pf-music__rec-btn {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, -50%);
 }
 
 .pf-music__rec-btn:focus-visible {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, -50%);
 }
 
 .pf-music__rec-btn--active {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(-50%, -50%);
 }
 
 .pf-music__rec-btn:hover:not(:disabled) {
   background: var(--pf-green-bright);
-  transform: scale(1.06);
+  transform: translate(-50%, -50%) scale(1.06);
 }
 
 .pf-music__rec-btn:disabled {
   opacity: 0.7;
   cursor: default;
+}
+
+/* A phone has no hover, so a control that only exists on hover does not exist.
+   The tab this card replaced ("Canciones") showed a green disc on every row
+   unconditionally; keeping the reveal-on-hover everywhere turned the primary
+   action of the whole section into a secret on the device it is mostly used on.
+   So on coarse pointers the disc is simply always there, on every surface that
+   uses this class — the /musica/descargas grid and the feed rails alike.
+   Desktop keeps the reveal: with a mouse, uncovering it is the nice part.
+
+   Specificity, since this rule has to win the ones that matter: (0,2,0) here
+   beats the resting `.pf-music__rec-btn` (0,1,0) that hides the disc, and ties
+   `:focus-visible` (0,2,0) with source order on its side. It loses to the two
+   `:hover` rules (0,3,0), which is fine — those also show the disc. The
+   `:not(:disabled)` is not about specificity: it keeps this off the dimmed
+   disabled state, whose own rule ties at (0,2,0) and sits earlier.
+
+   The transform repeats the centring: the 8px offset belongs to the fade-in
+   only, and dropping the translate here would slide the disc off the middle of
+   the artwork the owner asked for. */
+@media (hover: none), (pointer: coarse) {
+  .pf-music__rec-btn:not(:disabled) {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .pf-music__rec-title {
@@ -1528,4 +1541,240 @@
   text-transform: uppercase;
   font-size: 0.68rem;
   color: rgba(255, 255, 255, 0.55);
+}
+
+/* ---------------------------------------------------------------------------
+   Tu música descargada (/musica/descargas)
+
+   The library was a tab called "Canciones" wedged between "Álbumes" and
+   "Playlists" — the owner's own downloads filed as if they were one more
+   playlist he'd assembled. This is the apartado they got instead: a page, a
+   name, an honest count, and every song rather than the first hundred.
+
+   Green throughout, on purpose. `.pf-music` scopes the Spotify-green tokens to
+   this feature; the app's brand gold has no business here.
+   -------------------------------------------------------------------------*/
+
+/* Wider than the 760px reading column the rest of Música uses: this page is a
+   grid of covers to scan, not a list to read down. */
+.pf-music__lib .pf-music__section {
+  max-width: 1100px;
+}
+
+/* The header is `position: fixed`, so this band has to reserve its height the
+   same way `.pf-music__hero` does — without it the eyebrow renders underneath
+   the logo. */
+.pf-music__lib-hero {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: calc(var(--pf-header-h, 68px) + 1.75rem) 1rem 1.25rem;
+}
+
+.pf-music__lib-eyebrow {
+  margin: 0 0 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pf-green-bright, #1ed760);
+}
+
+.pf-music__lib-title {
+  margin: 0;
+  /* Declaration doubling: Chrome 53/webOS 2018 fails to PARSE a literal
+     clamp() and drops the declaration outright, so the static value has to
+     come first (scripts/check-legacy-css.mjs rule b). */
+  font-size: 2.5rem;
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  color: #fff;
+}
+
+.pf-music__lib-count {
+  margin: 0.55rem 0 0;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.62);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-music__lib-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.35rem;
+}
+
+.pf-music__lib-cta {
+  padding: 0.72rem 1.6rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: 0;
+  border-radius: var(--pf-radius-pill, 999px);
+  background: var(--pf-green, #1db954);
+  color: #04160b;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast, 0.16s) var(--pf-ease, ease-out),
+    transform var(--pf-dur-fast, 0.16s) var(--pf-ease, ease-out);
+}
+
+.pf-music__lib-cta:hover:not(:disabled) {
+  background: var(--pf-green-bright, #1ed760);
+  transform: scale(1.03);
+}
+
+.pf-music__lib-cta:focus-visible {
+  outline: 2px solid var(--pf-green-bright, #1ed760);
+  outline-offset: 3px;
+}
+
+.pf-music__lib-cta:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pf-music__lib-cta--ghost {
+  background: transparent;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.pf-music__lib-cta--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(30, 215, 96, 0.7);
+}
+
+.pf-music__lib-toolbar {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0.5rem 1rem 0;
+}
+
+.pf-music__lib-filter {
+  max-width: 360px;
+  padding: 0.6rem 1rem;
+  font-size: 0.9rem;
+}
+
+.pf-music__lib-filter:focus-visible {
+  outline: 2px solid var(--pf-green-bright, #1ed760);
+  outline-offset: 2px;
+}
+
+/* The rail card, released from the rail: same artwork-is-the-play-surface card
+   as the recommendation rows, but sized by the grid instead of a fixed 150px. */
+.pf-music__lib-card {
+  width: auto;
+  flex: initial;
+}
+
+.pf-music__lib-link {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #fff;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 4px;
+}
+
+.pf-music__lib-link:hover {
+  color: var(--pf-green-bright, #1ed760);
+  text-decoration: underline;
+}
+
+.pf-music__lib-link:focus-visible {
+  outline: 2px solid var(--pf-green-bright, #1ed760);
+  outline-offset: 2px;
+}
+
+.pf-music__lib-inline-link,
+.pf-music__lib-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--pf-green-bright, #1ed760);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* --- The way in, from /musica ------------------------------------------- */
+
+/* The entry point the tab never was. Sits above the browse tabs because "what
+   do I have?" is the question the owner arrives with, and it has to be legible
+   as a place to go rather than a strip to swipe. */
+.pf-music__lib-entry {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.35rem;
+  border-radius: var(--pf-radius-md, 12px);
+  text-decoration: none;
+  color: inherit;
+  background: linear-gradient(115deg, rgba(30, 215, 96, 0.18), rgba(30, 215, 96, 0.04));
+  box-shadow: inset 0 0 0 1px rgba(30, 215, 96, 0.28);
+  transition: box-shadow var(--pf-dur-fast, 0.16s) var(--pf-ease, ease-out),
+    transform var(--pf-dur-fast, 0.16s) var(--pf-ease, ease-out);
+}
+
+.pf-music__lib-entry:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgba(30, 215, 96, 0.6), 0 12px 26px rgba(0, 0, 0, 0.4);
+}
+
+.pf-music__lib-entry:focus-visible {
+  outline: 2px solid var(--pf-green-bright, #1ed760);
+  outline-offset: 3px;
+}
+
+.pf-music__lib-entry-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--pf-radius-sm, 8px);
+  background: var(--pf-green, #1db954);
+  color: #04160b;
+}
+
+.pf-music__lib-entry-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.pf-music__lib-entry-title {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  color: #fff;
+}
+
+.pf-music__lib-entry-sub {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.62);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-music__lib-entry-chevron {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-music__lib-entry:hover {
+    transform: none;
+  }
+
+  .pf-music__lib-cta:hover:not(:disabled) {
+    transform: none;
+  }
 }

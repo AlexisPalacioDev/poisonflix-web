@@ -1,20 +1,19 @@
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Header } from '../../components/Header';
 import { useAuth } from '../../hooks/useAuth';
 import { useMusicSearch } from '../../hooks/useMusicSearch';
-import { useMusicLibrary } from '../../hooks/useMusicLibrary';
+import { useMusicLibraryCount } from '../../hooks/useMusicLibrary';
 import { useMusicAlbums } from '../../hooks/useMusicAlbums';
 import { useMusicArtists } from '../../hooks/useMusicArtists';
 import { useMusicDownload } from '../../hooks/useMusicDownload';
 import { usePersonalMusicFeed } from '../../hooks/usePersonalMusicFeed';
 import { useRatings } from '../../hooks/useRatings';
 import { resolveCoverUrl } from '../../lib/domain/posterUrl';
-import { audioItemToTrack, searchResultToTrack } from '../../lib/domain/musicTrack';
+import { searchResultToTrack } from '../../lib/domain/musicTrack';
 import { songsOnly } from '../../lib/domain/musicTaste';
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
 import type { MusicSearchResult, MusicSongResult, MusicSource } from '../../api/schemas/music';
-import { PoisonMark } from '../onboarding/PoisonMark';
 import { useMusicPlayer } from './musicPlayerCore';
 import { SourceToggle } from './SourceToggle';
 import { CoverImage } from './CoverImage';
@@ -24,27 +23,26 @@ import { RecommendationsRow } from './RecommendationsRow';
 import { JamRow } from '../jam/JamRow';
 import { GenresPanel } from './GenresPanel';
 import { PlaylistsPanel } from './PlaylistsPanel';
-import { PlayButton } from './PlayButton';
-import { MusicRowMenu } from './MusicRowMenu';
 import { MyMusicStats } from './MyMusicStats';
-import { deleteItem } from '../../api/jellyfin';
 import { getCollectionTracks, getRecommendations, type CollectionRef } from '../../api/music';
 import { RADIO_SIZE } from './useAutoplayRadio';
-import { queryKeys } from '../../hooks/queryKeys';
-import { useQueryClient } from '@tanstack/react-query';
 import './music.css';
 
 // Música home (Spotify-style landing): a search field with a source toggle
-// (Auto / YT Music / YouTube), a "Recomendados para ti" rail, and the browse
-// tabs — Canciones, Álbumes, Artistas and Géneros. Search results take over the
-// landing while a query is active. Search / recommendation feeds are a typed
-// union: songs play on click, while album/playlist hits render as collection
-// cards that download the whole batch on their "Descargar" button.
+// (Auto / YT Music / YouTube), the "Recomendados para ti" rails, the way into
+// the downloaded library, and the browse tabs — Álbumes, Artistas, Géneros and
+// Playlists. Search results take over the landing while a query is active.
+// Search / recommendation feeds are a typed union: songs play on click, while
+// album/playlist hits render as collection cards that download the whole batch
+// on their "Descargar" button.
 
-type BrowseTab = 'canciones' | 'albumes' | 'artistas' | 'generos' | 'playlists';
+// "Canciones" is gone from this strip on purpose: the downloaded library is not
+// a browse facet sitting between Álbumes and Playlists, it is the answer to
+// "what do I have?". It lives at /musica/descargas now, reached from the entry
+// banner above these tabs and from the top bar.
+type BrowseTab = 'albumes' | 'artistas' | 'generos' | 'playlists';
 
 const TABS: { id: BrowseTab; label: string }[] = [
-  { id: 'canciones', label: 'Canciones' },
   { id: 'albumes', label: 'Álbumes' },
   { id: 'artistas', label: 'Artistas' },
   { id: 'generos', label: 'Géneros' },
@@ -82,14 +80,18 @@ export function MusicScreen() {
   const token = session?.jellyfinToken ?? null;
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<MusicSource>('auto');
-  const [tab, setTab] = useState<BrowseTab>('canciones');
+  const [tab, setTab] = useState<BrowseTab>('albumes');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const { debouncedQuery, enabled, isLoading, isError, results } = useMusicSearch(query, source);
   const { download, stateByVideoId, itemByVideoId } = useMusicDownload();
   const { rows: feedRows, isLoading: feedLoading } = usePersonalMusicFeed();
   const { liked } = useRatings();
-  const { items: libraryItems, isLoading: libraryLoading } = useMusicLibrary();
+  // The library itself lives at /musica/descargas now; here it only supplies the
+  // count on the entry banner.
+  // The entry card prints a count and nothing else, so it asks for a count and
+  // nothing else — the songs themselves are `/musica/descargas`'s business.
+  const { total: libraryTotal, isLoading: libraryLoading } = useMusicLibraryCount();
   const { items: albums, isLoading: albumsLoading, isError: albumsError } = useMusicAlbums(
     tab === 'albumes',
   );
@@ -97,16 +99,6 @@ export function MusicScreen() {
     tab === 'artistas',
   );
   const { playNow, enqueue, current, isPlaying, toggle, autoplay } = useMusicPlayer();
-  const queryClient = useQueryClient();
-  const handleDeleteLibrary = async (id: string) => {
-    await deleteItem(id);
-    queryClient.invalidateQueries({ queryKey: queryKeys.musicLibrary(session?.jellyfinUserId ?? '') });
-  };
-
-  const libraryTracks = useMemo(
-    () => libraryItems.map((item) => audioItemToTrack(item, token)),
-    [libraryItems, token],
-  );
 
   const handleDownload = (result: MusicSearchResult) => {
     download({
@@ -220,14 +212,10 @@ export function MusicScreen() {
     <main className="pf-music">
       <Header />
 
+      {/* No section mark above the field. The cassette was decorative — the nav
+          and the green already say which half of the app this is — and it cost
+          a full 4.5rem band before the one control anyone comes here to use. */}
       <div className="pf-music__hero">
-        {/* The cassette marks Música the way the clapper marks the video side:
-            you should know which half of the app you are in before you read a
-            word of it. Decorative — the section is already named by the nav. */}
-        <div className="pf-music__brand" aria-hidden="true">
-          <PoisonMark variant="music" />
-        </div>
-
         <div className="pf-music__query">
           <span className="pf-music__query-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="20" height="20" focusable="false">
@@ -386,6 +374,48 @@ export function MusicScreen() {
       )}
 
       <section className="pf-music__section" aria-label="Tu música">
+        {/* The way into the downloaded library, above the browse facets rather
+            than filed among them. It states the count so the owner can see
+            there is something in there without opening it. */}
+        <Link to="/musica/descargas" className="pf-music__lib-entry">
+          <span className="pf-music__lib-entry-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" focusable="false">
+              <path
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 18V6l11-2v12"
+              />
+              <circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+              <circle cx="17" cy="16" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+            </svg>
+          </span>
+          <span className="pf-music__lib-entry-text">
+            <span className="pf-music__lib-entry-title">Tu música descargada</span>
+            <span className="pf-music__lib-entry-sub">
+              {libraryLoading
+                ? 'Cargando…'
+                : libraryTotal === 0
+                  ? 'Todavía no descargaste nada'
+                  : `${libraryTotal} ${libraryTotal === 1 ? 'canción' : 'canciones'} en el servidor`}
+            </span>
+          </span>
+          <span className="pf-music__lib-entry-chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" focusable="false">
+              <path
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 5l7 7-7 7"
+              />
+            </svg>
+          </span>
+        </Link>
+
         <div className="pf-music__tabs" role="tablist" aria-label="Explorar tu música">
           {TABS.map(({ id, label }) => (
             <button
@@ -400,54 +430,6 @@ export function MusicScreen() {
             </button>
           ))}
         </div>
-
-        {tab === 'canciones' && (
-          <div role="tabpanel" aria-label="Canciones">
-            {libraryLoading ? (
-              <p className="pf-music__empty">Cargando…</p>
-            ) : libraryTracks.length === 0 ? (
-              <p className="pf-music__empty">Todavía no descargaste música.</p>
-            ) : (
-              <ul className="pf-music__list">
-                {libraryTracks.map((track, index) => {
-                  const active = current?.itemId === track.itemId;
-                  return (
-                    <li
-                      key={track.itemId}
-                      className={`pf-music__row${active ? ' pf-music__row--active' : ''}`}
-                    >
-                      <Link
-                        to={`/musica/track/${track.itemId}`}
-                        className="pf-music__row-link"
-                        aria-label={`Ver ${track.title}`}
-                      >
-                        <div className="pf-music__art">
-                          <CoverImage src={track.coverUrl} />
-                        </div>
-                        <div className="pf-music__info">
-                          <span className="pf-music__title">{track.title}</span>
-                          <span className="pf-music__sub">{track.artist ?? 'Desconocido'}</span>
-                        </div>
-                      </Link>
-                      <PlayButton
-                        active={active}
-                        isPlaying={isPlaying}
-                        onClick={() => (active ? toggle() : playNow(libraryTracks, index))}
-                        label={`Reproducir ${track.title}`}
-                      />
-                      <MusicRowMenu
-                        title={track.title}
-                        itemId={track.itemId}
-                        onEnqueue={() => enqueue(track)}
-                        onDelete={handleDeleteLibrary}
-                      />
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
 
         {tab === 'albumes' && (
           <div role="tabpanel" aria-label="Álbumes">

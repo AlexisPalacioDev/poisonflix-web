@@ -239,6 +239,38 @@ export function Header() {
         </Link>
       )}
 
+      {/* Only inside Música. Outside it, "Mi música" would sit next to
+          "Descargas" (films and series) and the two would read as the same
+          thing; inside it, this is the shortest way back to what you own from
+          any music page. The landing carries the same entry as a banner. */}
+      {inMusic && (
+        <Link
+          to="/musica/descargas"
+          className="pf-header__search"
+          aria-label="Mi música descargada"
+          onClick={onSelect}
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+            <path
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              d="M4 7h11M4 12h8M4 17h6"
+            />
+            <circle cx="16.5" cy="17" r="2.5" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              d="M19 17V8l2-.6"
+            />
+          </svg>
+          <span className="pf-header__search-label">Mi música</span>
+        </Link>
+      )}
+
       <Link to="/downloads" className="pf-header__search" aria-label="Descargas" onClick={onSelect}>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
           <path

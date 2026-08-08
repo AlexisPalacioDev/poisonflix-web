@@ -17,6 +17,7 @@ import { AdminScreen } from '../features/admin/AdminScreen';
 import { AppLayout } from '../features/music/AppLayout';
 import { RemoteScreen } from '../features/remote/RemoteScreen';
 import { MusicScreen } from '../features/music/MusicScreen';
+import { DownloadedScreen } from '../features/music/DownloadedScreen';
 import { AlbumScreen } from '../features/music/AlbumScreen';
 import { ArtistScreen } from '../features/music/ArtistScreen';
 import { TrackScreen } from '../features/music/TrackScreen';
@@ -176,6 +177,17 @@ export const routes: RouteObject[] = [
     element: (
       <RouteGuard>
         <MusicScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // "Tu música descargada": the songs actually on the server. Its own page,
+    // not the "Canciones" tab it used to be — the owner's library was filed
+    // among the browse facets as if it were another playlist.
+    path: '/musica/descargas',
+    element: (
+      <RouteGuard>
+        <DownloadedScreen />
       </RouteGuard>
     ),
   },

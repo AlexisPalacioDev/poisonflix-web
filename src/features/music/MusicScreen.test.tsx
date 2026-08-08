@@ -257,27 +257,37 @@ describe('MusicScreen (Música — Slice 1)', () => {
     expect(screen.queryByRole('button', { name: 'Limpiar búsqueda' })).not.toBeInTheDocument();
   });
 
-  it('renders the Jellyfin Audio library under the Canciones tab, newest first', async () => {
-    mockedGetItems.mockResolvedValue({
-      Items: [
-        { Id: 'aud-1', Name: 'My Track', Artists: ['Me'], AlbumArtist: 'Me', ImageTags: null },
-      ],
-      TotalRecordCount: 1,
-      StartIndex: 0,
-    } as never);
+  // Downloaded music is no longer a browse tab wedged between Álbumes and
+  // Playlists — the owner read his own library as "one more playlist". The
+  // landing now only carries the way in; the library itself is DownloadedScreen.
+  it('links to the downloaded-music section and reports how much is in there', async () => {
+    // Keyed on item type: only the Audio read has the song, so finding it on
+    // screen would mean the landing is still rendering the library itself.
+    mockedGetItems.mockImplementation((_userId, params) => {
+      const type = (params as { includeItemTypes?: string } | undefined)?.includeItemTypes;
+      if (type === 'Audio') {
+        return Promise.resolve({
+          Items: [
+            { Id: 'aud-1', Name: 'My Track', Artists: ['Me'], AlbumArtist: 'Me', ImageTags: null },
+          ],
+          TotalRecordCount: 1,
+          StartIndex: 0,
+        }) as never;
+      }
+      return Promise.resolve({ Items: [], TotalRecordCount: 0, StartIndex: 0 }) as never;
+    });
     mockedSearchMusic.mockResolvedValue([] as never);
 
     renderMusic();
 
-    expect(await screen.findByText('My Track')).toBeInTheDocument();
-    // The row/cover/title is a link to the track detail, separate from the play
-    // button that still plays the song.
-    expect(screen.getByRole('link', { name: /ver my track/i })).toHaveAttribute(
-      'href',
-      '/musica/track/aud-1',
-    );
-    expect(screen.getByRole('button', { name: /reproducir my track/i })).toBeInTheDocument();
-    // Library read goes straight through the Jellyfin proxy for Audio items.
+    const entry = await screen.findByRole('link', { name: /tu música descargada/i });
+    expect(entry).toHaveAttribute('href', '/musica/descargas');
+    // The count is Jellyfin's own total, singular-aware.
+    expect(await screen.findByText('1 canción en el servidor')).toBeInTheDocument();
+    // No "Canciones" tab, and the track list itself is not on this screen.
+    expect(screen.queryByRole('tab', { name: 'Canciones' })).not.toBeInTheDocument();
+    expect(screen.queryByText('My Track')).not.toBeInTheDocument();
+    // Library read still goes straight through the Jellyfin proxy for Audio items.
     expect(mockedGetItems).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({ includeItemTypes: 'Audio', sortBy: 'DateCreated' }),
@@ -309,13 +319,12 @@ describe('MusicScreen (Música — Slice 1)', () => {
 
     renderMusic();
 
-    // Canciones is the default tab: neither album nor artist query has fired.
+    // Álbumes is the default tab now that Canciones left for its own screen, so
+    // only the artist query is still unfired.
     expect(mockedGetItems).not.toHaveBeenCalledWith(
       'user-1',
-      expect.objectContaining({ includeItemTypes: 'MusicAlbum' }),
+      expect.objectContaining({ includeItemTypes: 'MusicArtist' }),
     );
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Álbumes' }));
 
     const albumLink = await screen.findByRole('link', { name: /greatest hits/i });
     expect(albumLink).toHaveAttribute('href', '/musica/album/alb-1');
