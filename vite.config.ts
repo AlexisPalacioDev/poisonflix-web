@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process';
 import { configDefaults, defineConfig } from 'vitest/config';
+import type { ProxyOptions } from 'vite';
 
 // Build stamp, injected at build time.
 //
@@ -22,6 +23,33 @@ import legacy from '@vitejs/plugin-legacy';
 import { VitePWA } from 'vite-plugin-pwa';
 import autoprefixer from 'autoprefixer';
 import flexGapFallback from './postcss-flex-gap-fallback.mjs';
+
+/**
+ * Route a prefix at the deployed Caddy, keeping Origin and Host in agreement.
+ *
+ * `changeOrigin` rewrites Host to the target, but the browser keeps sending
+ * `Origin: http://localhost:5173`. The BFF's CSRF check compares the two and
+ * answers 403 `bad_origin` to every mutation. GETs are exempt, so SSE and
+ * snapshots keep working and the symptom reads as a dead button rather than a
+ * proxy problem — it cost an afternoon once. Rewriting Origin to match Host
+ * restores the pair.
+ *
+ * Dev only: this is reachable solely through PF_PROXY_ORIGIN, and in production
+ * Caddy serves the app and the BFF from one origin, where the check is real.
+ */
+function proxyToDeployedOrigin(origin: string): ProxyOptions {
+  return {
+    target: origin,
+    changeOrigin: true,
+    configure: (proxy) => {
+      proxy.on('proxyReq', (proxyReq) => {
+        // Only when the browser sent one: adding an Origin to a request that
+        // had none would turn a same-origin call into a cross-origin one.
+        if (proxyReq.getHeader('origin')) proxyReq.setHeader('origin', origin);
+      });
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -173,10 +201,17 @@ export default defineConfig({
       // above (later keys win in an object literal). `/bff` only exists here:
       // in production Caddy serves it, and there is no local BFF to point at.
       //   PF_PROXY_ORIGIN=http://100.115.40.52:8600 npm run dev
+      // `changeOrigin` rewrites Host to the target, but the browser keeps
+      // sending `Origin: http://localhost:5173`. The BFF's CSRF check compares
+      // those two and rejects every mutation with 403 `bad_origin` — GETs pass,
+      // so SSE and snapshots work and it reads as a dead button rather than a
+      // proxy problem. Rewriting Origin to match restores the pair. Dev only:
+      // this whole branch needs PF_PROXY_ORIGIN, and in production Caddy serves
+      // the app and the BFF from one origin, where the check is real.
       ...(process.env.PF_PROXY_ORIGIN
         ? Object.fromEntries(
             ['/jellyfin', '/jellyseerr', '/prowlarr', '/radarr', '/sonarr', '/bff'].map(
-              (prefix) => [prefix, { target: process.env.PF_PROXY_ORIGIN, changeOrigin: true }],
+              (prefix) => [prefix, proxyToDeployedOrigin(process.env.PF_PROXY_ORIGIN as string)],
             ),
           )
         : {}),
