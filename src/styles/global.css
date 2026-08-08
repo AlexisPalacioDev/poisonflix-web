@@ -11,6 +11,24 @@ body,
   height: 100%;
 }
 
+/* Nothing in this app is ever read by scrolling sideways. Every horizontal
+   scroller it does have — the rails on Home and Música — is an inner element
+   that scrolls inside itself; the PAGE moving sideways is always a bug, and it
+   arrives silently: one decorative element bleeding past an edge is enough, and
+   on a phone the whole screen simply sits shifted with content cut off the left
+   and dead space on the right.
+   This is the backstop, not the fix. Each such bug still gets found and fixed
+   at its source (see `.pf-fullplayer` in NowPlayingBar.css for the one that
+   prompted this). On `html` alone, never on `body`: body carries `height: 100%`
+   here, and making it its own scroll container would strand the overflow.
+   Vertical scrolling is untouched — the Y axis computes to `auto` beside a
+   hidden X, which is exactly what the page already does. There is no
+   `position: sticky` anywhere in this codebase, the one thing a clipped root
+   would have broken (checked, not assumed). */
+html {
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background: var(--pf-bg);

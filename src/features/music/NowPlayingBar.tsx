@@ -826,11 +826,12 @@ function FullPlayer({
           own place. Heavily blurred and dimmed, so it reads as atmosphere and
           never competes with the text over it. */}
       {channel.coverUrl && (
-        <div
-          className="pf-fullplayer__wash"
-          style={{ backgroundImage: `url(${channel.coverUrl})` }}
-          aria-hidden="true"
-        />
+        <div className="pf-fullplayer__washbox" aria-hidden="true">
+          <div
+            className="pf-fullplayer__wash"
+            style={{ backgroundImage: `url(${channel.coverUrl})` }}
+          />
+        </div>
       )}
 
       {/* Artist and title above the cover, on one line, as in the reference.

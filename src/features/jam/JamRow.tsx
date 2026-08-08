@@ -47,7 +47,7 @@ export function JamRow() {
   if (jamsQuery.isLoading) return null;
 
   return (
-    <section className="pf-music__section" aria-label="Jam">
+    <section className="pf-music__section pf-music__section--rail" aria-label="Jam">
       <h2 className="pf-music__heading">Jam</h2>
       <div className="pf-music__rail-viewport">
         <div className="pf-music__rail">

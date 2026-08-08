@@ -432,6 +432,27 @@ describe('NowPlayingBar — compact mobile layout', () => {
       expect(within(dialog).queryByText(/Me gusta/)).not.toBeInTheDocument();
     });
 
+    it('keeps the blurred wash inside a box that clips it', () => {
+      // The whole phone screen used to sit shifted sideways, artwork cut off
+      // the left edge and dead space on the right. `.pf-fullplayer` is
+      // `overflow-y: auto`, and per the CSS overflow spec that drags the X axis
+      // to `auto` as well — so the wash's deliberate `inset: -12%` bleed (a
+      // 56px blur needs the room) became 83px of horizontal scroll on a 390px
+      // viewport. `overflow-x` on the player cannot fix it alone: `clip`
+      // computes to `hidden` beside a scrolling axis, and `hidden` still lets
+      // the browser scroll the area programmatically.
+      const withCover: MusicTrack[] = [
+        { itemId: 'c', title: 'Covered', artist: 'Artist C', coverUrl: 'https://x/cover.jpg' },
+      ];
+      renderBar(withCover);
+      fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Covered' }));
+      const dialog = screen.getByRole('dialog', { name: 'Reproduciendo' });
+
+      const wash = dialog.querySelector('.pf-fullplayer__wash');
+      expect(wash, 'the full player rendered no wash to clip').not.toBeNull();
+      expect(wash?.parentElement).toHaveClass('pf-fullplayer__washbox');
+    });
+
     it('a rating click reaches the same rate store as the bar/menu variants', async () => {
       renderBar(ratedTracks);
       fireEvent.click(screen.getByRole('button', { name: 'Abrir reproductor: Rated Track' }));
@@ -446,5 +467,49 @@ describe('NowPlayingBar — compact mobile layout', () => {
         ),
       );
     });
+  });
+});
+
+// Nothing in this app is read by scrolling sideways. The rails scroll inside
+// themselves; a SCREEN that slides is always a bug, and it arrives silently —
+// one decorative element bleeding past an edge inside a container that scrolls
+// on the other axis is enough.
+describe('no surface scrolls sideways', () => {
+  const playerCss = readFileSync(resolve(__dirname, 'NowPlayingBar.css'), 'utf8');
+  const musicCss = readFileSync(resolve(__dirname, 'music.css'), 'utf8');
+  const globalCss = readFileSync(resolve(__dirname, '../../styles/global.css'), 'utf8');
+
+  function bodyOf(css: string, selector: string): string {
+    const at = css.indexOf(`\n${selector} {`);
+    expect(at, `no rule found for \`${selector}\``).toBeGreaterThan(-1);
+    const open = css.indexOf('{', at);
+    return css.slice(open + 1, css.indexOf('}', open));
+  }
+
+  it('clips the wash at its source, where the bleed happens', () => {
+    const box = bodyOf(musicCss, '.pf-fullplayer__washbox');
+
+    expect(box).toMatch(/overflow:\s*hidden/);
+    // `inset: 0` matches the player's padding box exactly, so the clipping box
+    // contributes no overflow of its own.
+    expect(box).toMatch(/inset:\s*0/);
+  });
+
+  it('still lets the wash bleed, because a 56px blur needs the room', () => {
+    // The fix is the clipping parent, NOT taking the bleed away: without it the
+    // blur's own boundary shows as a hard line across the artwork.
+    expect(bodyOf(musicCss, '.pf-fullplayer__wash')).toMatch(/inset:\s*-12%/);
+  });
+
+  it('pins the full player X axis instead of leaving it to compute to auto', () => {
+    // Belt beside the braces above, for whatever overflows here next. Cannot be
+    // `clip`: beside a scrolling axis, clip computes to `hidden`.
+    expect(bodyOf(playerCss, '.pf-fullplayer')).toMatch(/overflow-x:\s*hidden/);
+  });
+
+  it('keeps a page-level backstop on the root element', () => {
+    // On `html` alone, never `body`: body carries `height: 100%` here, and
+    // making it its own scroll container would strand the overflow.
+    expect(bodyOf(globalCss, 'html')).toMatch(/overflow-x:\s*hidden/);
   });
 });

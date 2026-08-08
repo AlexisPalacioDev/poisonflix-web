@@ -173,23 +173,30 @@ export function MusicCollectionCard({
   if (layout === 'rail') {
     return (
       <div className="pf-music__rec pf-music__rec--coll">
-        <div className="pf-music__rec-art">{cover}</div>
-        <span className="pf-music__rec-kind">{kind}</span>
+        {/* The kind tag and the controls live ON the artwork, the way a song
+            card's play disc already does. Below it they made this card two
+            lines taller than every song beside it in the same rail, and left
+            the download button floating under the artist name with nothing to
+            belong to. */}
+        <div className="pf-music__rec-art">
+          {cover}
+          <span className="pf-music__rec-kind">{kind}</span>
+          <div className="pf-music__coll-actions pf-music__coll-actions--rail">
+            {playControls}
+            <button
+              type="button"
+              className="pf-music__play-icon pf-music__coll-btn"
+              onClick={handleDownload}
+              disabled={busy || complete}
+              title={buttonLabel}
+              aria-label={`Descargar ${kind.toLowerCase()} ${title}`}
+            >
+              <DownloadIcon />
+            </button>
+          </div>
+        </div>
         <span className="pf-music__rec-title">{title}</span>
         <span className="pf-music__rec-sub">{subtitle}</span>
-        <div className="pf-music__coll-actions pf-music__coll-actions--rail">
-          {playControls}
-          <button
-            type="button"
-            className="pf-music__play-icon pf-music__coll-btn"
-            onClick={handleDownload}
-            disabled={busy || complete}
-            title={buttonLabel}
-            aria-label={`Descargar ${kind.toLowerCase()} ${title}`}
-          >
-            <DownloadIcon />
-          </button>
-        </div>
         {status}
       </div>
     );

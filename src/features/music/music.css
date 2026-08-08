@@ -160,6 +160,33 @@
   padding: 1rem 1rem 1.25rem;
 }
 
+/* A rail is not a reading column.
+   `.pf-music__section` caps at 760px because Música began as a search *list*:
+   a column of text rows read top-to-bottom, where a 1800px line is unreadable.
+   The feed rails inherited that cap by reusing the same class, and a cap meant
+   for reading strangled a shelf meant for scanning — five covers visible on a
+   screen that fits twelve, the sixth sliced in half at a hard edge.
+   `.pf-music__lib` already carved out its own exception (see the 1100px rule
+   near the bottom of this file); this is the same argument applied to the rails
+   the landing is actually made of.
+   The section goes edge-to-edge and the page gutter moves INSIDE the scroller,
+   so the covers scroll under the fade instead of stopping at a border — exactly
+   how Cine's rows behave (components/Row.css). */
+.pf-music__section--rail {
+  max-width: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* The heading keeps the gutter the rail's own padding provides, so title and
+   first cover share one left edge all the way down the page. Logical `padding-
+   inline` is Chrome 87+; this file targets the webOS 2018 floor, so both
+   physical sides are named. */
+.pf-music__section--rail .pf-music__heading {
+  padding-left: var(--pf-gutter);
+  padding-right: var(--pf-gutter);
+}
+
 /* Same accent-rule idiom every section heading in the app now carries (see
    Row.css / browse.css / downloads.css), in Música's green instead of the
    brand gold - the identity here is deliberate, so the shape is shared and
@@ -387,9 +414,79 @@
   display: flex;
   gap: 1rem;
   overflow-x: auto;
-  padding: 0.25rem 0 0.5rem;
+  /* The page gutter lives here, not on the section, so covers scroll *through*
+     it. Vertical padding is generous on purpose: `overflow-x: auto` forces
+     `overflow-y` to compute to `auto` too (CSS overflow spec), which would clip
+     the top of a card lifted by :hover. Same reasoning as .pf-row__track. */
+  padding: 20px var(--pf-gutter) 26px;
   scroll-snap-type: x proximity;
+  /* Without this, `scroll-snap-align: start` lands the first card flush against
+     the scrollport edge, skipping the gutter — the rail then rests at
+     scrollLeft ≈ gutter and the "back" arrow appears over empty space. */
+  scroll-padding-inline: var(--pf-gutter);
   scroll-behavior: smooth;
+  /* Covers dissolve into the page at both ends instead of being guillotined at
+     the gutter. This is what makes an edge-to-edge rail read as "there is more
+     over there" rather than "the layout is broken". */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 calc(var(--pf-gutter) * 0.72),
+    #000 calc(100% - var(--pf-gutter) * 0.72),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 calc(var(--pf-gutter) * 0.72),
+    #000 calc(100% - var(--pf-gutter) * 0.72),
+    transparent 100%
+  );
+}
+
+/* Covers settle into place as they enter the rail and recede as they leave it,
+   driven by scroll position rather than a timer — so the motion is the user's
+   own hand, not a canned intro that plays at everyone once and then never
+   again. It exists to say "the shelf continues past this edge", which is the
+   one thing a horizontal rail must communicate and the one thing a hard crop
+   at the gutter never did.
+
+   Purely decorative, so it is progressive enhancement with no JS fallback (the
+   guidance is explicit that the scroll-timeline polyfill is not worth its
+   bugs): Firefox simply gets the static rail, which is a perfectly good rail.
+   `prefers-reduced-motion` opts out entirely. The `animation-range: entry`
+   probe inside @supports is required — it filters out browsers that claim
+   partial support and would otherwise apply the keyframes at a broken range.
+
+   Animating `opacity` and `scale` keeps this on the compositor, and using the
+   independent `scale` property (not `transform`) is what lets the hover lift
+   above survive. Declaration order matters: `animation-timeline` and
+   `animation-range` come AFTER the `animation` shorthand, which would reset
+   them. */
+@media (prefers-reduced-motion: no-preference) {
+  @supports ((animation-timeline: view()) and (animation-range: entry)) {
+    @keyframes pf-rail-card-enter {
+      from {
+        opacity: 0.45;
+        scale: 0.93;
+      }
+    }
+
+    @keyframes pf-rail-card-exit {
+      to {
+        opacity: 0.45;
+        scale: 0.93;
+      }
+    }
+
+    .pf-music__rail > * {
+      animation:
+        pf-rail-card-enter auto linear backwards,
+        pf-rail-card-exit auto linear forwards;
+      animation-timeline: view(inline);
+      animation-range: entry, exit;
+    }
+  }
 }
 
 /* Positioning context for the overlaid prev/next scroll arrows (mirrors the
@@ -403,13 +500,17 @@
    the rail can scroll that way, so an arrow is always actionable when shown. */
 .pf-music__rail-nav {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  /* Inset to the rail's own vertical padding so the gradient never bleeds over
+     the heading above or the next section below. */
+  top: 20px;
+  bottom: 26px;
   z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
+  /* Wide enough to swallow the gutter plus a comfortable target: on a D-pad a
+     forgiving hit area matters more than the glyph. */
+  width: calc(var(--pf-gutter) + 44px);
   border: none;
   cursor: pointer;
   color: #fff;
@@ -422,15 +523,15 @@
 .pf-music__rail-nav--prev {
   left: 0;
   justify-content: flex-start;
-  padding-left: 6px;
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.72), transparent);
+  padding-left: 8px;
+  background: linear-gradient(to right, rgba(10, 12, 16, 0.88) 0%, rgba(10, 12, 16, 0) 100%);
 }
 
 .pf-music__rail-nav--next {
   right: 0;
   justify-content: flex-end;
-  padding-right: 6px;
-  background: linear-gradient(to left, rgba(0, 0, 0, 0.72), transparent);
+  padding-right: 8px;
+  background: linear-gradient(to left, rgba(10, 12, 16, 0.88) 0%, rgba(10, 12, 16, 0) 100%);
 }
 
 .pf-music__rail-viewport:hover .pf-music__rail-nav {
@@ -441,16 +542,36 @@
   opacity: 1;
 }
 
+/* The glyph is the visible control — a circular glass chip, matching the one
+   Cine's rails carry (.pf-row__nav > svg) so both sections answer a mouse the
+   same way. The colour is where they part: Música wears green, Cine wears gold.
+   No `backdrop-filter` here: the translucent gradient reads as glass for free
+   and the blur budget is reserved for page chrome (scripts/check-legacy-css.mjs
+   rule d). */
 .pf-music__rail-nav > svg {
-  transition: transform var(--pf-dur-fast, 0.16s) ease;
+  width: 46px;
+  height: 46px;
+  padding: 9px;
+  border-radius: 50%;
+  background: linear-gradient(to bottom, rgba(30, 44, 34, 0.92) 0%, rgba(16, 22, 18, 0.92) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  transition:
+    transform var(--pf-dur-fast, 0.16s) var(--pf-ease),
+    background var(--pf-dur-fast, 0.16s) var(--pf-ease),
+    border-color var(--pf-dur-fast, 0.16s) var(--pf-ease);
 }
 
 .pf-music__rail-nav:hover > svg {
-  transform: scale(1.2);
+  transform: scale(1.1);
+  border-color: var(--pf-green-bright, #1ed760);
+  background: linear-gradient(to bottom, rgba(24, 68, 40, 0.95) 0%, rgba(12, 30, 18, 0.95) 100%);
 }
 
 .pf-music__rail-nav:focus-visible > svg {
-  transform: scale(1.2);
+  transform: scale(1.1);
+  border-color: var(--pf-green-bright, #1ed760);
+  background: linear-gradient(to bottom, rgba(24, 68, 40, 0.95) 0%, rgba(12, 30, 18, 0.95) 100%);
 }
 
 .pf-music__rail-nav:focus-visible {
@@ -482,6 +603,146 @@
 
 .pf-music__rec:hover {
   background: var(--pf-surface-2, #191d26);
+}
+
+/* --- The rail card: the cover IS the card ------------------------------- */
+
+/* Scoped to `.pf-music__rail` on purpose. This class is shared with the
+   /musica/descargas grid (`.pf-music__lib-card`), where the tinted tray still
+   earns its keep as a hit target in a dense grid. On a rail it does not: the
+   tray boxed a 126px cover inside a 150px card and spent the difference on
+   grey. Dropping it hands those pixels back to the artwork — the only thing on
+   this screen anyone is actually looking at.
+
+   The clamp is doubled with a static value first: a literal clamp() with no
+   prior declaration of the same property fails to PARSE on Chrome 53/webOS
+   2018 and is dropped outright (scripts/check-legacy-css.mjs rule b). */
+.pf-music__rail .pf-music__rec {
+  width: 168px;
+  width: clamp(150px, 11.5vw, 196px);
+  /* Explicit, and load-bearing. A collection card (MusicCollectionCard with
+     layout="rail") positions its download button `absolute; right: 8px`, and
+     with no positioned ancestor of its own that button resolved against
+     `.pf-music__rail-viewport` — landing in the corner of the WHOLE row, ~900px
+     from the album it belongs to. The scroll-driven `scale` below happens to
+     establish a containing block and hides the bug, but only where that
+     animation runs: Firefox, and anyone with reduced motion on, would still
+     get the stray button. Measured both ways before writing this line
+     (offsetParent: the card with the animation, the viewport without it). */
+  position: relative;
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  gap: 0.55rem;
+  /* `transform` is the hover lift's alone. The scroll-driven pass below uses
+     the independent `scale` property precisely so the two can coexist: a CSS
+     animation outranks a normal declaration in the cascade, so had both
+     written `transform`, the animation would have silently eaten the lift. */
+  transition: transform var(--pf-dur, 0.26s) var(--pf-ease);
+}
+
+.pf-music__rail .pf-music__rec:hover {
+  background: none;
+  transform: translateY(-6px);
+}
+
+/* An album/playlist card carries a download button pinned to its bottom-right.
+   Now that the button finally resolves against its own card (see `position`
+   above), it lands on top of the artist line — the tray's old 0.75rem padding
+   was the only thing that had been keeping them apart, back when the button was
+   mispositioned anyway. Reserve the strip instead of shrinking the artwork. */
+/* An album/playlist card now carries its tag and its controls on the artwork
+   (MusicCollectionCard, layout="rail"), so below the cover it holds exactly
+   what a song card holds: a title and a subtitle. Two lines, same height, one
+   straight baseline across the whole rail. The reserved bottom strip this rule
+   used to carry is gone with the thing it was reserving space for. */
+.pf-music__rail .pf-music__rec--coll {
+  gap: 0.55rem;
+}
+
+/* The kind tag, as a pill on the cover. Songs put their like in the top-left
+   corner and collections have no like, so the corner is free and the two never
+   meet. */
+.pf-music__rail .pf-music__rec--coll .pf-music__rec-kind {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: var(--pf-radius-pill, 999px);
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--pf-green-bright, #1ed760);
+}
+
+/* Controls in the bottom-right of the artwork. `--rail` was already
+   `absolute; right: 8px; bottom: 8px`; what changed is the containing block —
+   it now resolves against `.pf-music__rec-art`, which has been
+   `position: relative` all along. */
+.pf-music__rail .pf-music__coll-actions--rail {
+  z-index: 2;
+  /* Up to three controls (play, queue, download) on a 150px cover: 40px each
+     would run the full width of the artwork. */
+  gap: 0.3rem;
+  /* Revealed like the song card's play disc, so a cover stays a cover at rest.
+     Coarse pointers get them unconditionally further down — a control that only
+     exists on hover does not exist on a phone. */
+  opacity: 0;
+  transition: opacity var(--pf-dur-fast, 0.16s) var(--pf-ease);
+}
+
+.pf-music__rail .pf-music__rec:hover .pf-music__coll-actions--rail {
+  opacity: 1;
+}
+
+/* Split from the :hover rule above: Chrome 53/webOS 2018 drops an entire rule
+   when one selector in a comma list is unsupported (check-legacy-css rule c). */
+.pf-music__rail .pf-music__coll-actions--rail:focus-within {
+  opacity: 1;
+}
+
+.pf-music__rail .pf-music__coll-actions--rail .pf-music__play-icon {
+  width: 34px;
+  height: 34px;
+}
+
+/* `.pf-music__coll-btn` nudges itself down and to the start of a column layout,
+   which is right in the search list and wrong in a row of discs on artwork. */
+.pf-music__rail .pf-music__coll-btn {
+  margin-top: 0;
+  align-self: center;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .pf-music__rail .pf-music__coll-actions--rail {
+    opacity: 1;
+  }
+}
+
+.pf-music__rail .pf-music__rec-art {
+  border-radius: var(--pf-radius-md, 12px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  transition: box-shadow var(--pf-dur, 0.26s) var(--pf-ease);
+}
+
+/* The lift reads as depth only if the shadow answers it. */
+.pf-music__rail .pf-music__rec:hover .pf-music__rec-art {
+  box-shadow:
+    0 22px 46px rgba(0, 0, 0, 0.66),
+    0 0 0 1px rgba(30, 215, 96, 0.35);
+}
+
+/* Sounding right now. Until this existed the only mark of the playing track was
+   the ⏸ glyph on a disc that hover reveals — so on a still screen, nothing said
+   which of forty covers was the one making noise. A green ring does, from
+   across the room, without animation. */
+.pf-music__rail .pf-music__rec--active .pf-music__rec-art {
+  box-shadow:
+    0 12px 30px rgba(0, 0, 0, 0.55),
+    0 0 0 2px var(--pf-green-bright, #1ed760);
+}
+
+.pf-music__rail .pf-music__rec--active .pf-music__rec-title {
+  color: var(--pf-green-bright, #1ed760);
 }
 
 .pf-music__rec-art {
@@ -1440,10 +1701,30 @@
 /* Atmosphere, not decoration: the screen takes its colour from whatever is
    playing. Blurred past recognition and dimmed hard, so text over it never
    has to fight for contrast. */
+/* The frame that keeps the bleed off the scroll area, and the reason the whole
+   phone screen used to sit shifted sideways with the artwork cut off the left
+   edge. The wash below deliberately overflows every edge — a 56px blur needs
+   room or its own boundary shows as a hard line — but `.pf-fullplayer` is
+   `overflow-y: auto`, which per the CSS overflow spec drags the X axis to
+   `auto` as well, so that overflow became 83px of horizontal scroll on a 390px
+   viewport. Clipping it here is the fix at the source: `overflow-x: clip` on
+   the player cannot do it, because clip beside a scrolling axis computes to
+   `hidden`, and `hidden` still leaves the area programmatically scrollable —
+   one focused control off-screen and the page slides anyway.
+   `inset: 0` matches the player's padding box exactly, so this box adds no
+   overflow of its own. Same construction jam.css already uses for its -20%
+   wash (a parent with `overflow: hidden`); this is that pattern, applied where
+   it was missing. */
+.pf-fullplayer__washbox {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+}
+
 .pf-fullplayer__wash {
   position: absolute;
   inset: -12%;
-  z-index: -1;
   background-position: center;
   background-size: cover;
   filter: blur(56px) saturate(1.25) brightness(0.5);

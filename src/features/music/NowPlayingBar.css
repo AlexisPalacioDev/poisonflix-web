@@ -574,6 +574,14 @@
   padding: 1rem 1.5rem calc(1.75rem + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(180deg, #1f1a26 0%, #0c0c10 62%);
   animation: pf-fullplayer-slide 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  /* `overflow-y: auto` drags the X axis to `auto` too (CSS overflow spec: a
+     `visible` value beside a scrolling one computes to `auto`), which is what
+     turned a decorative bleed into 83px of sideways scroll on a 390px phone.
+     What actually fixes that is clipping the bleed at its source — see
+     `.pf-fullplayer__washbox` in music.css. This line is the belt beside those
+     braces, for whatever decorative element overflows here next.
+     It cannot be `clip`: beside a scrolling axis, clip computes to `hidden`. */
+  overflow-x: hidden;
   overflow-y: auto;
 }
 

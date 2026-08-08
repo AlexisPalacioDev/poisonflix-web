@@ -114,7 +114,7 @@ export function RecommendationsRow({
   if (!isLoading && items.length === 0) return null;
 
   return (
-    <section className="pf-music__section" aria-label={title}>
+    <section className="pf-music__section pf-music__section--rail" aria-label={title}>
       <h2 className="pf-music__heading">{title}</h2>
       {isLoading ? (
         <div className="pf-music__rail" aria-hidden="true">
@@ -159,7 +159,10 @@ export function RecommendationsRow({
               const title = result.title ?? 'Sin título';
               const active = isRowActive(current, { videoId: result.videoId, playItemId });
               return (
-                <div key={result.videoId} className="pf-music__rec">
+                <div
+                  key={result.videoId}
+                  className={`pf-music__rec${active ? ' pf-music__rec--active' : ''}`}
+                >
                   <div className="pf-music__rec-art">
                     <CoverImage src={result.thumbnailUrl} loading="lazy" />
                     {/* On the artwork, not under it. A like belongs to the

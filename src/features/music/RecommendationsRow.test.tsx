@@ -291,3 +291,115 @@ describe('RecommendationsRow — the play disc on a pointer that cannot hover', 
     expect(btn.matches(touchRule()?.selector ?? '')).toBe(true);
   });
 });
+
+// A rail is not a reading column. `.pf-music__section` caps at 760px for the
+// search *list*; the feed rails reused the class and inherited a cap meant for
+// text, so five covers showed on a screen that fits twelve and the sixth was
+// sliced at a hard edge. The modifier is what frees them, and nothing in the
+// DOM can assert a max-width jsdom never resolves — so ask the stylesheet.
+describe('RecommendationsRow — the rail runs the full width', () => {
+  const css = readFileSync(resolve(__dirname, 'music.css'), 'utf8');
+  const ruleBody = (selector: string) => {
+    const at = css.indexOf(`${selector} {`);
+    if (at === -1) return null;
+    const open = css.indexOf('{', at);
+    return css.slice(open + 1, css.indexOf('}', open));
+  };
+
+  it('marks the section as a rail rather than a reading column', () => {
+    const { container } = renderRow();
+    const section = container.querySelector('section') as HTMLElement;
+
+    expect(section.classList.contains('pf-music__section--rail')).toBe(true);
+  });
+
+  it('lifts the 760px reading cap off rail sections', () => {
+    expect(ruleBody('.pf-music__section--rail')).toContain('max-width: none');
+  });
+
+  it('moves the page gutter inside the scroller so covers scroll under the fade', () => {
+    const rail = ruleBody('.pf-music__rail') ?? '';
+
+    // Padding on the section would stop the covers at a border; padding on the
+    // scroller lets them pass beneath the mask, which is what says "there is
+    // more over there" instead of "the layout is broken".
+    expect(rail).toContain('padding: 20px var(--pf-gutter) 26px');
+    expect(rail).toContain('mask-image');
+    // Without this the first snap skips the gutter and the rail rests at
+    // scrollLeft ≈ gutter, showing a "scroll back" arrow over empty space.
+    expect(rail).toContain('scroll-padding-inline');
+  });
+});
+
+// Albums and playlists ride the same feed as songs (MusicResultItem is a union
+// discriminated on `type`), and RecommendationsRow mounts MusicCollectionCard
+// with layout="rail" for them — a branch that had no test at all, which is how
+// its download button spent who knows how long anchored to the wrong element.
+describe('RecommendationsRow — collection cards on the rail', () => {
+  const css = readFileSync(resolve(__dirname, 'music.css'), 'utf8');
+
+  const album: MusicResultItem = {
+    type: 'album' as const,
+    browseId: 'MPREb_test',
+    title: 'Un álbum',
+    artist: 'Una artista',
+    thumbnailUrl: 'https://x/album.jpg',
+  };
+
+  it('renders an album as a card on the rail, not as a list row', () => {
+    const { container } = renderRow({ items: [album] });
+
+    const card = container.querySelector('.pf-music__rail .pf-music__rec--coll');
+    expect(card, 'the album never reached the rail as a collection card').not.toBeNull();
+    expect(container.querySelector('.pf-music__row--coll')).toBeNull();
+  });
+
+  it('anchors the download button to its own card, not to the whole row', () => {
+    // `.pf-music__coll-actions--rail` is `position: absolute; right: 8px`. With
+    // no positioned ancestor it resolved against `.pf-music__rail-viewport` and
+    // landed in the corner of the entire row, ~900px from its album. The
+    // scroll-driven `scale` masks this by establishing a containing block, but
+    // only where that animation runs — Firefox and reduced-motion users would
+    // still get the stray button. So the card states it outright.
+    const at = css.indexOf('.pf-music__rail .pf-music__rec {');
+    const body = css.slice(at, css.indexOf('}', at));
+
+    expect(body).toContain('position: relative');
+  });
+
+  it('puts the controls on the artwork, where they cannot land on the text', () => {
+    // They used to sit below the subtitle, pinned bottom-right, which put them
+    // on top of the artist line the moment the card lost its tray. On the cover
+    // they have somewhere to belong — same place a song card's play disc goes.
+    const { container } = renderRow({ items: [album] });
+
+    const art = container.querySelector('.pf-music__rec--coll .pf-music__rec-art');
+    expect(art?.querySelector('.pf-music__coll-actions--rail')).not.toBeNull();
+    expect(art?.querySelector('.pf-music__rec-kind')).not.toBeNull();
+  });
+
+  it('leaves a collection card the same height as the songs beside it', () => {
+    // Below the cover a collection must hold what a song holds: title and
+    // subtitle, nothing else. The kind tag moved onto the artwork precisely
+    // because a third line made this one card taller than the whole rail.
+    const { container } = renderRow({ items: [album] });
+    const card = container.querySelector('.pf-music__rec--coll') as HTMLElement;
+
+    const belowCover = Array.from(card.children).filter(
+      (el) => !el.classList.contains('pf-music__rec-art'),
+    );
+    expect(belowCover.map((el) => el.className)).toEqual([
+      'pf-music__rec-title',
+      'pf-music__rec-sub',
+    ]);
+  });
+
+  it('reveals the controls without hover on coarse pointers', () => {
+    // Same lesson the play disc already cost this codebase once: a control
+    // revealed by :hover does not exist on a phone.
+    const rule = ruleInMedia(css, COARSE_POINTER, '.pf-music__coll-actions--rail');
+
+    expect(rule, 'no coarse-pointer rule makes the collection controls visible').not.toBeNull();
+    expect(rule?.declarations).toMatch(/opacity:\s*1\s*;/);
+  });
+});
