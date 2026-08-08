@@ -120,13 +120,12 @@ afterEach(() => {
 });
 
 describe('MusicPlayerProvider — MediaSession integration', () => {
-  it('registers the play/pause/next/prev/stop (and seekto) action handlers on mount', () => {
+  it('registers the play/pause/next/prev (and seekto) action handlers on mount', () => {
     renderProvider();
     expect(typeof handlers.play).toBe('function');
     expect(typeof handlers.pause).toBe('function');
     expect(typeof handlers.nexttrack).toBe('function');
     expect(typeof handlers.previoustrack).toBe('function');
-    expect(typeof handlers.stop).toBe('function');
     expect(typeof handlers.seekto).toBe('function');
   });
 
@@ -139,14 +138,24 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
     expect(handlers.seekforward).toBeUndefined();
   });
 
-  it('the stop handler pauses playback', () => {
+  it('never hands the OS a stop handler, because that is what let it stop us', () => {
+    // This test used to assert the opposite (43e1a32), then got reverted back
+    // to asserting `stop` IS registered (f79cb82) on the theory that the
+    // owner had been testing in a private/incognito tab. He has since
+    // confirmed he was not — the revert's premise was false. The device
+    // traces from useLockDiagnostics back that up: playback dies 50-180s
+    // after screen lock, right after two `stalled` events, which is a
+    // buffering pattern, not a private-tab artifact.
+    //
+    // Registering `stop` gives the system permission to end playback: it is
+    // invoked when the media notification is dismissed or the app is
+    // backgrounded, which is what locking the screen does. A missing
+    // lock-screen button is a smaller loss than a pause nobody asked for.
     renderProvider();
     act(() => api.playNow([track], 0));
+
+    expect(handlers.stop).toBeUndefined();
     expect(api.isPlaying).toBe(true);
-
-    act(() => handlers.stop?.({}));
-
-    expect(api.isPlaying).toBe(false);
   });
 
   it('publishes the current track metadata (title / artist / artwork) when a track plays', () => {
@@ -201,7 +210,6 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
     unmount();
     expect(handlers.play).toBeNull();
     expect(handlers.nexttrack).toBeNull();
-    expect(handlers.stop).toBeNull();
   });
 });
 
@@ -237,18 +245,30 @@ describe('MusicPlayerProvider — setPositionState honesty (Task 3)', () => {
     );
   });
 
-  it('reports playbackRate 0 immediately on a stall (waiting), without waiting for the buffering settle window', () => {
+  it('does NOT report a stopped playhead while merely buffering', () => {
+    // This asserted the opposite (43e1a32 reverted by f79cb82, on the false
+    // premise the owner was testing in a private/incognito tab — he has
+    // confirmed he was not). `playbackRate: 0` tells the OS the session is
+    // not playing; `waiting`/`stalled` mean bytes are late, not that
+    // playback ended — and a phone that has just locked throttles the
+    // network, so those events fire exactly then. The device traces show
+    // playback dying 50-180s after lock, right after two `stalled` events,
+    // which matches this exactly.
+    //
+    // The cost of this is a lock-screen scrubber that creeps for a second
+    // while buffering. That is worth paying.
     renderProvider();
     act(() => api.playNow([durationTrack], 0));
     const audio = document.querySelector('audio') as HTMLAudioElement;
     Object.defineProperty(audio, 'duration', { configurable: true, value: 180 });
-    audio.currentTime = 10;
+    audio.currentTime = 42;
     setPositionState.mockClear();
 
-    act(() => fireEvent.waiting(audio));
+    act(() => fireEvent(audio, new Event('waiting')));
+    act(() => fireEvent(audio, new Event('stalled')));
 
-    expect(setPositionState).toHaveBeenCalledWith(
-      expect.objectContaining({ duration: 180, position: 10, playbackRate: 0 }),
+    expect(setPositionState).not.toHaveBeenCalledWith(
+      expect.objectContaining({ playbackRate: 0 }),
     );
   });
 

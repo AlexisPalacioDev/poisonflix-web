@@ -49,6 +49,14 @@ export function useLockDiagnostics(audioRef: { current: HTMLAudioElement | null 
         hidden: document.visibilityState === 'hidden',
         ready: audio.readyState,
         rate: audio.playbackRate,
+        // What the OS itself believes about the session — 'none' | 'paused' |
+        // 'playing'. This is the piece the earlier traces lacked: they showed
+        // the element's own state but not whether the lock screen agreed with
+        // it, which is exactly the gap that let a false "incognito" theory
+        // stand in for a measurement. Not every browser exposes
+        // `mediaSession`, and jsdom (tests) does not either.
+        mediaSessionState:
+          'mediaSession' in navigator ? navigator.mediaSession.playbackState : undefined,
       });
       if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
     };

@@ -1213,9 +1213,18 @@ const server = createServer(async (req, res) => {
       const detail = {
         message: body?.message ?? null,
         detail: body?.detail ?? null,
+        // The client sends `build` (see src/lib/obs/report.ts) specifically so
+        // a report can be traced back to the code that produced it — dropping
+        // it here defeated that purpose entirely.
+        build: body?.build ?? null,
         ua: String(req.headers['user-agent'] || '').slice(0, 120),
       };
-      logError('client', scope, detail); // stdout — greppable via `docker logs poisonflix-bff | grep '"scope":"client"'`
+      // `logError`'s signature is (scope, err, detail): the previous call passed
+      // the literal string 'client' as scope and the real scope (e.g.
+      // "music.lock.trace") as `err`, so every client report collapsed under
+      // scope "client" in stdout and the call site that actually fired was
+      // lost. `err` is now the client's own message, and `scope` survives.
+      logError(scope, detail.message ?? 'client error', detail); // stdout — greppable via `docker logs poisonflix-bff | grep '"scope":"music.lock.trace"'`
       // Fire-and-forget: `persistClientLog` never throws/rejects, and a public
       // diagnostics endpoint must not make the caller wait on disk I/O.
       void persistClientLog({ at: new Date().toISOString(), scope, ...detail });

@@ -457,6 +457,19 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
+    // `stop` is deliberately NOT registered: handing the OS a stop handler is
+    // what lets it stop us. It is invoked when the media notification is
+    // dismissed or the app is backgrounded — which is what locking the screen
+    // does. A missing lock-screen button is a smaller loss than a pause nobody
+    // asked for.
+    //
+    // This was removed once (43e1a32), then reinstated by a revert (f79cb82)
+    // on the theory that the owner had been testing in a private/incognito
+    // tab. The owner has since confirmed otherwise. The device traces from
+    // `useLockDiagnostics` back that up too: playback dies 50-180s after
+    // screen lock, right after two `stalled` events — a buffering pattern,
+    // not a private-tab artifact. The original fix is restored here.
+    //
     // `seekbackward`/`seekforward` are deliberately NOT registered: iOS gives
     // them priority over `nexttrack`/`previoustrack` and shows ±10s buttons on
     // the lock screen instead of next/prev — the exact bug this fixes (a
@@ -467,7 +480,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       ['pause', () => mediaActionsRef.current.pause()],
       ['previoustrack', () => mediaActionsRef.current.prev()],
       ['nexttrack', () => mediaActionsRef.current.next()],
-      ['stop', () => mediaActionsRef.current.stop()],
       [
         'seekto',
         (details) => {
@@ -788,15 +800,21 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
         }}
         onWaiting={() => {
+          // Buffering is NOT stopping. `publishFrozenPosition` reports
+          // `playbackRate: 0`, which tells the OS the session is not
+          // playing — and a phone that has just locked throttles the
+          // network, so `waiting`/`stalled` fire exactly then, not on a
+          // real stop. This call was added (43e1a32) and then reverted
+          // (f79cb82) on the theory that the owner was testing in a
+          // private/incognito tab; he has since confirmed he was not, and
+          // the device traces show playback dying 50-180s after lock, right
+          // after two `stalled` events — buffering, not incognito. Removed
+          // again for good. The cost is a lock-screen scrubber that creeps
+          // for a second while buffering, which is worth paying.
           armBufferingTimer();
-          // A stall means the OS is about to start interpolating position from
-          // a value that has genuinely stopped moving — freeze it immediately
-          // rather than waiting for the (separate, UI-only) settle window.
-          publishFrozenPosition();
         }}
         onStalled={() => {
           armBufferingTimer();
-          publishFrozenPosition();
         }}
         onCanPlay={clearBuffering}
         onError={(e) => {
