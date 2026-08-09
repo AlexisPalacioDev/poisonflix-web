@@ -1004,6 +1004,23 @@ _STREAM_UA = (
 )
 
 
+# Dedupe concurrent resolves of the same videoId. Measured on this server
+# with the EXACT command below (`yt-dlp -g ...`): 2324ms, almost the entire
+# cost of a cold first play (see the warm-cache comments further down) —
+# ffmpeg's remux is noise by comparison. Two overlapping resolves for the
+# same track — a background /warm(url) racing the real play it was meant to
+# speed up, or two /warm calls landing together — used to each pay that cost
+# in full for the identical answer. Same dict+lock shape as
+# repair_liked_metadata's `_repair_inflight`, but the second caller here
+# needs the RESULT rather than just a "someone's already on it", so it waits
+# on a threading.Event instead of returning immediately.
+_resolve_inflight = {}  # videoId -> threading.Event, set() when the resolve finishes
+_resolve_inflight_lock = threading.Lock()
+# Comfortably above yt-dlp's own subprocess timeout (30s, below) so a waiter
+# only gives up after the owner itself would already have given up.
+_RESOLVE_WAIT_TIMEOUT_S = 35.0
+
+
 def _resolve_stream_url(video_id, source="auto", force=False):
     """Resolve a directly-playable googlevideo audio URL for a videoId via yt-dlp,
     cached (STREAM_URL_TTL). Prefers AAC (avoids the transcode in
@@ -1025,42 +1042,76 @@ def _resolve_stream_url(video_id, source="auto", force=False):
     not be reproduced live — the selector is hardened defensively, but the
     transcode path (with its own fast-coder + proportional-timeout fix, see
     below) remains the real safety net for whatever videos DO lack an AAC
-    format."""
+    format.
+
+    Concurrent callers for the same videoId dedupe against `_resolve_inflight`
+    (see above): the first one through does the actual subprocess, the rest
+    wait on its Event and reuse the cached result — see the CRITICAL note on
+    warming for why a real play must reuse an in-flight warm's answer rather
+    than starting (and paying for) its own."""
     now = time.monotonic()
     if not force:
         with _stream_lock:
             cached = _stream_cache.get(video_id)
             if cached and cached[1] > now:
                 return cached[0]
-    watch = (
-        f"https://music.youtube.com/watch?v={video_id}"
-        if source == "ytmusic"
-        else f"https://www.youtube.com/watch?v={video_id}"
-    )
+
+    owns_resolve, event = True, None
+    if not force:
+        with _resolve_inflight_lock:
+            event = _resolve_inflight.get(video_id)
+            if event is None:
+                event = threading.Event()
+                _resolve_inflight[video_id] = event
+            else:
+                owns_resolve = False
+
+    if not owns_resolve:
+        if event.wait(_RESOLVE_WAIT_TIMEOUT_S):
+            with _stream_lock:
+                cached = _stream_cache.get(video_id)
+                if cached and cached[1] > time.monotonic():
+                    return cached[0]
+            return None  # the owner's resolve finished but failed
+        # The owner is stuck past its own 30s subprocess timeout below, which
+        # should not happen in practice. Fall through and resolve
+        # independently rather than hang this caller forever.
+
     try:
-        proc = subprocess.run(
-            [
-                "yt-dlp",
-                "-f",
-                "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/bestaudio",
-                "-g",
-                "--no-playlist",
-                "--no-warnings",
-                watch,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
+        watch = (
+            f"https://music.youtube.com/watch?v={video_id}"
+            if source == "ytmusic"
+            else f"https://www.youtube.com/watch?v={video_id}"
         )
-    except subprocess.SubprocessError:
-        return None
-    lines = (proc.stdout or "").strip().splitlines()
-    url = lines[0].strip() if lines else None
-    if not url:
-        return None
-    with _stream_lock:
-        _stream_cache[video_id] = (url, now + STREAM_URL_TTL)
-    return url
+        try:
+            proc = subprocess.run(
+                [
+                    "yt-dlp",
+                    "-f",
+                    "bestaudio[acodec^=mp4a]/bestaudio[ext=m4a]/bestaudio",
+                    "-g",
+                    "--no-playlist",
+                    "--no-warnings",
+                    watch,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.SubprocessError:
+            return None
+        lines = (proc.stdout or "").strip().splitlines()
+        url = lines[0].strip() if lines else None
+        if not url:
+            return None
+        with _stream_lock:
+            _stream_cache[video_id] = (url, now + STREAM_URL_TTL)
+        return url
+    finally:
+        if owns_resolve and event is not None:
+            with _resolve_inflight_lock:
+                _resolve_inflight.pop(video_id, None)
+            event.set()
 
 
 # --- Progressive remux cache ------------------------------------------------
@@ -1437,6 +1488,63 @@ _chunk_pool = concurrent.futures.ThreadPoolExecutor(
     max_workers=_CHUNK_POOL_WORKERS, thread_name_prefix="chunkfetch"
 )
 
+# --- POST /warm ---------------------------------------------------------
+# Cache warming (see Handler._warm) is SPECULATIVE work for a track that may
+# never play. This pool does NOT isolate it from a real play's CPU, disk, or
+# googlevideo connections — a warm's ffmpeg and a real play's ffmpeg share the
+# same cores and the same disk, same as any two OS processes would. What it
+# DOES guarantee is a hard concurrency cap: the server has already gone down
+# once under load, so at most _WARM_POOL_WORKERS (2) warm jobs can ever be
+# in flight at once, no matter how large a burst of warm requests arrives.
+# A tiny, dedicated pool — NOT _chunk_pool above, which exists specifically
+# for a real play's own parallel Range fetches — runs the ORCHESTRATING
+# thread for each warm job (the resolve-only call for depth="url", or the
+# top-level _build_stream_cache call for depth="full"), so a burst of warm
+# requests queues behind those two workers instead of spawning unboundedly
+# on top of real playback traffic.
+_WARM_POOL_WORKERS = 2
+_warm_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_WARM_POOL_WORKERS, thread_name_prefix="warm"
+)
+
+# A depth="full" warm's ACTUAL download still happens in bounded Range chunks
+# (see _download_chunked) — the orchestrating thread above blocks on that
+# download, it doesn't do it itself. Left to its default, that download would
+# submit into _chunk_pool, the pool a real play's own chunk fetches use —
+# queuing speculative warm chunks behind (or ahead of) a real play's own,
+# the exact pool-slot contention this section exists to cap. It
+# cannot submit into _warm_pool above either: two orchestrating threads each
+# blocked inside a 4-way chunk fetch on the SAME 2-worker pool would starve
+# every chunk task of a free worker and hang forever. So a full warm's chunk
+# fetches get their OWN small pool, independent of both.
+_WARM_CHUNK_POOL_WORKERS = 4
+_warm_chunk_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_WARM_CHUNK_POOL_WORKERS, thread_name_prefix="warmchunkfetch"
+)
+
+# Which (videoId, depth) pairs are currently being warmed. POST /warm never
+# blocks (see the handler), so a second request for a pair already in flight
+# must not queue a duplicate job — it just reports "already warming". Same
+# dict+lock shape as repair_liked_metadata's `_repair_inflight`: nothing ever
+# WAITS on one of these entries (POST /warm must not block, and a real play
+# waits on `_resolve_inflight`'s Event instead — see above), so a bare marker
+# is enough; no threading.Event needed here.
+#
+# Bounded, like every other unbounded-looking tracking dict in this file
+# (_remux_locks caps at 500, _transcode_timeout_counts likewise) — see
+# _WARM_MAX_INFLIGHT below for why an unbounded version of this one is worse
+# than most: it is client-triggered, keyed by arbitrary videoIds, and backs a
+# real subprocess/ffmpeg queue on a box that has already gone down once.
+_warm_inflight = {}  # (video_id, depth) -> True while the job is queued or running
+_warm_inflight_lock = threading.Lock()
+# A generous cap given _WARM_POOL_WORKERS=2 and _WARM_CHUNK_POOL_WORKERS=4:
+# realistically only the next couple of queued tracks ever need warming at
+# once. Past this many distinct (videoId, depth) pairs pending or running,
+# warming is speculative enough that refusing the extra request — the client
+# still plays fine, just without the head start — beats letting a buggy or
+# abusive client grow an unbounded yt-dlp/ffmpeg backlog.
+_WARM_MAX_INFLIGHT = 24
+
 
 def _range_get(url, start, end, cap=None):
     """One bounded Range read. Returns (body, total).
@@ -1470,18 +1578,39 @@ def _range_get(url, start, end, cap=None):
         return bytes(body), total
 
 
-def _fetch_upstream_to(video_id, source, dest):
-    """Download the complete upstream audio to `dest`. Returns True on success."""
+def _fetch_upstream_to(video_id, source, dest, timing=None, chunk_pool=None):
+    """Download the complete upstream audio to `dest`. Returns True on success.
+
+    `timing`, when given a dict, gets 'resolve' and 'download' seconds added
+    into it as they happen — additive so a 403/410 retry's second resolve
+    counts too. This is optional and additive-only specifically so the tests
+    (and any other caller) that replace this function wholesale, or that
+    don't care about timing, are unaffected by the extra parameter.
+
+    The two used to be folded into a single 'fetch=' number in the build log
+    (see _build_stream_cache), which is exactly what hid that yt-dlp's
+    resolve alone costs ~2.3s (measured on this server with the exact
+    command _resolve_stream_url runs) while the download that follows it is
+    comparatively free — see the module-level warm-cache comments.
+
+    `chunk_pool`, when given, is forwarded to `_download_chunked` instead of
+    the default `_chunk_pool` — see `_warm_chunk_pool` above for why a
+    depth="full" warm must not fetch its chunks through the same pool a real
+    play uses."""
     # Only an EXPIRED URL is worth a second attempt: re-resolving costs another
     # ~1-2s yt-dlp subprocess, and it cannot repair a deterministic failure (an
     # oversized track, an unbounded first chunk). Those fall straight through to
     # the proxy instead of paying the resolve twice on every play.
     for attempt in range(2):
+        t_resolve = time.monotonic()
         url = _resolve_stream_url(video_id, source, force=(attempt == 1))
+        if timing is not None:
+            timing["resolve"] = timing.get("resolve", 0.0) + (time.monotonic() - t_resolve)
         if not url:
             return False
+        t_download = time.monotonic()
         try:
-            return _download_chunked(url, dest)
+            return _download_chunked(url, dest, chunk_pool=chunk_pool)
         except urllib.error.HTTPError as exc:
             if exc.code in (403, 410) and attempt == 0:
                 continue  # expired signed URL — re-resolve and retry
@@ -1491,10 +1620,13 @@ def _fetch_upstream_to(video_id, source, dest):
             # upstream raises and which is NOT an OSError — uncaught, it would
             # kill the request thread instead of falling back to the proxy.
             return False
+        finally:
+            if timing is not None:
+                timing["download"] = timing.get("download", 0.0) + (time.monotonic() - t_download)
     return False
 
 
-def _download_chunked(url, dest):
+def _download_chunked(url, dest, chunk_pool=None):
     """Write the complete resource at `url` into `dest` via bounded Range chunks.
 
     Returns True ONLY when every byte landed. Every other outcome — an empty
@@ -1502,7 +1634,13 @@ def _download_chunked(url, dest):
     a chunk short — returns False and leaves `dest` to the caller to discard.
     A partial file must never be reported as success: it would be remuxed and
     cached as a truncated track.
+
+    `chunk_pool` defaults to the shared `_chunk_pool` (real plays). A
+    depth="full" warm passes `_warm_chunk_pool` instead — see that pool's
+    comment for why sharing either `_chunk_pool` or `_warm_pool` would be
+    wrong for speculative work.
     """
+    pool = chunk_pool if chunk_pool is not None else _chunk_pool
     first, total = _range_get(url, 0, _CHUNK_BYTES - 1, cap=STREAM_FETCH_MAX_BYTES)
     if not first:
         return False
@@ -1528,7 +1666,7 @@ def _download_chunked(url, dest):
                     break
                 starts.append(start)
             bodies = list(
-                _chunk_pool.map(
+                pool.map(
                     lambda s: _range_get(s[0], s[1], min(s[1] + _CHUNK_BYTES, total) - 1)[0],
                     [(url, start) for start in starts],
                 )
@@ -1549,10 +1687,16 @@ def _download_chunked(url, dest):
         return offset >= total
 
 
-def _build_stream_cache(video_id, source):
+def _build_stream_cache(video_id, source, chunk_pool=None):
     """Fetch + remux to a progressive MP4 at the cache path. Returns the path,
     or None if any step failed OR the result failed ffprobe validation — the
-    caller then fails the track outright (see server.Handler._stream)."""
+    caller then fails the track outright (see server.Handler._stream).
+
+    `chunk_pool` is forwarded to `_fetch_upstream_to` / `_download_chunked`.
+    A real play (Handler._stream) leaves it at the default `_chunk_pool`; a
+    depth="full" warm (Handler._warm) passes `_warm_chunk_pool` so it never
+    competes with a real play's own chunk fetches — see that pool's comment.
+    """
     final = _stream_cache_path(video_id)
     lock = _remux_lock_for(video_id)
     with lock:
@@ -1561,9 +1705,9 @@ def _build_stream_cache(video_id, source):
         os.makedirs(STREAM_CACHE_DIR, exist_ok=True)
         raw = f"{final}.raw.{uuid.uuid4().hex}"
         out = f"{final}.out.{uuid.uuid4().hex}"
-        t0 = time.monotonic()
+        timing = {}
         try:
-            if not _fetch_upstream_to(video_id, source, raw):
+            if not _fetch_upstream_to(video_id, source, raw, timing, chunk_pool=chunk_pool):
                 print(f"[stream] fetch failed for {video_id}", flush=True)
                 return None
             t_fetch = time.monotonic()
@@ -1650,11 +1794,17 @@ def _build_stream_cache(video_id, source):
             _clear_transcode_timeout(video_id)
             # Timings on every build: this path has a latency budget the user can
             # feel (it runs before the first byte of audio), and the throttle it
-            # works around is invisible from anywhere else.
+            # works around is invisible from anywhere else. resolve/download used
+            # to be folded into one 'fetch=' number, which is exactly what hid
+            # that the yt-dlp resolve alone (2324ms, measured with the exact
+            # command _resolve_stream_url runs) is almost the whole cost and the
+            # download that follows it is comparatively free.
             print(
                 f"[stream] built {video_id} bytes={os.path.getsize(final)} "
                 f"content_type={content_type} "
-                f"fetch={t_fetch - t0:.2f}s remux={time.monotonic() - t_fetch:.2f}s",
+                f"resolve={timing.get('resolve', 0.0):.2f}s "
+                f"download={timing.get('download', 0.0):.2f}s "
+                f"remux={time.monotonic() - t_fetch:.2f}s",
                 flush=True,
             )
         except OSError:
@@ -2768,12 +2918,17 @@ class Handler(BaseHTTPRequestHandler):
         return (self.headers.get("X-PF-User") or "").strip() or None
 
     def _send(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
+        # 204 No Content must not carry a body per HTTP semantics — the first
+        # caller of this with status=204 is POST /warm's "already warm"
+        # response, so this is the first time that ever mattered here.
+        body = b"" if status == 204 else json.dumps(payload).encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        if body:
+            self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if body:
+            self.wfile.write(body)
 
     def _serve_cached_stream(self, path, range_header):
         """Serve a locally cached progressive MP4, honouring a single byte Range.
@@ -2908,6 +3063,86 @@ class Handler(BaseHTTPRequestHandler):
         # docstring above for why that used to make things worse, not better.
         print(f"[stream] no playable cache for {video_id}, failing the track", flush=True)
         return self._send(502, {"error": "remux_failed", "videoId": video_id})
+
+    def _warm(self, payload):
+        """POST /warm — best-effort cache warming ahead of a play that may
+        never happen. NEVER blocks: the actual work (if any) is handed to
+        `_warm_pool` and this always answers immediately.
+
+        depth="url": only `_resolve_stream_url` — one subprocess, no
+        download, no disk write. Measured at 2324ms on this server, which is
+        ~85% of a cold first play's 2.76s TTFB (the remaining fetch+remux is
+        comparatively cheap), so this alone removes most of the wait for a
+        track that MIGHT play next.
+
+        depth="full": the complete `_build_stream_cache`, identical to what a
+        real play would do. Far more expensive (network fetch + ffmpeg), so
+        this is for a track that is very likely to play next — see the small,
+        separate `_warm_pool` above for why this must never crowd out an
+        actual play.
+        """
+        video_id = (payload.get("videoId") or "").strip()
+        source = (payload.get("source") or "auto").strip().lower()
+        depth = (payload.get("depth") or "").strip().lower()
+        if not video_id or not _VIDEO_ID_RE.match(video_id):
+            return self._send(400, {"error": "invalid videoId"})
+        if source not in ("auto", "ytmusic", "youtube"):
+            return self._send(400, {"error": "invalid source"})
+        if depth not in ("url", "full"):
+            return self._send(400, {"error": "invalid depth"})
+
+        if depth == "url":
+            with _stream_lock:
+                cached = _stream_cache.get(video_id)
+            if cached and cached[1] > time.monotonic():
+                return self._send(204, None)  # already warm, nothing to do
+        else:
+            path = _stream_cache_path(video_id)
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                return self._send(204, None)  # already warm, nothing to do
+
+        key = (video_id, depth)
+        with _warm_inflight_lock:
+            if key in _warm_inflight:
+                return self._send(202, {"status": "warming"})
+            if len(_warm_inflight) >= _WARM_MAX_INFLIGHT:
+                # Backpressure: warming is best-effort, so under a backlog the
+                # right answer is to silently skip this one rather than grow
+                # an unbounded yt-dlp/ffmpeg queue — see _WARM_MAX_INFLIGHT.
+                # The client gets the same 202 either way: it was never
+                # promised warming actually happened, only that a real play
+                # will still work (just without the head start).
+                print(
+                    f"[warm] backlog full ({len(_warm_inflight)} pending), "
+                    f"skipping {depth} warm for {video_id}",
+                    flush=True,
+                )
+                return self._send(202, {"status": "warming"})
+            _warm_inflight[key] = True
+
+        def run():
+            try:
+                if depth == "url":
+                    _resolve_stream_url(video_id, source)
+                else:
+                    _build_stream_cache(video_id, source, chunk_pool=_warm_chunk_pool)
+            except Exception as exc:  # noqa: BLE001 — warming must never crash the pool
+                print(f"[warm] {depth} warm raised for {video_id}: {exc!r}", flush=True)
+            finally:
+                with _warm_inflight_lock:
+                    _warm_inflight.pop(key, None)
+
+        try:
+            _warm_pool.submit(run)
+        except Exception as exc:  # noqa: BLE001 — e.g. pool rejected under shutdown/thread pressure
+            # `run` never got scheduled, so its own cleanup never runs either
+            # — without this, `key` would stay in _warm_inflight FOREVER and
+            # that (videoId, depth) could never be warmed again for the life
+            # of the process.
+            print(f"[warm] failed to submit {depth} warm for {video_id}: {exc!r}", flush=True)
+            with _warm_inflight_lock:
+                _warm_inflight.pop(key, None)
+        return self._send(202, {"status": "warming"})
 
     def log_message(self, *args):  # quieter default logging
         pass
@@ -3051,7 +3286,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path not in ("/downloads", "/playlists", "/ratings", "/plays"):
+        if parsed.path not in ("/downloads", "/playlists", "/ratings", "/plays", "/warm"):
             return self._send(404, {"error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -3060,6 +3295,9 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw or b"{}")
         except ValueError:
             return self._send(400, {"error": "invalid_json"})
+
+        if parsed.path == "/warm":
+            return self._warm(payload)
 
         if parsed.path == "/ratings":
             video_id = (payload.get("videoId") or "").strip()

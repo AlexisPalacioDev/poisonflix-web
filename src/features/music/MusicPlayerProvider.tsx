@@ -9,10 +9,12 @@ import {
 } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/musicPrefs';
+import { streamUrlSource } from '../../lib/domain/musicTrack';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { useLockDiagnostics } from './useLockDiagnostics';
 import { jamDestination } from '../jam/destination';
 import { addTracksToJam } from '../../api/jam';
+import { warmMusicTrack } from '../../api/music';
 import { reportFailure } from '../../lib/obs/report';
 import {
   BUFFERING_SETTLE_MS,
@@ -113,6 +115,15 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
 
   const currentIndex = currentIndexOf(state);
   const current = currentIndex >= 0 ? (state.queue[currentIndex] ?? null) : null;
+
+  // The track immediately after `current` in play order — where autoplay
+  // (NEXT / `advanceFromMediaEvent`) goes next. Drives the speculative
+  // full-depth warm below, so it needs the same `order`/`pos` indirection
+  // `currentIndexOf` uses rather than a plain `currentIndex + 1` (shuffle
+  // means queue order and play order aren't the same thing).
+  const nextIndex =
+    state.pos >= 0 && state.pos + 1 < state.order.length ? state.order[state.pos + 1] : -1;
+  const nextTrack = nextIndex >= 0 ? (state.queue[nextIndex] ?? null) : null;
 
   const currentItemId = current?.itemId ?? null;
   // Read inside the error handler, which must not re-create on every track.
@@ -239,6 +250,31 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     audio.load();
     // `isPlaying` is intentionally not a dep — the play/pause effect below owns it.
   }, [currentSrc]);
+
+  // Warm the worker's cache for the *next* queue track at full depth
+  // (download + ffmpeg, not just the URL resolve) the moment the current
+  // track is actually playing — it eliminates the gap between songs that a
+  // 'url'-only warm can't (see `warmMusicTrack`'s docstring for the depth
+  // tradeoff). Restricted to a track that isn't in the library yet (it has a
+  // `streamUrl`): a downloaded track plays straight from Jellyfin and never
+  // touches the worker at all, so warming it would be a no-op request. Only
+  // ever one track ahead — the production worker has already fallen over
+  // once under load, and this is speculative work for a track that hasn't
+  // been requested yet.
+  useEffect(() => {
+    if (!state.isPlaying) return;
+    if (!nextTrack?.videoId || !nextTrack.streamUrl) return;
+    // The queue never learned which surface this preview's videoId came
+    // from — only its already-built stream URL. But that URL isn't source-
+    // blind: `previewStreamUrl` embeds the real source as its own `source`
+    // query param, and `streamUrlSource` reads it back out. Sending the
+    // actual source (rather than always 'auto') matters because the
+    // worker's resolved-URL cache (`_stream_cache`) is keyed on videoId
+    // alone — a warm that lies about the source can seed that cache via the
+    // wrong branch, and the real play would then silently reuse the wrong
+    // answer instead of resolving its own.
+    warmMusicTrack(nextTrack.videoId, streamUrlSource(nextTrack.streamUrl), 'full');
+  }, [state.isPlaying, nextTrack?.videoId, nextTrack?.streamUrl]);
 
   // Reflect the isPlaying flag onto the element. A rejected play() while the
   // element is still locked (autoplay policy, no src) flips the flag back so the

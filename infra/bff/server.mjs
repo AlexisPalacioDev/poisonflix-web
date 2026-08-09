@@ -82,6 +82,13 @@ const CLIENT_LOG_MAX_ENTRY_BYTES = 4_000;
 // including routes that never touch Jellyseerr.
 const AUTH_TIMEOUT_MS = 5_000;
 const UPSTREAM_TIMEOUT_MS = 20_000;
+// POST /bff/music/warm never has real work to wait for: the worker's /warm
+// handler registers the job (or dedupes against one already running) and
+// answers immediately, handing the actual resolve/build off to its own
+// background pool. A generic 20s budget would let a wedged worker make the
+// warm call — which the client fires speculatively, not on the critical
+// path of playback — stall for as long as any other route.
+const WARM_TIMEOUT_MS = 3_000;
 
 // Jellyseerr permission bitfield: ADMIN grants everything and is bit 2.
 const PERMISSION_ADMIN = 2;
@@ -788,6 +795,11 @@ async function handleMusic(req, res, subPath, search, user) {
   // Preview listening tally. Previews have no Jellyfin item to bump a
   // PlayCount on, so the worker keeps the count keyed by videoId instead.
   const isPlays = subPath === '/plays';
+  // Cache warming: ask the worker to get a track ready (resolve its stream
+  // URL, or build the whole progressive-remux file) BEFORE it is actually
+  // requested. Fire-and-forget by contract — see the dedicated short timeout
+  // below instead of the generic UPSTREAM_TIMEOUT_MS.
+  const isWarm = subPath === '/warm';
 
   let ok = false;
   if (
@@ -806,7 +818,7 @@ async function handleMusic(req, res, subPath, search, user) {
   }
   if (
     method === 'POST' &&
-    (isDownloadsCollection || isPlaylistsCollection || isRatings || isPlays)
+    (isDownloadsCollection || isPlaylistsCollection || isRatings || isPlays || isWarm)
   ) {
     ok = true;
   }
@@ -841,7 +853,10 @@ async function handleMusic(req, res, subPath, search, user) {
       // INCLUDING reading the body, so a total timeout would cut playback off
       // mid-track — a track outlasts any sane request budget. The stream path is
       // protected instead by the pipeline error handling below.
-      signal: isStream ? undefined : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      // /warm gets its own much shorter budget: see WARM_TIMEOUT_MS above.
+      signal: isStream
+        ? undefined
+        : AbortSignal.timeout(isWarm ? WARM_TIMEOUT_MS : UPSTREAM_TIMEOUT_MS),
     });
   } catch {
     return send(res, 502, { error: 'music_worker_unreachable' });

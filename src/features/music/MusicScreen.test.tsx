@@ -32,6 +32,13 @@ vi.mock('../../api/music', () => ({
   getRecommendations: vi.fn(),
   requestPlaylist: vi.fn(),
   getPlaylistBatch: vi.fn(),
+  // Both `useMusicSearch` (search-result warming) and `MusicPlayerProvider`
+  // (next-queue-track warming) call these unconditionally now — not what this
+  // suite exercises (see `useMusicSearch.test.tsx` /
+  // `MusicPlayerProvider.warm.test.tsx`), but leaving them undefined throws
+  // the moment either fires.
+  warmMusicTrack: vi.fn(),
+  normalizeMusicSource: vi.fn().mockReturnValue('auto'),
 }));
 vi.mock('../../api/jellyfin', () => ({
   getItems: vi.fn(),

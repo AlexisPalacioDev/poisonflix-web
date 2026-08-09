@@ -235,3 +235,75 @@ export async function getMusicJob(jobId: string): Promise<MusicJob> {
     schema: MusicJobSchema,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Cache warming: POST /bff/music/warm
+// ---------------------------------------------------------------------------
+
+/**
+ * How much of the worker's pipeline to run ahead of time.
+ *
+ * Measured against the live worker (mobile-music-overhaul): resolving the
+ * playable URL is 2.324s of the 2.758s a cold `play()` waits on — 'url' pays
+ * that alone and is cheap enough to fire for a whole page of search results.
+ * 'full' also downloads + runs ffmpeg, which is the rest of the wait; it's
+ * only worth paying for a track that's almost certainly about to play.
+ */
+export type MusicWarmDepth = 'url' | 'full';
+
+/**
+ * A search hit's `source` field is a loosely-typed string straight off the
+ * worker (see `MusicSearchResult.source`), not the strict `MusicSource` the
+ * warm/search endpoints take. Mirrors `previewStreamUrl`'s own fallback:
+ * anything other than the two explicit values becomes 'auto', which is also
+ * the worker's own default when the param is left out.
+ */
+export function normalizeMusicSource(source?: string | null): MusicSource {
+  return source === 'ytmusic' || source === 'youtube' ? source : 'auto';
+}
+
+// Per-tab dedup: don't ask the worker to warm the same videoId at the same
+// depth for the same source twice in one session. Source is part of the key,
+// not just videoId+depth, because callers now forward the real source
+// instead of always 'auto' (e.g. the queue's next-track warm reads it off
+// the track's own streamUrl — see MusicPlayerProvider) — a call for the same
+// videoId+depth but a different source is a genuinely different request from
+// this client's point of view, and this dedup must not be the one to drop it.
+//
+// This only closes the client-side half of the problem. The worker's own
+// `_stream_cache` and `_warm_inflight` bookkeeping (infra/music-worker/
+// server.py) are still keyed on videoId alone, with no source in the key —
+// so if a wrong-source warm reaches the worker first and seeds its cache, a
+// later correct-source warm for that same videoId can still short-circuit
+// there as "already warm" without ever running its own resolve. Making the
+// worker's cache source-aware is a separate, larger change; this key only
+// guarantees the client itself won't be the one throwing the request away.
+//
+// A 204 (already warm), 202 (already warming) and even a failed request all
+// mean "no point asking again for this exact key" from here — a retry buys
+// nothing and the eventual play still falls back to its normal (unwarmed)
+// cost either way. Never cleared: there's no event that makes a prior warm
+// stop being useful information.
+const warmedKeys = new Set<string>();
+
+/**
+ * Fire-and-forget: ask the worker to get `videoId` ready before the user taps
+ * play (see the file-level measurement above). This must never affect
+ * playback — a warm that never lands, lands late, or the endpoint being down
+ * entirely all degrade to exactly what happens today: the real play pays the
+ * unwarmed cost. Callers must not await this for anything user-visible.
+ */
+export function warmMusicTrack(videoId: string, source: MusicSource, depth: MusicWarmDepth): void {
+  const key = `${depth}:${source}:${videoId}`;
+  if (warmedKeys.has(key)) return;
+  warmedKeys.add(key);
+  void apiFetch('bff', '/music/warm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoId, source, depth }),
+  }).catch(() => {
+    // Best-effort, per the docstring above: nothing to do or report. The
+    // worst case is the track loads exactly as slowly as it would have
+    // without ever calling this.
+  });
+}

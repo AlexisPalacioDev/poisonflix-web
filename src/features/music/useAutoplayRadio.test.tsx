@@ -8,7 +8,11 @@ import { MusicPlayerProvider } from "./MusicPlayerProvider";
 import { useMusicPlayer, type MusicTrack } from "./musicPlayerCore";
 import { useAutoplayRadio } from "./useAutoplayRadio";
 
-vi.mock("../../api/music", () => ({ getRadio: vi.fn() }));
+// `warmMusicTrack` is stubbed too, not because this suite exercises it (that's
+// `MusicPlayerProvider.warm.test.tsx`'s job) — the provider now imports it
+// unconditionally and calls it once autoplay's radio pull queues a preview
+// track with a next-track slot, so leaving it out here throws mid-effect.
+vi.mock("../../api/music", () => ({ getRadio: vi.fn(), warmMusicTrack: vi.fn() }));
 const mockedGetRadio = vi.mocked(getRadio);
 
 // A library track: it knows its Jellyfin item but not the videoId it came from,

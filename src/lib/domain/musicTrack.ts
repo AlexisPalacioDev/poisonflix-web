@@ -1,5 +1,5 @@
 import type { JellyfinItem } from '../../api/schemas/jellyfin';
-import type { MusicSearchResult } from '../../api/schemas/music';
+import type { MusicSearchResult, MusicSource } from '../../api/schemas/music';
 import { resolveCoverUrl } from './posterUrl';
 
 // Shared mapping from a Jellyfin `Audio` item to the player's `MusicTrack`
@@ -54,6 +54,27 @@ export function previewStreamUrl(videoId: string, source?: string | null): strin
   const params = new URLSearchParams({ videoId });
   if (source === 'ytmusic' || source === 'youtube') params.set('source', source);
   return `/bff/music/stream?${params.toString()}`;
+}
+
+/**
+ * The inverse of `previewStreamUrl`: recovers which surface a preview URL was
+ * built for straight out of its own `source` query param, for callers (like
+ * the queue's next-track warm) that only ever kept the built URL and not the
+ * original search hit it came from. Falls back to 'auto' both when the param
+ * is missing and when it isn't one of the two explicit worker sources — the
+ * same fallback `previewStreamUrl` itself applies when building the URL, and
+ * the worker's own default for an omitted `source`. Defensive by
+ * construction: a relative or malformed URL is resolved against a throwaway
+ * base rather than thrown on, so this never raises regardless of input.
+ */
+export function streamUrlSource(streamUrl: string | null | undefined): MusicSource {
+  if (!streamUrl) return 'auto';
+  try {
+    const source = new URL(streamUrl, 'http://localhost').searchParams.get('source');
+    return source === 'ytmusic' || source === 'youtube' ? source : 'auto';
+  } catch {
+    return 'auto';
+  }
 }
 
 export function searchResultToTrack(result: MusicSearchResult): SearchTrack {
