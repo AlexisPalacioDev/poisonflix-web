@@ -25,6 +25,11 @@ const hoisted = vi.hoisted(() => {
     }
 
     handlers: Record<string, (...args: unknown[]) => void> = {};
+    // The real Hls exposes this as soon as it exists (empty until a manifest
+    // with multiple audio renditions is parsed). Leaving it off the double
+    // made `attemptInBandAudioSwitch`'s `.audioTracks.length` throw, which is
+    // a defect in the double, not in the component.
+    audioTracks: { id: number }[] = [];
     loadSource = vi.fn();
     attachMedia = vi.fn();
     destroy = vi.fn();
@@ -1419,5 +1424,212 @@ describe('VideoSurface — word-level highlight (owner request: follow the Engli
 
       expect(resolveItemB).toBeDefined(); // sanity: item-2's fetch really was still pending, not accidentally settled
     });
+  });
+});
+
+// The owner's "changing windows restarts the movie" report, fixed at the
+// mechanism rather than at one trigger. `usePlaybackInfo` no longer refetches
+// on focus, but the fragility underneath was that ANY re-resolve reopened
+// playback: the component identified a playback by its full stream URL, and
+// Jellyfin puts a freshly-minted PlaySessionId in every one of those.
+describe('VideoSurface — a re-resolved source is not automatically a new playback', () => {
+  const withSession = (session: string, audioIndex = 1) => ({
+    kind: 'Transcoded' as const,
+    hlsUrl: `/jellyfin/videos/item-1/master.m3u8?AudioStreamIndex=${audioIndex}&PlaySessionId=${session}`,
+  });
+
+  function renderWith(source: { kind: 'Transcoded'; hlsUrl: string }) {
+    const videoRef = createRef<HTMLVideoElement>();
+    const utils = render(
+      <VideoSurface
+        videoRef={videoRef}
+        {...trackMenuDefaultProps}
+        source={source}
+        resumeSeconds={0}
+        title="Test movie"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+    const rerenderWith = (next: { kind: 'Transcoded'; hlsUrl: string }) =>
+      utils.rerender(
+        <VideoSurface
+          videoRef={videoRef}
+          {...trackMenuDefaultProps}
+          source={next}
+          resumeSeconds={0}
+          title="Test movie"
+          onBack={noop}
+          onPlay={noop}
+          onPause={noop}
+          onEnded={noop}
+          onError={noop}
+          onUnsupported={noop}
+        />,
+      );
+    return { rerenderWith };
+  }
+
+  it('keeps the live stream when only the PlaySessionId changed', () => {
+    const { rerenderWith } = renderWith(withSession('session-a'));
+    expect(hlsInstances).toHaveLength(1);
+    // Frames are coming out: this session is proven alive.
+    fireEvent.playing(screen.getByTestId('pf-video'));
+
+    rerenderWith(withSession('session-b'));
+
+    expect(hlsInstances).toHaveLength(1);
+    expect(hlsInstances[0].destroy).not.toHaveBeenCalled();
+    expect(hlsInstances[0].loadSource).toHaveBeenCalledTimes(1);
+    expect(hlsInstances[0].loadSource).toHaveBeenCalledWith(withSession('session-a').hlsUrl);
+  });
+
+  // Re-entering an item with a warm React Query cache renders the previous
+  // visit's URL first, and that transcode session is dead on the server. The
+  // refetch behind it is the only thing that can rescue playback, so a source
+  // that has never played a frame must still be replaceable.
+  it('still adopts a new url when the current one never started playing', () => {
+    const { rerenderWith } = renderWith(withSession('stale-session'));
+    expect(hlsInstances).toHaveLength(1);
+
+    rerenderWith(withSession('fresh-session'));
+
+    expect(hlsInstances).toHaveLength(2);
+    expect(hlsInstances[0].destroy).toHaveBeenCalled();
+    expect(hlsInstances[1].loadSource).toHaveBeenCalledWith(withSession('fresh-session').hlsUrl);
+  });
+
+  it('reopens playback for a genuine audio-track change, even mid-playback', () => {
+    const { rerenderWith } = renderWith(withSession('session-a', 1));
+    fireEvent.playing(screen.getByTestId('pf-video'));
+
+    rerenderWith(withSession('session-b', 2));
+
+    expect(hlsInstances).toHaveLength(2);
+    expect(hlsInstances[1].loadSource).toHaveBeenCalledWith(withSession('session-b', 2).hlsUrl);
+  });
+
+  it('treats each newly attached source as unproven again', () => {
+    const { rerenderWith } = renderWith(withSession('session-a', 1));
+    fireEvent.playing(screen.getByTestId('pf-video'));
+
+    // A real audio change reopens playback...
+    rerenderWith(withSession('session-b', 2));
+    expect(hlsInstances).toHaveLength(2);
+    // ...and the newly attached source has proven nothing yet, so a further
+    // re-resolve of it is still allowed to replace the url.
+    rerenderWith(withSession('session-c', 2));
+
+    expect(hlsInstances).toHaveLength(3);
+    expect(hlsInstances[2].loadSource).toHaveBeenCalledWith(withSession('session-c', 2).hlsUrl);
+  });
+});
+
+describe('VideoSurface — identity guard on the paths that are not hls.js', () => {
+  // DirectPlay urls never carried a PlaySessionId (`buildDirectPlayUrl` sets
+  // only static/mediaSourceId/api_key), so the guard is a no-op here - but a
+  // no-op that nothing demonstrated until now.
+  it('reloads a DirectPlay source whenever its url changes, even mid-playback', () => {
+    const videoRef = createRef<HTMLVideoElement>();
+    const props = {
+      ...trackMenuDefaultProps,
+      resumeSeconds: 0,
+      title: 'Test movie',
+      onBack: noop,
+      onPlay: noop,
+      onPause: noop,
+      onEnded: noop,
+      onError: noop,
+      onUnsupported: noop,
+    };
+    const { rerender } = render(
+      <VideoSurface videoRef={videoRef} {...props} source={{ kind: 'DirectPlay', url: '/a.mp4' }} />,
+    );
+    fireEvent.playing(screen.getByTestId('pf-video'));
+
+    rerender(<VideoSurface videoRef={videoRef} {...props} source={{ kind: 'DirectPlay', url: '/b.mp4' }} />);
+
+    expect(videoRef.current?.src).toContain('/b.mp4');
+  });
+
+  // Safari: no hls.js instance to inspect, so the veto is only observable on
+  // the element's own `src`.
+  it('keeps the attached url on native HLS when only the PlaySessionId changed', () => {
+    hoisted.setSupported(false);
+    const videoRef = createRef<HTMLVideoElement>();
+    const props = {
+      ...trackMenuDefaultProps,
+      resumeSeconds: 0,
+      title: 'Test movie',
+      onBack: noop,
+      onPlay: noop,
+      onPause: noop,
+      onEnded: noop,
+      onError: noop,
+      onUnsupported: noop,
+    };
+    const canPlayType = vi
+      .spyOn(HTMLMediaElement.prototype, 'canPlayType')
+      .mockReturnValue('maybe');
+    try {
+      const { rerender } = render(
+        <VideoSurface videoRef={videoRef} {...props} source={{ kind: 'Transcoded', hlsUrl: '/m.m3u8?PlaySessionId=a' }} />,
+      );
+      fireEvent.playing(screen.getByTestId('pf-video'));
+
+      rerender(
+        <VideoSurface videoRef={videoRef} {...props} source={{ kind: 'Transcoded', hlsUrl: '/m.m3u8?PlaySessionId=b' }} />,
+      );
+
+      expect(videoRef.current?.src).toContain('PlaySessionId=a');
+    } finally {
+      canPlayType.mockRestore();
+    }
+  });
+});
+
+describe('VideoSurface — picking the audio track that is already playing', () => {
+  const audioTracks: MediaStreamTrack[] = [
+    { index: 1, kind: 'Audio', language: 'spa', displayTitle: 'Espanol', isDefault: true, isForced: false },
+    { index: 2, kind: 'Audio', language: 'eng', displayTitle: 'English', isDefault: false, isForced: false },
+  ];
+
+  // Without this guard the click re-resolved PlaybackInfo for the SAME index.
+  // The reply differs only by PlaySessionId, so the element (correctly)
+  // refuses to reload for it - leaving PlayerScreen's heartbeat and
+  // subtitleDeliveryMethods describing a session that was never opened.
+  it('does not ask the server to re-resolve the current track', () => {
+    const onAudioSwitchUnavailable = vi.fn();
+    const onAudioApplied = vi.fn();
+    render(
+      <VideoSurface
+        videoRef={createRef<HTMLVideoElement>()}
+        {...trackMenuDefaultProps}
+        audioTracks={audioTracks}
+        selectedAudioIndex={2}
+        onAudioApplied={onAudioApplied}
+        onAudioSwitchUnavailable={onAudioSwitchUnavailable}
+        source={transcodedSource}
+        resumeSeconds={0}
+        title="Test movie"
+        onBack={noop}
+        onPlay={noop}
+        onPause={noop}
+        onEnded={noop}
+        onError={noop}
+        onUnsupported={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Audio' }));
+    const dialog = screen.getByRole('dialog', { name: 'Audio' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Ingl|English/ }));
+
+    expect(onAudioSwitchUnavailable).not.toHaveBeenCalled();
+    expect(onAudioApplied).not.toHaveBeenCalled();
   });
 });

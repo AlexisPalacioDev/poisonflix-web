@@ -19,6 +19,7 @@ import { fetchWordTimingsData, resolveWordTimingsForCue, type WordTimingsFile } 
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import { EpisodeMenu } from './EpisodeMenu';
 import { nextEpisode, previousEpisode, type EpisodeNavItem } from './episodeNavigation';
+import { playbackIdentity } from './playbackIdentity';
 import './VideoSurface.css';
 
 // `<video>` wrapper (design.md §10, ← `PlaybackController.kt`, tasks.md
@@ -292,6 +293,9 @@ interface BrowserAudioTrackList {
   [index: number]: BrowserAudioTrack;
 }
 
+/** The exact URL currently attached to the element - a change here means a
+ * real reload. Distinct from `playbackIdentity`, which asks the coarser
+ * question "is this the same playback?"; see that module for why both exist. */
 function sourceKey(source: PlaybackSource): string {
   return source.kind === 'DirectPlay' ? `direct:${source.url}` : `hls:${source.hlsUrl}`;
 }
@@ -748,7 +752,32 @@ export function VideoSurface({
     setWordHighlightPreference(next);
   };
 
-  const key = sourceKey(source);
+  // Which source is actually ON the <video> right now. Not always the one
+  // the parent just handed down, and that gap is the whole point.
+  //
+  // Every re-resolve mints a fresh `PlaySessionId`, so `source` arrives with
+  // a new URL even when nothing about WHAT is playing changed. Loading it
+  // would restart the film for no reason (see `playbackIdentity.ts`). But
+  // simply ignoring same-identity URLs is not safe either: re-entering an
+  // item with a warm React Query cache renders the PREVIOUS visit's URL
+  // first, whose transcode session is long dead on the server, and the
+  // refetch that follows is the only thing that can rescue it.
+  //
+  // So the rule is about whether the session we hold is PROVEN ALIVE, which
+  // is exactly what `playing` reports: adopt any new URL until the current
+  // one has actually played a frame; after that, only a genuine identity
+  // change (different item, media source, audio/subtitle index, delivery
+  // mode) is worth an interruption.
+  const playbackStartedRef = useRef(false);
+  const attachedSourceRef = useRef(source);
+  if (
+    !playbackStartedRef.current ||
+    playbackIdentity(source) !== playbackIdentity(attachedSourceRef.current)
+  ) {
+    attachedSourceRef.current = source;
+  }
+  const attachedSource = attachedSourceRef.current;
+  const key = sourceKey(attachedSource);
 
   // A new source (different item, or DirectPlay<->Transcoded switch) must
   // reset every per-playback guard/state, or resume-seek and the displayed
@@ -765,14 +794,19 @@ export function VideoSurface({
   // concluded "no" again, and re-triggered the exact same fallback -
   // reopening playback from scratch, forever. `selectedAudioIndex` (not
   // `key`) is the right thing to gate on: it only changes for a genuine new
-  // pick (manual, or a real item change resets it via PlayerScreen's own
-  // `[itemId]` effect, which also fully unmounts/remounts this component -
-  // see PlayerScreen.tsx), never merely because THIS component reopened the
-  // same target index through a different source.
+  // pick (manual, or a real item change clears it via PlayerScreen's own
+  // `[itemId]` effect - which resets state but does NOT unmount this
+  // component, contrary to what this comment used to claim: PlayerScreen
+  // passes no `key` to `<VideoSurface>` and navigates between episodes with
+  // `replace`, so the element survives), never merely because THIS component
+  // reopened the same target index through a different source.
   useEffect(() => {
     hasSeekedResumeRef.current = false;
     appliedSubtitleIndexRef.current = undefined;
     audioReadyForInBandRef.current = false;
+    // Whatever is about to be attached has proven nothing yet - see
+    // `playbackStartedRef`'s declaration above.
+    playbackStartedRef.current = false;
     setCurrentTime(0);
     setDuration(0);
     setIsPlaying(false);
@@ -962,7 +996,7 @@ export function VideoSurface({
    * only reachable from one of them.
    */
   const attemptInBandAudioSwitch = (track: MediaStreamTrack): boolean => {
-    if (source.kind === 'DirectPlay') {
+    if (attachedSource.kind === 'DirectPlay') {
       const webVideo = videoRef.current as unknown as { audioTracks?: BrowserAudioTrackList } | null;
       const list = webVideo?.audioTracks;
       const ordinal = audioTracksRef.current.findIndex((t) => t.index === track.index);
@@ -1064,8 +1098,8 @@ export function VideoSurface({
       applyCurrentAudioSelection(true);
     }, AUDIO_READINESS_FALLBACK_MS);
 
-    if (source.kind === 'DirectPlay') {
-      video.src = source.url;
+    if (attachedSource.kind === 'DirectPlay') {
+      video.src = attachedSource.url;
       syncSubtitles();
       // `false`: too early for `video.audioTracks` to be populated yet (see
       // `applyCurrentAudioSelection`'s doc comment) - `onCanPlay` below is
@@ -1089,12 +1123,12 @@ export function VideoSurface({
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) onError();
       });
-      hls.loadSource(source.hlsUrl);
+      hls.loadSource(attachedSource.hlsUrl);
       hls.attachMedia(video);
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Native HLS (Safari) - no hls.js instance to manage; audio/subtitle
       // switching is unavailable on this path (see file header).
-      video.src = source.hlsUrl;
+      video.src = attachedSource.hlsUrl;
     } else {
       onUnsupported();
     }
@@ -1284,6 +1318,23 @@ export function VideoSurface({
   };
 
   const handleSelectAudio = (track: MediaStreamTrack) => {
+    // No-op: re-picking the track that is ALREADY playing, the same guard
+    // `handleSelectSubtitle` has had all along (the menu marks the active
+    // entry but does not disable it, so this is one stray click away).
+    //
+    // Without it, the click fell through to `onAudioSwitchUnavailable` -
+    // Chromium has no `video.audioTracks`, so the in-band attempt always
+    // fails - and PlayerScreen re-resolved PlaybackInfo with the SAME
+    // `AudioStreamIndex`. The reply is byte-identical except for a fresh
+    // `PlaySessionId`, which `attachedSourceRef` (correctly) now refuses to
+    // reload for. That left the parent holding a `playSessionId`,
+    // `subtitleDeliveryMethods` and heartbeat describing a transcode session
+    // nobody ever opened, while the element kept playing the previous one.
+    // Not reloading was right; asking the server at all was the mistake.
+    if (track.index === selectedAudioIndexRef.current) {
+      setActiveMenu(null);
+      return;
+    }
     const applied = attemptInBandAudioSwitch(track);
     // Mark this index as ALREADY decided/attempted before the callbacks
     // below update `selectedAudioIndex` upstream (PlayerScreen). Otherwise
@@ -1465,7 +1516,7 @@ export function VideoSurface({
           // Gotcha (file header, point 1): only DirectPlay's resume seek is
           // safe on `loadedmetadata` - HLS (hls.js or native) seeks on
           // MANIFEST_PARSED/`canplay` instead.
-          if (source.kind === 'DirectPlay') {
+          if (attachedSource.kind === 'DirectPlay') {
             applyResumeSeekOnce();
             // A DirectPlay `<video>`'s native `audioTracks` list (where a
             // browser supports it at all) is populated once metadata is
@@ -1486,6 +1537,14 @@ export function VideoSurface({
           applyCurrentAudioSelection(true);
         }}
         onTimeUpdate={() => setCurrentTime(videoRef.current?.currentTime ?? 0)}
+        // `playing`, NOT `play`: `play` only means someone called `.play()`,
+        // which a dead transcode session answers just as readily as a live
+        // one. `playing` means frames are actually coming out. That is the
+        // proof `attachedSourceRef` waits for before it stops accepting
+        // replacement URLs - see its declaration.
+        onPlaying={() => {
+          playbackStartedRef.current = true;
+        }}
         onPlay={() => {
           setIsPlaying(true);
           onPlay();
