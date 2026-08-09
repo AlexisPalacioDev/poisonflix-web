@@ -1658,33 +1658,79 @@ def _download_chunked(url, dest, chunk_pool=None):
         if total > STREAM_FETCH_MAX_BYTES:
             return False
         offset = len(first)
-        while offset < total:
-            starts = []
-            for _ in range(_CHUNK_PARALLEL):
-                start = offset + _CHUNK_BYTES * len(starts)
-                if start >= total:
-                    break
-                starts.append(start)
-            bodies = list(
-                pool.map(
-                    lambda s: _range_get(s[0], s[1], min(s[1] + _CHUNK_BYTES, total) - 1)[0],
-                    [(url, start) for start in starts],
-                )
+
+        # SLIDING WINDOW, not batches-behind-a-barrier. The old code (see git
+        # history) fetched _CHUNK_PARALLEL chunks with pool.map() and blocked
+        # until ALL of them returned before asking for the next batch. Measured
+        # on the real server, one such batch looked like: three chunks landed
+        # in 0.6-0.7s each and the fourth took 10.1s — the three fast ones then
+        # sat idle for ~9.5s doing nothing, because pool.map() doesn't return
+        # control until every item it was given completes. This does NOT fix
+        # whatever makes one chunk take 10s — that cause is not identified and
+        # may well be googlevideo throttling a connection, in which case no
+        # client-side scheduling change touches it. All this removes is the
+        # waste of the slots that finished early: as soon as any one request
+        # completes, the next chunk is submitted right away, so up to
+        # _CHUNK_PARALLEL requests stay in flight continuously instead of the
+        # count periodically dropping to zero while stragglers are waited out.
+        #
+        # Chunks now complete out of order, so each one is written at its own
+        # `fh.seek(start)` instead of appended in sequence. That is simpler and
+        # more robust here than a reorder buffer: every chunk's start offset is
+        # already known before it is even requested (`offset`, `offset +
+        # _CHUNK_BYTES`, ...), so seek-and-write can never leave a gap or an
+        # overlap — every byte from `offset` to `total` gets exactly one write,
+        # or this function returns False before any caller sees the file.
+        starts = list(range(offset, total, _CHUNK_BYTES))
+
+        def submit(start):
+            end = min(start + _CHUNK_BYTES, total) - 1
+            return pool.submit(_range_get, url, start, end)
+
+        next_idx = 0
+        in_flight = {}  # future -> the byte offset it is fetching
+        while next_idx < len(starts) and len(in_flight) < _CHUNK_PARALLEL:
+            start = starts[next_idx]
+            in_flight[submit(start)] = start
+            next_idx += 1
+
+        while in_flight:
+            done, _ = concurrent.futures.wait(
+                in_flight, return_when=concurrent.futures.FIRST_COMPLETED
             )
-            # Every chunk is written AT ITS OWN OFFSET and must be exactly the
-            # length that was asked for. A server is allowed to answer a Range
-            # with fewer bytes than requested; appending such a body in sequence
-            # would splice the audio — the download would still reach `total`
-            # and the corrupt result would be remuxed, cached, and served to
-            # every later play of that track. Refuse instead: the caller falls
-            # back to the proxy, which still plays.
-            for start, body in zip(starts, bodies):
+            for future in done:
+                start = in_flight.pop(future)
+                try:
+                    body, _total = future.result()
+                except Exception:
+                    # A request that raises must still be a clean failure, not
+                    # a partial file reported as good (see the docstring).
+                    # Futures that haven't started yet are cancelled; ones
+                    # already running in the shared pool are simply left alone
+                    # — we never look at their result, since `dest` is about
+                    # to be discarded by the caller regardless.
+                    for pending in in_flight:
+                        pending.cancel()
+                    return False
+                # Every chunk must be exactly the length that was asked for. A
+                # server is allowed to answer a Range with fewer bytes than
+                # requested; writing such a body at its offset and letting the
+                # download reach `total` anyway (seek() past a short write
+                # zero-pads) would splice the audio silently — the corrupt
+                # result would still be remuxed, cached, and served to every
+                # later play of that track. Refuse instead: the caller falls
+                # back to the proxy, which still plays.
                 if len(body) != min(start + _CHUNK_BYTES, total) - start:
+                    for pending in in_flight:
+                        pending.cancel()
                     return False
                 fh.seek(start)
                 fh.write(body)
-            offset = min(starts[-1] + _CHUNK_BYTES, total)
-        return offset >= total
+                if next_idx < len(starts):
+                    next_start = starts[next_idx]
+                    in_flight[submit(next_start)] = next_start
+                    next_idx += 1
+        return True
 
 
 def _build_stream_cache(video_id, source, chunk_pool=None):

@@ -9,6 +9,7 @@ whole file is the expensive, all-or-nothing version reserved for a track
 that is very likely to play next.
 """
 
+import concurrent.futures
 import subprocess
 import threading
 import time
@@ -325,18 +326,34 @@ class DownloadChunkedPoolSelectionTests(unittest.TestCase):
         return ok
 
     def test_default_pool_is_chunk_pool(self):
-        with mock.patch.object(server, "_chunk_pool") as fake_pool:
-            fake_pool.map.return_value = [b"b" * 10]
-            self._run_multichunk_download({})
-        fake_pool.map.assert_called_once()
+        # A bare Mock() can't stand in for the pool anymore: the sliding
+        # window submits real futures into it and waits on them with
+        # concurrent.futures.wait(), which needs actual Future objects. Spy on
+        # the real pool's `submit` (via `wraps=`) instead, so the download
+        # still runs for real while we observe which pool it went through.
+        with mock.patch.object(
+            server._chunk_pool, "submit", wraps=server._chunk_pool.submit
+        ) as spy:
+            ok = self._run_multichunk_download({})
+        self.assertTrue(ok)
+        spy.assert_called_once()
 
     def test_explicit_pool_overrides_the_default(self):
-        custom_pool = mock.Mock()
-        custom_pool.map.return_value = [b"b" * 10]
-        with mock.patch.object(server, "_chunk_pool") as fake_default_pool:
-            self._run_multichunk_download({"chunk_pool": custom_pool})
-        custom_pool.map.assert_called_once()
-        fake_default_pool.map.assert_not_called()
+        custom_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="test-custom-chunk-pool"
+        )
+        try:
+            with mock.patch.object(
+                server._chunk_pool, "submit", wraps=server._chunk_pool.submit
+            ) as default_spy, mock.patch.object(
+                custom_pool, "submit", wraps=custom_pool.submit
+            ) as custom_spy:
+                ok = self._run_multichunk_download({"chunk_pool": custom_pool})
+            self.assertTrue(ok)
+            custom_spy.assert_called_once()
+            default_spy.assert_not_called()
+        finally:
+            custom_pool.shutdown(wait=True)
 
 
 class ResolveStreamUrlDedupeTests(unittest.TestCase):
