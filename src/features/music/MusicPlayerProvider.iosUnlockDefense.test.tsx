@@ -134,159 +134,65 @@ afterEach(() => {
   clearSession();
 });
 
-describe('MusicPlayerProvider — PREVENTION: unlock probe reaches both elements', () => {
-  it('the first-gesture probe calls play() on BOTH elements, active before preload', () => {
+describe('MusicPlayerProvider — PREVENTION: only the active element is ever probed', () => {
+  // This block used to assert the opposite: that the first-gesture probe called
+  // play() on BOTH elements, to unlock the preload element too in case iOS
+  // scopes autoplay unlocking per-element. That probe was removed, because it
+  // caused a real bug on the owner's iPhone — "it is playing but no sound comes
+  // out", with currentTime advancing and paused:false.
+  //
+  // WebKit hands the tab's single audio focus to whichever element called
+  // play() MOST RECENTLY. The probe called it on the active element first and
+  // on the muted preload element second, so the last element to ask for the
+  // route was the silent one. An audit confirmed this was the ONLY place in the
+  // provider where two elements could be playing at once: ordinary preloading
+  // only sets `src` + load(), and promoteFromPreload never calls play().
+  //
+  // What still covers the risk the probe was meant to address is the MITIGATION
+  // block below: if a promoted element's play() is rejected, playback falls back
+  // to the gesture-backed element and reports it.
+  it('the first-gesture probe plays the ACTIVE element', () => {
     renderProvider();
     act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
-    act(() => api.toggle()); // pause; the active element stays loaded (srcUrlRef set)
+    act(() => api.toggle()); // pause; the active element stays loaded
     expect(api.isPlaying).toBe(false);
 
-    const [active, preload] = audios();
+    const [active] = audios();
     playSpy.mockClear();
 
     act(() => fireEvent.pointerDown(document));
 
-    // Both got a play() call from the SAME gesture...
-    // `mock.contexts`, not `mock.instances`: instances is for constructor calls
-    // (and is typed as the return value here, which is a Promise, not the
-    // element). contexts holds the `this` each call was made on, which is the
-    // element we actually want to identify.
-    const activeCallIndex = playSpy.mock.contexts.indexOf(active);
-    const preloadCallIndex = playSpy.mock.contexts.indexOf(preload);
-    expect(activeCallIndex).toBeGreaterThanOrEqual(0);
-    expect(preloadCallIndex).toBeGreaterThanOrEqual(0);
-    // ...and specifically in that order: the active element's own probe/play()
-    // runs BEFORE the preload element is ever touched, so if this same
-    // gesture is also what starts real playback, audio focus has already
-    // been requested by the active element first. This is documented as the
-    // best available ordering, not a proven guarantee (see the comment above
-    // the preload probe in MusicPlayerProvider.tsx) — this test only pins
-    // down that the ORDER is what the code claims, not that iOS honours it.
-    expect(activeCallIndex).toBeLessThan(preloadCallIndex);
+    expect(playSpy.mock.contexts).toContain(active);
   });
 
-  it('mutes the preload element BEFORE calling play() on it, not after', () => {
+  it('NEVER calls play() on the preload element — it would steal the audio route', () => {
     renderProvider();
     act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
     act(() => api.toggle());
-    const [, preload] = audios();
-    expect(preload.muted).toBe(false); // sanity: not muted before the probe
 
-    let mutedAtCallTime: boolean | undefined;
-    playSpy.mockImplementation(function (this: HTMLAudioElement) {
-      if (this === preload) {
-        // Captured synchronously, INSIDE the mock, at the exact moment
-        // play() is invoked — the only way to prove the mute happened
-        // before play() rather than merely before the next assertion line.
-        mutedAtCallTime = this.muted;
-      }
-      return Promise.resolve(undefined);
-    });
+    const [, preload] = audios();
+    playSpy.mockClear();
 
     act(() => fireEvent.pointerDown(document));
 
-    expect(mutedAtCallTime).toBe(true);
+    expect(playSpy.mock.contexts).not.toContain(preload);
   });
 
-  it('restores the preload element mute state once the probe settles, and always pauses it', async () => {
+  it('leaves the preload element untouched: not muted, not played, not paused', () => {
     renderProvider();
     act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
     act(() => api.toggle());
+
     const [, preload] = audios();
-
-    await act(async () => {
-      fireEvent.pointerDown(document);
-    });
-
-    expect(preload.muted).toBe(false); // restored to its pre-probe value
-    expect(pauseSpy.mock.instances).toContain(preload); // play()->pause(), never left playing
-  });
-
-  it('a play() that never settles (measured on real Chromium for a src-less element) is force-cleaned by the safety timeout', () => {
-    // Adversarial review measured this directly: calling play() on an
-    // <audio> with NO source, from inside a gesture, stays PENDING forever
-    // in Chromium — it never resolves or rejects on its own. Without a
-    // safety net, that would leave the preload element muted and (per spec)
-    // still "wanting to play" for the rest of the session. This is exactly
-    // the case the belt-and-suspenders 3s timeout exists for.
-    vi.useFakeTimers();
-    renderProvider();
-    act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0)); // no streamUrl -> preload has no src
-    act(() => api.toggle());
-    const [, preload] = audios();
-    expect(preload.hasAttribute('src')).toBe(false);
-
-    // A promise that never settles — the measured real-world behaviour.
-    playSpy.mockImplementation(function (this: HTMLAudioElement) {
-      if (this === preload) return new Promise<void>(() => {});
-      return Promise.resolve(undefined);
-    });
+    const mutedBefore = preload.muted;
+    playSpy.mockClear();
+    pauseSpy.mockClear();
 
     act(() => fireEvent.pointerDown(document));
-    expect(preload.muted).toBe(true); // still pending, still muted
 
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    expect(preload.muted).toBe(false); // force-restored, not stuck forever
-    expect(pauseSpy.mock.instances).toContain(preload);
-  });
-
-  it('a rejected preload probe (real autoplay block) does not dirty app state, and IS reported', async () => {
-    renderProvider();
-    act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
-    act(() => api.toggle());
-    expect(api.isPlaying).toBe(false);
-
-    const [, preload] = audios();
-    playSpy.mockImplementation(function (this: HTMLAudioElement) {
-      if (this === preload) {
-        return Promise.reject(new DOMException('blocked', 'NotAllowedError'));
-      }
-      return Promise.resolve(undefined);
-    });
-
-    await act(async () => {
-      fireEvent.pointerDown(document);
-    });
-
-    // Nothing about app-level playback state moved — the probe's own
-    // play/pause events are inert no-ops (gated on `audioRef.current`), and a
-    // rejection must not touch any of it either.
-    expect(api.isPlaying).toBe(false);
-    expect(preload.muted).toBe(false); // still restored, not left stuck muted
-    const report = recordedFailures().find((f) => f.scope === 'music.player.preloadUnlockProbe');
-    expect(report).toBeDefined();
-    expect(report?.detail).toMatchObject({ errorName: 'NotAllowedError' });
-  });
-
-  it('an AbortError from the probe (self-inflicted, e.g. interrupted by a real load) is NOT reported', async () => {
-    // AbortError here means something ELSE interrupted this still-pending
-    // play() — most commonly the ordinary preload effect assigning a real
-    // `src` + calling `.load()` moments later, or this probe's own safety
-    // timeout pausing it. It is expected noise, not autoplay-block evidence,
-    // and reporting it as such would drown out the one signal this exists to
-    // capture (see MusicPlayerProvider.tsx's `preloadUnlockProbe` comment).
-    renderProvider();
-    act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
-    act(() => api.toggle());
-    const [, preload] = audios();
-    playSpy.mockImplementation(function (this: HTMLAudioElement) {
-      if (this === preload) {
-        return Promise.reject(new DOMException('interrupted', 'AbortError'));
-      }
-      return Promise.resolve(undefined);
-    });
-
-    await act(async () => {
-      fireEvent.pointerDown(document);
-    });
-
-    expect(preload.muted).toBe(false); // still restored despite the rejection
-    expect(recordedFailures().some((f) => f.scope === 'music.player.preloadUnlockProbe')).toBe(
-      false,
-    );
+    expect(preload.muted).toBe(mutedBefore);
+    expect(playSpy.mock.contexts).not.toContain(preload);
+    expect(pauseSpy.mock.contexts).not.toContain(preload);
   });
 });
 

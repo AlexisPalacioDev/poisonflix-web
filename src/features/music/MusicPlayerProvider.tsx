@@ -823,25 +823,32 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // so a later programmatic play() (e.g. auto-advance on `ended`) is allowed.
   // Safe when nothing is loaded — it does nothing. Fires at most once.
   //
-  // PREVENTION, paired with the MITIGATION in `fallbackFromFailedPromotion`
-  // above: this also probes the PRELOAD element in the SAME gesture (see the
-  // second half of `unlock` below), not just the active one. Why both exist,
-  // rather than trusting one: whether iOS's autoplay unlock is scoped
-  // PER-ELEMENT or PER-DOCUMENT/session is genuinely unresolved from here —
-  // no iOS simulator on Linux, and this is exactly the kind of thing that
-  // cannot be inferred from spec text alone. If unlock is per-document, the
-  // preload probe below is redundant but harmless. If it is per-element,
-  // this is the ONLY chance the preload element ever gets to be unlocked by
-  // an actual user gesture: absent it, its very first `play()` in a session
-  // is always issued later, from `handleEnded`'s media-event task (via
-  // `promoteFromPreload`), which is not itself a user gesture. `020406d`'s
-  // on-device probe proved iOS accepts a non-gesture `play()` from an
-  // `ended` handler for an ALREADY-unlocked element with a NEW src — it did
-  // NOT test a second element that had never played at all, so this
-  // prevention step is still unverified on a real device. If it does not
-  // work, `fallbackFromFailedPromotion` (see `playImperative`) is what keeps
-  // a rejected promoted `play()` from going to total silence instead of
-  // degrading to today's already-measured 10/21.
+  // ONLY the ACTIVE element is probed here. An earlier version also probed
+  // the PRELOAD element (muted) inside this same gesture, as PREVENTION
+  // against iOS possibly scoping its autoplay unlock per-element. It was
+  // removed, and must not come back in that shape:
+  //
+  //   - It was the only place in this file where TWO <audio> elements could
+  //     be calling `play()` at the same time. Every other `play()` call site
+  //     targets `audioRef.current`; ordinary preloading only ever assigns
+  //     `src` + `load()`, and `promoteFromPreload` never plays at all.
+  //   - WebKit hands the single audio focus a page gets to whichever element
+  //     called `play()` MOST RECENTLY — and the muted preload probe ran
+  //     AFTER the real element's play(), i.e. last. The old comment here
+  //     already flagged that ordering as unproven; the owner's iPhone then
+  //     reported the matching symptom directly: "it says it is playing but
+  //     there is no sound", with the position advancing and `paused: false`.
+  //     That is exactly what losing audio focus to a muted sibling looks
+  //     like.
+  //
+  // Removing it reopens the risk it was written for: if iOS's unlock really
+  // is per-element, a promoted preload element's first `play()` is rejected
+  // because that element never received a gesture of its own. That case is
+  // covered by the MITIGATION instead — `fallbackFromFailedPromotion` hands
+  // the track back to the gesture-backed element and reports
+  // `music.player.promotionPlayRejected`, which is also the only evidence
+  // that would tell us the per-element theory is true at all. It is now the
+  // only net under that risk, so it must stay intact.
   useEffect(() => {
     const unlock = () => {
       document.removeEventListener('pointerdown', unlock);
@@ -878,108 +885,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
             probeRef.current = false;
           }, 3000);
         }
-      }
-
-      // Second half of the PREVENTION described above: probe the PRELOAD
-      // element too, AFTER the active element's own probe/play() call above.
-      // That ordering is the best available sequencing, NOT a proven
-      // safeguard: whether starting the active element's play() first
-      // actually stops a later muted play() on a SECOND element from
-      // stealing iOS's single-active-element audio focus is unverified from
-      // here. WebKit's historical "only one media session at a time" rule
-      // has generally favoured whichever element played MOST RECENTLY, which
-      // would argue against this ordering mattering at all — so this is not
-      // relied upon as a guarantee, only chosen because it cannot make things
-      // worse and might help.
-      //
-      // No separate suppression flag (unlike `probeRef` for the active
-      // element) is needed for this probe's own `play`/`pause` events: every
-      // shared handler on both <audio> elements
-      // (`handlePlay`/`handlePause`/`handleWaiting`/`handleStalled`/etc.) is
-      // gated on `e.currentTarget !== audioRef.current`, and the preload
-      // element cannot be `audioRef.current` this early — that requires a
-      // promotion, which requires a track to have already ended, which
-      // requires playback to have already started from this very gesture.
-      // So these events are already-inert no-ops, exactly like the ones the
-      // ordinary preload-then-promote flow already produces.
-      //
-      // Muted unconditionally before play(), regardless of whether the
-      // element already holds a `src` (normally it won't yet, this early,
-      // since preloading only ever starts once a track is already playing)
-      // — the one hard requirement is that NOTHING audible ever comes out of
-      // this element while it is only precaching, and muting is the only way
-      // to guarantee that regardless of what it happens to be holding.
-      // Restored to its previous value once the attempt settles (see
-      // `restore` below) so it does not linger muted into a later promotion
-      // (though `promoteFromPreload` would reset it anyway — this is
-      // belt-and-suspenders on top of that).
-      const preload = preloadAudioRef.current;
-      if (preload) {
-        const wasMuted = preload.muted;
-        // Adversarial review measured this on a real Chromium build: calling
-        // play() on an element with NO source, from inside a gesture, stays
-        // PENDING forever — it neither resolves nor rejects on its own. With
-        // no guard, that would leave `preload.muted` stuck `true` and the
-        // element permanently "wanting to play" (per spec) for the rest of
-        // the session, in a browser where it never gets interrupted by a
-        // real preload starting. `settled` + the timeout below are what stop
-        // that: everything past this point is written to run at most once,
-        // whichever of (resolve / reject / 3s timeout) happens first.
-        let settled = false;
-        const restore = () => {
-          if (settled) return;
-          settled = true;
-          // Identity guard — a second adversarial pass found this matters
-          // even here, not just in `fallbackFromFailedPromotion`: if THIS
-          // exact element gets promoted to active (a real track ending)
-          // while this probe's play() is still pending, `preload` (this
-          // closure's captured node) is no longer the preloader — it is the
-          // one actually driving sound. A stale `pause()` from the 3s safety
-          // timeout would silence real playback; skip entirely once the
-          // node's role has moved on.
-          if (preloadAudioRef.current !== preload) return;
-          preload.pause();
-          preload.muted = wasMuted;
-          // Belt-and-suspenders against the probe silently advancing the
-          // element's position: reachable if this element already held a
-          // real preloaded track when the probe ran (e.g. playback started
-          // via a path that never fired the `pointerdown`/`touchend` this
-          // effect listens for). `promoteFromPreload` never seeks on its
-          // own, so without this a later promotion would start the NEXT
-          // track a few hundred ms to a few seconds into itself instead of
-          // at 0.
-          preload.currentTime = 0;
-        };
-        preload.muted = true;
-        const p2 = preload.play();
-        if (p2 && typeof p2.then === 'function') {
-          p2.then(() => {
-            restore();
-          }).catch((err: unknown) => {
-            restore();
-            // An AbortError here is expected noise, not evidence of an
-            // autoplay block, and must not be reported as one: it fires
-            // whenever something ELSE interrupts this still-pending play()
-            // first — most commonly the ordinary preload effect assigning a
-            // real `src` and calling `.load()` a moment later, or this
-            // probe's OWN `restore()` pausing it once the timeout below
-            // fires. Given the measurement above (a src-less play() never
-            // settles on its own), filtering AbortError out is what keeps
-            // this scope from reporting "blocked" on every single session
-            // regardless of what iOS actually did — the one thing this
-            // report exists to distinguish.
-            const name = err instanceof DOMException ? err.name : null;
-            if (name === 'AbortError') return;
-            reportFailure(
-              'music.player.preloadUnlockProbe',
-              err,
-              { readyState: preload.readyState, errorName: name },
-            );
-          });
-        } else {
-          restore();
-        }
-        window.setTimeout(restore, 3000);
       }
     };
     document.addEventListener('pointerdown', unlock, { once: true });
