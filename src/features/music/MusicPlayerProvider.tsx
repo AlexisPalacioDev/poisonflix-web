@@ -442,19 +442,26 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       const audio = audioRef.current;
       if (!audio) return;
       armStallWatchdog(target?.itemId ?? null);
-      const p = audio.play();
-      // Silent keepalive (see silentKeepalive.ts): started here, AFTER the
-      // real element's play() call above, and never awaited — the real track
-      // commands, and this file's own gesture-synchronous rule (see this
-      // function's docstring) means nothing here may delay that call, which
-      // already happened on the line above. `playImperative` only ever runs
-      // when `runGesture` has decided real playback is actually starting
-      // (see its own call site), which is exactly the lifecycle this
-      // keepalive is meant to track — not "mounted", but "playing". Failure
-      // here (no Web Audio support, a rejected `resume()`, anything) is
-      // swallowed entirely inside `start()`: this call can never affect the
-      // line above it.
+      // Silent keepalive (see silentKeepalive.ts) starts BEFORE the real
+      // play() below, and the order is the whole point.
+      //
+      // The tone is the floor the session stands on: it has to already be
+      // sounding while the real track is still loading, because that load is
+      // exactly the stretch with no audio, and no audio is what lets iOS
+      // freeze the tab. Starting it afterwards puts the cushion in place
+      // after the fall.
+      //
+      // It also decides who holds the audio route. WebKit hands that to
+      // whoever asked LAST — the same rule behind the muted preload element
+      // stealing the sound (see the gesture handler further down). Silence
+      // first, song second, so the song is the one holding it.
+      //
+      // Synchronous and never awaited, so it cannot delay the play() call
+      // below — this function's gesture-synchronous rule (see its docstring)
+      // still holds. Any failure (no Web Audio, a rejected resume(),
+      // anything) is swallowed inside `start()` and cannot touch playback.
       keepaliveRef.current?.start();
+      const p = audio.play();
       if (p && typeof p.then === 'function') {
         p.then(() => {
           unlockedRef.current = true;

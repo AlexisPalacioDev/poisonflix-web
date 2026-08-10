@@ -153,7 +153,7 @@ describe('MusicPlayerProvider — silent keepalive lifecycle', () => {
     expect(ctx.resumeMock).toHaveBeenCalled();
   });
 
-  it('drives the real <audio> element play() BEFORE the keepalive AudioContext is even constructed', async () => {
+  it('builds and resumes the keepalive BEFORE the real <audio> element play()', async () => {
     class OrderTrackingAudioContext extends FakeAudioContext {
       constructor() {
         super();
@@ -171,17 +171,21 @@ describe('MusicPlayerProvider — silent keepalive lifecycle', () => {
       api.playNow([track], 0);
     });
 
-    // The declarative play/pause effect (unrelated to this feature — see
-    // MusicPlayerProvider.tsx's own play/pause effect) may call `audio.play()`
-    // a second time once React flushes, so this asserts RELATIVE order
-    // (the real element's FIRST play() precedes the keepalive's construction
-    // and resume) rather than an exact call sequence.
+    // Order is the feature, not an implementation detail. The tone has to be
+    // sounding while the real track is still loading, because that load is the
+    // stretch with no audio at all — the stretch iOS freezes the tab in. And
+    // WebKit gives the audio route to whoever asked LAST, so the song must ask
+    // after the silence, never before, or the silence holds the route.
+    //
+    // The declarative play/pause effect (unrelated to this feature) may call
+    // `audio.play()` again once React flushes, so this asserts RELATIVE order
+    // against the element's FIRST play() rather than an exact call sequence.
     const firstPlay = callOrder.indexOf('audio.play');
     const ctorIndex = callOrder.indexOf('AudioContext.constructor');
     const resumeIndex = callOrder.indexOf('ctx.resume');
-    expect(firstPlay).toBe(0);
-    expect(ctorIndex).toBeGreaterThan(firstPlay);
+    expect(ctorIndex).toBe(0);
     expect(resumeIndex).toBeGreaterThan(ctorIndex);
+    expect(firstPlay).toBeGreaterThan(resumeIndex);
   });
 
   it('the keepalive gain is exactly 0 — silent, not just quiet', async () => {
