@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSilentKeepalive } from './silentKeepalive';
+import { ROUTING_LOSS_GRACE_MS, createSilentKeepalive } from './silentKeepalive';
 
 // jsdom has no Web Audio implementation at all, so every test here drives a
 // minimal fake `AudioContext` that mirrors the handful of methods
@@ -41,11 +41,34 @@ class FakeBufferSourceNode {
   }
 }
 
+class FakeMediaElementSourceNode {
+  connectedTo: unknown = null;
+  connect(target: unknown) {
+    this.connectedTo = target;
+  }
+}
+
 class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
   state: AudioContextState = 'suspended';
   sampleRate = 44100;
   destination = {};
+  mediaSources: Array<{ el: unknown; node: FakeMediaElementSourceNode }> = [];
+  private stateListeners: Array<() => void> = [];
+
+  addEventListener(type: string, listener: () => void) {
+    if (type === 'statechange') this.stateListeners.push(listener);
+  }
+  /** Mirrors the browser: change the state, THEN notify. */
+  emitState(next: AudioContextState | 'interrupted') {
+    this.state = next as AudioContextState;
+    for (const listener of this.stateListeners) listener();
+  }
+  createMediaElementSource(el: unknown) {
+    const node = new FakeMediaElementSourceNode();
+    this.mediaSources.push({ el, node });
+    return node;
+  }
   // Each resolves on a microtask AFTER being called — matching the real,
   // asynchronous `AudioContext` state machine, not a synchronous stand-in.
   resumeMock = vi.fn(() => Promise.resolve().then(() => void (this.state = 'running')));
@@ -346,5 +369,268 @@ describe('createSilentKeepalive', () => {
     keepalive.start(); // resume() in flight, not yet settled
     expect(() => keepalive.close()).not.toThrow();
     expect(keepalive.getState()).toBeNull();
+  });
+});
+
+// A media element is only ever identified here by the properties
+// `routeElement` actually reads, so these tests never need a real DOM.
+function fakeElement(src: string): HTMLMediaElement {
+  return {
+    currentSrc: src,
+    getAttribute: (name: string) => (name === 'src' ? src : null),
+  } as unknown as HTMLMediaElement;
+}
+
+const SAME_ORIGIN = `${window.location.origin}/bff/music/stream?videoId=v-a`;
+const CROSS_ORIGIN = 'https://rr3---sn-example.googlevideo.com/videoplayback?id=abc';
+
+describe('createSilentKeepalive — routing the song into the same graph', () => {
+  it('feeds the element into the SAME context as the tone, at the same destination', () => {
+    // The owner's design in one assertion: one origin. The silence and the
+    // song both end at the same `destination` of the same `AudioContext` —
+    // not two contexts, not two outputs.
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+    const el = fakeElement(SAME_ORIGIN);
+
+    keepalive.start();
+    expect(keepalive.routeElement(el)).toBe(true);
+
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    const ctx = FakeAudioContext.instances[0];
+    expect(ctx.mediaSources).toHaveLength(1);
+    expect(ctx.mediaSources[0].el).toBe(el);
+    expect(ctx.mediaSources[0].node.connectedTo).toBe(ctx.destination);
+    // The tone's own path is unchanged and still ends at the same place.
+    expect(ctx.lastGain?.gain.value).toBe(0);
+    expect(ctx.lastGain?.connect).toHaveBeenCalledWith(ctx.destination);
+    expect(keepalive.getRouting(el)).toBe('graph');
+  });
+
+  it('refuses to route before a gesture ever built the context', () => {
+    // Routing must ride on a context a user gesture brought up. Building one
+    // from here would create it outside the gesture, where iOS leaves it
+    // suspended — and the bind would be spent on a graph that cannot sound.
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+
+    expect(keepalive.routeElement(fakeElement(SAME_ORIGIN))).toBe(false);
+    expect(FakeAudioContext.instances).toHaveLength(0);
+  });
+
+  it('refuses a cross-origin source, because routing one is silent and undetectable', () => {
+    // `createMediaElementSource` on a cross-origin resource without a
+    // matching `crossorigin` attribute SUCCEEDS and then outputs zeros
+    // forever, with no error and no event. Refusing keeps the element playing
+    // straight out of itself, which is audible.
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+    const el = fakeElement(CROSS_ORIGIN);
+
+    keepalive.start();
+    expect(keepalive.routeElement(el)).toBe(false);
+    expect(FakeAudioContext.instances[0].mediaSources).toHaveLength(0);
+    expect(keepalive.getRouting(el)).toBe('direct');
+  });
+
+  it('refuses an element with no source at all', () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+    keepalive.start();
+
+    expect(keepalive.routeElement(fakeElement(''))).toBe(false);
+  });
+
+  it('binds an element at most once, however many times it is asked', () => {
+    // A second `createMediaElementSource` for the same element throws
+    // `InvalidStateError` per spec — and `routeElement` is called on every
+    // single play gesture.
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+    const el = fakeElement(SAME_ORIGIN);
+    keepalive.start();
+
+    expect(keepalive.routeElement(el)).toBe(true);
+    expect(keepalive.routeElement(el)).toBe(true);
+    expect(keepalive.routeElement(el)).toBe(true);
+    expect(FakeAudioContext.instances[0].mediaSources).toHaveLength(1);
+  });
+
+  it('leaves the element playing directly when the browser refuses the bind', () => {
+    class RefusingAudioContext extends FakeAudioContext {
+      createMediaElementSource(): FakeMediaElementSourceNode {
+        throw new DOMException('already connected', 'InvalidStateError');
+      }
+    }
+    vi.stubGlobal('AudioContext', RefusingAudioContext);
+    const onRoutingLost = vi.fn();
+    const keepalive = createSilentKeepalive({ onRoutingLost });
+    const el = fakeElement(SAME_ORIGIN);
+    keepalive.start();
+
+    expect(keepalive.routeElement(el)).toBe(false);
+    expect(keepalive.getRouting(el)).toBe('direct');
+    // Nothing was ever captive, so there is nothing to escape from — telling
+    // the caller to abandon its elements here would cost double buffering for
+    // no reason at all.
+    expect(onRoutingLost).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSilentKeepalive — losing the graph while it carries the song', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A context whose `resume()` never brings it back — an interruption that
+   *  does not end, which is the case the escape exists for. */
+  class StuckAudioContext extends FakeAudioContext {
+    resumeMock = vi.fn(() => Promise.resolve());
+  }
+
+  function routedKeepalive(onRoutingLost: () => void) {
+    vi.stubGlobal('AudioContext', StuckAudioContext);
+    const keepalive = createSilentKeepalive({ onRoutingLost });
+    keepalive.start();
+    const ctx = FakeAudioContext.instances[0];
+    ctx.state = 'running';
+    keepalive.routeElement(fakeElement(SAME_ORIGIN));
+    return { keepalive, ctx };
+  }
+
+  it('reports the loss when an interruption does not lift, so the caller can escape', () => {
+    const onRoutingLost = vi.fn();
+    const { ctx } = routedKeepalive(onRoutingLost);
+
+    ctx.emitState('interrupted');
+    // It asks for the session back FIRST — a phone call ending is routinely
+    // recoverable and must not cost the session its double buffering.
+    expect(ctx.resumeMock).toHaveBeenCalled();
+    expect(onRoutingLost).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS + 100);
+
+    expect(onRoutingLost).toHaveBeenCalledTimes(1);
+    expect(onRoutingLost).toHaveBeenCalledWith('context-interrupted');
+  });
+
+  it('stays quiet when the interruption lifts inside the grace window', () => {
+    const onRoutingLost = vi.fn();
+    const { ctx } = routedKeepalive(onRoutingLost);
+
+    ctx.emitState('interrupted');
+    ctx.emitState('running');
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS + 100);
+
+    expect(onRoutingLost).not.toHaveBeenCalled();
+  });
+
+  it('reports a closed context immediately — no grace window can revive one', () => {
+    const onRoutingLost = vi.fn();
+    const { ctx } = routedKeepalive(onRoutingLost);
+
+    ctx.emitState('closed');
+
+    expect(onRoutingLost).toHaveBeenCalledWith('context-closed');
+  });
+
+  it('does not mistake the user pausing for the graph dying', () => {
+    // `suspend()` puts the context in a non-running state ON PURPOSE. A graph
+    // that is silent because nobody asked for sound has not failed, and
+    // escaping here would spend the one-way handover on an ordinary pause.
+    const onRoutingLost = vi.fn();
+    const { keepalive, ctx } = routedKeepalive(onRoutingLost);
+
+    keepalive.suspend();
+    ctx.emitState('suspended');
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS * 4);
+
+    expect(onRoutingLost).not.toHaveBeenCalled();
+  });
+
+  it('says nothing when the context dies with no element captive in it', () => {
+    // Same event, completely different meaning: with nothing routed, a dead
+    // context costs the caller nothing — every element is still playing out
+    // of itself.
+    vi.stubGlobal('AudioContext', StuckAudioContext);
+    const onRoutingLost = vi.fn();
+    const keepalive = createSilentKeepalive({ onRoutingLost });
+    keepalive.start();
+    const ctx = FakeAudioContext.instances[0];
+
+    ctx.emitState('interrupted');
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS * 4);
+
+    expect(onRoutingLost).not.toHaveBeenCalled();
+    expect(keepalive.isRoutingLost()).toBe(false);
+  });
+
+  it('notices a context that was ALREADY interrupted when playback resumed', () => {
+    // No `statechange` fires for a state that did not change. Without an
+    // explicit check on `start()`, a graph that went interrupted while the
+    // user was paused would swallow the next song in total silence with
+    // nothing ever looking at it.
+    const onRoutingLost = vi.fn();
+    const { keepalive, ctx } = routedKeepalive(onRoutingLost);
+    keepalive.suspend();
+    ctx.state = 'interrupted';
+
+    keepalive.start();
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS + 100);
+
+    expect(onRoutingLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes inert after the loss instead of rebuilding a graph it cannot fill', () => {
+    // A replacement context cannot take the captive element back (one bind
+    // per document, forever), so rebuilding would produce a context carrying
+    // silence while the song stays mute in the dead one — and would report a
+    // healthy 'running' state to the diagnostics on top of it.
+    const onRoutingLost = vi.fn();
+    const { keepalive, ctx } = routedKeepalive(onRoutingLost);
+
+    ctx.emitState('closed');
+    expect(keepalive.isRoutingLost()).toBe(true);
+
+    keepalive.start();
+
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    expect(keepalive.routeElement(fakeElement(SAME_ORIGIN))).toBe(false);
+    expect(onRoutingLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('never reports the loss twice, however many transitions arrive', () => {
+    const onRoutingLost = vi.fn();
+    const { ctx } = routedKeepalive(onRoutingLost);
+
+    ctx.emitState('interrupted');
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS + 100);
+    ctx.emitState('closed');
+    ctx.emitState('interrupted');
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS * 4);
+
+    expect(onRoutingLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat its own close() as the browser taking the session away', () => {
+    const onRoutingLost = vi.fn();
+    const { keepalive, ctx } = routedKeepalive(onRoutingLost);
+
+    keepalive.close();
+    ctx.emitState('closed');
+    vi.advanceTimersByTime(ROUTING_LOSS_GRACE_MS * 4);
+
+    expect(onRoutingLost).not.toHaveBeenCalled();
+  });
+
+  it('cannot break playback when the escape handler itself throws', () => {
+    const { ctx } = routedKeepalive(() => {
+      throw new Error('escape handler blew up');
+    });
+
+    expect(() => ctx.emitState('closed')).not.toThrow();
   });
 });

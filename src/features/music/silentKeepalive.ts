@@ -37,7 +37,73 @@
 // `<audio>` element by winning "only one element can play" the way a second,
 // audible `<audio>` element could — that specific failure mode is closed.
 
+// ── ONE AUDIO ORIGIN (the owner's design) ────────────────────────────────
+//
+// Everything above describes the graph while it carried ONLY silence. That
+// left the OS looking at two independent sources for one song: the `<audio>`
+// element and this context. `routeElement` closes that gap — the playing
+// element's output is fed INTO this same context (`createMediaElementSource`
+// -> destination), alongside the zero-gain tone. One origin, never quiet,
+// because the tone is mounted first and the song is mixed on top of it.
+//
+// The extra reason to want it: an on-device measurement showed this context
+// flipping to `'interrupted'` the moment the page went `hidden:true`, while
+// it carried nothing but silence. Carrying the actual song may give iOS less
+// reason to interrupt it. PLAUSIBLE, NOT PROVEN — no device trace confirms
+// either half of that sentence, and the opposite outcome (it interrupts
+// anyway, and now takes the song down with it) is exactly what
+// `onRoutingLost` exists for.
+//
+// THE DANGER THIS MODULE HAS TO CARRY, stated plainly because it is the whole
+// reason for the machinery below: routing is EFFECTIVELY IRREVERSIBLE.
+//
+//   1. Per spec, "once an HTMLMediaElement has been routed to a
+//      MediaElementAudioSourceNode, playback of the HTMLMediaElement will be
+//      re-routed into the processing graph of the AudioContext". There is no
+//      un-route operation. `disconnect()` therefore does NOT hand the element
+//      back to the default output — it makes the element SILENT. This module
+//      deliberately exposes no "unroute"/"bypass" call, because there is no
+//      honest way to implement one and a method with that name would read as
+//      an escape hatch that does the opposite of what it says.
+//   2. An element can be bound ONCE, for the lifetime of the document. A
+//      second `createMediaElementSource` for the same element throws
+//      `InvalidStateError`, including from a DIFFERENT context — so once the
+//      context that owns the binding dies, that element has no way back.
+//
+// Which is why the real escape does not live here at all: this module only
+// reports that the graph can no longer carry sound (`onRoutingLost`), and
+// MusicPlayerProvider hands playback to a physically DIFFERENT <audio>
+// element that was deliberately never routed. See its `escapeFromAudioGraph`.
+//
+// CORS: a cross-origin resource without a matching `crossorigin` attribute
+// feeds the graph SILENCE, with no error and no event. `routeElement` refuses
+// any element whose current source is not same-origin, because that failure
+// is undetectable once it happens — but note the refusal only sees the source
+// loaded AT THAT MOMENT. The caller owns the stronger guarantee that every
+// later source is same-origin too; see `isSameOriginMedia` in
+// MusicPlayerProvider.tsx.
+
 export type KeepaliveContextState = AudioContextState | null;
+
+/** Where an element's sound currently leaves: through this graph, or straight
+ *  out of the element itself. Reported into the lock diagnostics trace —
+ *  without it, a trace of a silent-but-advancing track cannot say which of the
+ *  two paths was even in play. */
+export type AudioRouting = 'graph' | 'direct';
+
+export interface SilentKeepaliveOptions {
+  /**
+   * Called at most once, when the context has stopped carrying sound and
+   * cannot be brought back (see the irreversibility note above). The caller
+   * MUST respond by moving playback to an element this handle has never
+   * routed; nothing this module can do will make the routed one audible
+   * again. Never fires while nothing is routed — with no element captive,
+   * a dead context costs nothing and the caller has nothing to escape from.
+   */
+  onRoutingLost?: (reason: string) => void;
+  /** Diagnostic sink for routing/context transitions. */
+  onEvent?: (message: string, detail?: Record<string, unknown>) => void;
+}
 
 export interface SilentKeepaliveHandle {
   /**
@@ -88,11 +154,86 @@ export interface SilentKeepaliveHandle {
    * keepalive even alive when it died?") has no answer.
    */
   getState(): KeepaliveContextState;
+  /**
+   * Feed `el`'s output into this graph, so the song and the silent tone leave
+   * through one origin instead of two. Returns true when the element is (or
+   * already was) carried by the graph, false when it was left alone and keeps
+   * playing straight out of itself.
+   *
+   * IRREVERSIBLE ON SUCCESS — read this module's "ONE AUDIO ORIGIN" note
+   * before calling. Refusing is always the safe outcome: an element that was
+   * never routed is an element that can still be played normally.
+   *
+   * Refuses (returns false, changes nothing) when: there is no context yet
+   * (`start()` has not run), routing has already been lost, the element's
+   * current source is not same-origin (a cross-origin source would feed the
+   * graph pure silence with no error), or the browser throws. Calling it again
+   * for an element already routed is a no-op that returns true.
+   *
+   * Must be safe to call from inside the gesture-synchronous `playImperative`
+   * path: like every other method here it never throws and never awaits.
+   */
+  routeElement(el: HTMLMediaElement): boolean;
+  /** Whether `el`'s sound currently leaves through this graph. Diagnostics. */
+  getRouting(el: HTMLMediaElement | null | undefined): AudioRouting;
+  /** True once `onRoutingLost` has fired. The handle is inert from then on. */
+  isRoutingLost(): boolean;
 }
 
 // One second of silence is enough to loop forever — a longer buffer buys
 // nothing (it is silent either way) and only costs more memory up front.
 const SILENT_BUFFER_SECONDS = 1;
+
+// How long a routed graph is allowed to sit in a non-running state, while
+// playback is supposed to be sounding, before it is declared lost and the
+// caller is told to escape.
+//
+// Two failure directions to balance, and this constant cannot be right for
+// both without a device measurement that does not exist yet:
+//   - Too short: an ordinary, recoverable interruption (a phone call, an
+//     audio route change) triggers a permanent handover to the escape element
+//     and costs the session its double buffering for nothing.
+//   - Too long: the song stays silently routed into a dead context for that
+//     entire window, which is dead air the listener hears.
+// 1.5s is chosen for the second one, because silence is the failure the owner
+// actually reported and a lost double buffer is not. Deliberately NOT tuned
+// against the "interrupted the instant hidden:true" measurement — that was
+// taken with the graph carrying only silence, and whether it repeats with the
+// song routed is the single unknown this whole feature is a bet on.
+//
+// Load-bearing caveat, stated because it limits what this can promise: a
+// backgrounded iOS tab throttles timers hard, so this timer may fire far
+// later than 1.5s — or, if the tab is fully frozen, not at all. Every
+// `statechange` re-evaluates as well, so recovery does not depend on the
+// timer alone, but a frozen tab is the one case nothing in this file can
+// reach.
+export const ROUTING_LOSS_GRACE_MS = 1_500;
+
+/**
+ * Whether `el`'s currently loaded source is same-origin, and therefore safe to
+ * feed into a graph. A cross-origin resource loaded without a matching
+ * `crossorigin` attribute is not an error case — `createMediaElementSource`
+ * succeeds and then silently outputs zeros forever, with no event to detect
+ * it. `data:` sources are never a tainting risk and count as safe.
+ *
+ * Reads `currentSrc` (what the element actually resolved and is playing) and
+ * falls back to `src`. An empty source is treated as unsafe: there is nothing
+ * to verify, so there is nothing to justify a permanent, irreversible bind.
+ */
+function isSameOriginSource(el: HTMLMediaElement): boolean {
+  try {
+    const raw = el.currentSrc || el.getAttribute('src') || '';
+    if (!raw) return false;
+    if (raw.startsWith('data:')) return true;
+    const resolved = new URL(raw, window.location.href);
+    if (resolved.protocol === 'blob:' || resolved.protocol === 'data:') return true;
+    return resolved.origin === window.location.origin;
+  } catch {
+    // Unparseable — treat as unsafe. Refusing to route costs a feature;
+    // routing a source that turns out to be cross-origin costs the sound.
+    return false;
+  }
+}
 
 type AudioContextCtor = new () => AudioContext;
 
@@ -144,7 +285,9 @@ function safeInvoke(fn: () => unknown): void {
  * safe to build eagerly (e.g. in a `useRef` lazy initializer) without that
  * choice alone spinning anything up.
  */
-export function createSilentKeepalive(): SilentKeepaliveHandle {
+export function createSilentKeepalive(
+  options: SilentKeepaliveOptions = {},
+): SilentKeepaliveHandle {
   let ctx: AudioContext | null = null;
   let source: AudioBufferSourceNode | null = null;
   // A buffer source node can only ever be started once in its lifetime — a
@@ -152,6 +295,107 @@ export function createSilentKeepalive(): SilentKeepaliveHandle {
   // (e.g. on every subsequent play gesture) from trying to restart a node
   // that is already looping.
   let sourceStarted = false;
+  // Elements bound into this context. A `WeakSet` because membership is the
+  // only question ever asked of it, and because a bound element must never be
+  // kept alive by this module's bookkeeping.
+  const routedElements = new WeakSet<HTMLMediaElement>();
+  // Whether ANY element has been bound. Separate from the WeakSet because the
+  // difference between "a dead context with nothing captive" (harmless, just
+  // rebuild) and "a dead context holding the only element that can make sound"
+  // (an emergency) is exactly this flag.
+  let anyRouted = false;
+  // True once the caller has been told to escape. From then on this handle is
+  // inert: it must never build a second context (the captive elements could
+  // not be re-bound to it anyway — `InvalidStateError`) and must never fire
+  // `onRoutingLost` twice.
+  let routingLost = false;
+  // Whether the caller currently wants sound. `suspend()` puts the context in
+  // a non-running state ON PURPOSE (the user paused), and a graph that is
+  // silent because nobody asked for sound is not a graph that has failed.
+  let wantSound = false;
+  let lossTimer: number | null = null;
+
+  const emit = (message: string, detail?: Record<string, unknown>) => {
+    try {
+      options.onEvent?.(message, detail);
+    } catch {
+      // A diagnostic sink must never be able to break playback.
+    }
+  };
+
+  const clearLossTimer = () => {
+    if (lossTimer !== null) {
+      try {
+        window.clearTimeout(lossTimer);
+      } catch {
+        // Non-browser environment; nothing to clear.
+      }
+      lossTimer = null;
+    }
+  };
+
+  // Point of no return: the graph is carrying at least one element and can no
+  // longer make sound. Everything here is teardown — the handle deliberately
+  // does NOT try to rebuild, because a fresh context cannot take the captive
+  // elements back (an element binds once per document, full stop). The caller
+  // is now the only thing that can restore audio.
+  const declareRoutingLost = (reason: string) => {
+    if (routingLost) return;
+    routingLost = true;
+    clearLossTimer();
+    emit('routingLost', { reason });
+    try {
+      options.onRoutingLost?.(reason);
+    } catch {
+      // Same contract as every other callback here.
+    }
+  };
+
+  // Re-evaluated on every `statechange` AND once more after the grace window,
+  // because neither alone is sufficient: `statechange` can deliver
+  // 'interrupted' with no follow-up event ever arriving, and a timer alone
+  // would miss a context that recovers and re-fails inside one window.
+  const evaluateHealth = () => {
+    const current = ctx;
+    if (routingLost || !anyRouted || !current) return;
+    // 'interrupted' is Safari-only and absent from the TS union.
+    const st = current.state as AudioContextState | 'interrupted';
+    if (st === 'running') {
+      clearLossTimer();
+      return;
+    }
+    if (st === 'closed') {
+      // Unrecoverable by definition — no grace window can help, and
+      // `resume()` on a closed context rejects.
+      declareRoutingLost('context-closed');
+      return;
+    }
+    if (!wantSound) {
+      // Suspended because the user paused. Expected, not a failure.
+      clearLossTimer();
+      return;
+    }
+    // Suspended or interrupted while the song is supposed to be sounding.
+    // Ask for it back first — an interruption from a phone call is routinely
+    // recoverable, and handing the session over to the escape element is a
+    // one-way, double-buffering-ending move that should not be spent on
+    // something a `resume()` fixes.
+    safeInvoke(() => current.resume());
+    if (lossTimer !== null) return; // already counting down for this outage
+    try {
+      lossTimer = window.setTimeout(() => {
+        lossTimer = null;
+        const c = ctx;
+        if (routingLost || !anyRouted || !c || !wantSound) return;
+        const now = c.state as AudioContextState | 'interrupted';
+        if (now === 'running') return;
+        declareRoutingLost(`context-${now}`);
+      }, ROUTING_LOSS_GRACE_MS);
+    } catch {
+      // No timers available (non-browser test environment). `statechange`
+      // remains as the other trigger.
+    }
+  };
 
   // REQUIREMENT 5 (tolerant to failure): every step that can throw or reject —
   // construction, `.start()`, `.resume()`/`.suspend()`/`.close()` — goes
@@ -160,10 +404,19 @@ export function createSilentKeepalive(): SilentKeepaliveHandle {
   // effects are simply absent for the rest of the session and music keeps
   // playing exactly as it does today.
   function buildGraph(): boolean {
+    if (routingLost) return false;
     if (ctx && ctx.state !== 'closed') return true;
+    // A closed context with an element bound to it is NOT rebuildable: the
+    // captive element cannot be re-bound to the replacement, so a second
+    // context would be a graph carrying silence while the song sits mute in
+    // the dead one. Escalate instead of quietly rebuilding.
+    if (ctx && anyRouted) {
+      declareRoutingLost('context-closed');
+      return false;
+    }
     // Either never built, or the browser closed the previous one out from
-    // under us (observed on Safari as 'interrupted' degrading to 'closed', or
-    // an OS-level audio session teardown) — reset and rebuild from scratch.
+    // under us with nothing captive in it — reset and rebuild from scratch.
+    clearLossTimer();
     ctx = null;
     source = null;
     sourceStarted = false;
@@ -186,6 +439,28 @@ export function createSilentKeepalive(): SilentKeepaliveHandle {
       newSource.buffer = buffer;
       newSource.loop = true;
       newSource.connect(gain);
+      // The only signal this module gets that the OS took the audio session
+      // away. Attached before the context is published so no transition can
+      // land in the gap. `addEventListener` where available, falling back to
+      // the property form for older/partial `webkitAudioContext` shapes that
+      // never implemented EventTarget on the context.
+      try {
+        if (typeof newCtx.addEventListener === 'function') {
+          newCtx.addEventListener('statechange', () => {
+            emit('contextState', { state: String(newCtx.state) });
+            evaluateHealth();
+          });
+        } else {
+          (newCtx as AudioContext).onstatechange = () => {
+            emit('contextState', { state: String(newCtx.state) });
+            evaluateHealth();
+          };
+        }
+      } catch {
+        // No state observation available. Routing loss then depends on the
+        // grace timer armed by the next `start()`/`routeElement` — degraded,
+        // not broken.
+      }
       ctx = newCtx;
       source = newSource;
       sourceStarted = false;
@@ -201,6 +476,7 @@ export function createSilentKeepalive(): SilentKeepaliveHandle {
   }
 
   const start = () => {
+    wantSound = true;
     if (!buildGraph() || !ctx || !source) return;
     if (!sourceStarted) {
       try {
@@ -217,17 +493,29 @@ export function createSilentKeepalive(): SilentKeepaliveHandle {
     // context is a defined no-op per spec, so there is no cost to calling it
     // every time `start()` runs.
     safeInvoke(() => current.resume());
+    // A context that was ALREADY interrupted when `start()` ran emits no
+    // `statechange` of its own — nothing changed — so without this the only
+    // observer of a graph that is captive and mute would never run.
+    evaluateHealth();
   };
 
   const suspend = () => {
+    wantSound = false;
+    clearLossTimer();
     if (!ctx) return;
     const current = ctx;
     safeInvoke(() => current.suspend());
   };
 
   const close = () => {
+    wantSound = false;
+    clearLossTimer();
     if (!ctx) return;
     const toClose = ctx;
+    // Dropped BEFORE the close() call, which is also what keeps our own
+    // teardown from being mistaken for the browser taking the session away:
+    // the resulting `statechange` finds `ctx === null` and `evaluateHealth`
+    // returns without declaring anything lost.
     ctx = null;
     source = null;
     sourceStarted = false;
@@ -236,5 +524,65 @@ export function createSilentKeepalive(): SilentKeepaliveHandle {
 
   const getState = (): KeepaliveContextState => ctx?.state ?? null;
 
-  return { start, suspend, close, getState };
+  const routeElement = (el: HTMLMediaElement): boolean => {
+    if (!el) return false;
+    if (routedElements.has(el)) return true;
+    if (routingLost) return false;
+    // Never build the graph from here: routing must ride on a context that a
+    // real user gesture already brought up (`start()`), never spin one up on
+    // its own from whatever call site happens to run first.
+    const current = ctx;
+    if (!current) return false;
+    if (!isSameOriginSource(el)) {
+      // Not a failure to report loudly — the element simply keeps playing
+      // straight out of itself, which is audible and correct. Emitted so a
+      // trace can explain why a session shows `routing: 'direct'`.
+      emit('routeRefused', { reason: 'cross-origin-source' });
+      return false;
+    }
+    try {
+      const node = current.createMediaElementSource(el);
+      // Straight to the destination, at unity — no gain node of our own, and
+      // that is a MEASURED choice, not an assumption. Probed in Chrome with
+      // an AnalyserNode on a routed element playing a square wave: RMS 0.722
+      // at `volume = 1`, 0.0721 at `volume = 0.1`, exactly 0 at `muted =
+      // true`, back to 0.722 on restore. The element's own volume/mute are
+      // therefore applied UPSTREAM of this tap and still work; inserting a
+      // gain node here would have double-applied the user's volume slider.
+      // (Unverified on iOS, where element volume is read-only anyway.)
+      // The zero-gain tone reaches the same destination through its own gain
+      // node — same origin, two sources, one output.
+      node.connect(current.destination);
+      routedElements.add(el);
+      anyRouted = true;
+      emit('routed', {});
+      // A context that is already non-running at bind time is a graph that
+      // just swallowed the song — check immediately rather than waiting for a
+      // transition that has already happened.
+      evaluateHealth();
+      return true;
+    } catch {
+      // `InvalidStateError` (already bound elsewhere), an unsupported
+      // implementation, anything: leave the element alone. Direct output is
+      // the safe outcome, and this module's whole failure policy is that
+      // being absent must never cost the user sound.
+      emit('routeFailed', {});
+      return false;
+    }
+  };
+
+  const getRouting = (el: HTMLMediaElement | null | undefined): AudioRouting =>
+    el && routedElements.has(el) ? 'graph' : 'direct';
+
+  const isRoutingLost = () => routingLost;
+
+  return {
+    start,
+    suspend,
+    close,
+    getState,
+    routeElement,
+    getRouting,
+    isRoutingLost,
+  };
 }

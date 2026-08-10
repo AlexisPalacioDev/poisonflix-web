@@ -124,9 +124,16 @@ afterEach(() => {
 });
 
 describe('MusicPlayerProvider — double buffering: preloading the next track', () => {
-  it('renders exactly two <audio> elements', () => {
+  it('renders three <audio> elements: two for double buffering, one held in reserve', () => {
     renderProvider();
-    expect(audios()).toHaveLength(2);
+    // The third is the escape element (slot C) — never routed into the
+    // keepalive's AudioContext, so it stays audible if that graph dies. See
+    // `escapeFromAudioGraph`. The first two are still the double-buffer pair,
+    // and every other assertion in this file destructures them positionally,
+    // so their order matters as much as the count.
+    expect(audios()).toHaveLength(3);
+    const [, , escape] = audios();
+    expect(escape.hasAttribute('src')).toBe(false);
   });
 
   it('preloads the next track onto the SECOND element while the current one plays', async () => {

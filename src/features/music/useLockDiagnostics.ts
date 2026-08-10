@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { reportFailure } from '../../lib/obs/report';
 import { timeRangeEnd } from './musicPlayerCore';
-import type { KeepaliveContextState } from './silentKeepalive';
+import type { AudioRouting, KeepaliveContextState } from './silentKeepalive';
 
 // Why this exists: the defect only happens on the owner's iPhone, when he
 // locks it. There is no iOS simulator on Linux, driving a real iPhone needs a
@@ -69,6 +69,14 @@ export function useLockDiagnostics(
   // a narrower future test) is not forced to wire up a keepalive it may not
   // have — the field is simply omitted from every sample when absent.
   keepaliveStateRef?: { current: () => KeepaliveContextState },
+  // Read live, same as `keepaliveStateRef`. Answers the one question a
+  // "it says it is playing but there is no sound" report cannot answer
+  // otherwise: was this element's audio leaving through the keepalive's graph
+  // or straight out of the element? Without it, a trace of a silent-but-
+  // advancing track cannot distinguish a dead audio graph from every other
+  // cause of silence, which is exactly the ambiguity that let one such report
+  // be diagnosed twice from code alone.
+  routingRef?: { current: () => { routing: AudioRouting; escaped: boolean } },
 ): void {
   // Lives OUTSIDE the effect below, in a ref that survives a resubscribe —
   // caught by adversarial review: an earlier version declared this as a
@@ -131,6 +139,12 @@ export function useLockDiagnostics(
         // keepalive was still alive when playback died, instead of that being
         // one more unanswerable question.
         keepaliveState: keepaliveStateRef ? keepaliveStateRef.current() : undefined,
+        // 'graph' = this element's sound is being carried by the keepalive's
+        // AudioContext; 'direct' = it leaves the element itself. `escaped` is
+        // true once the graph was declared unable to carry sound and playback
+        // was handed to a never-routed element (see `escapeFromAudioGraph`).
+        routing: routingRef ? routingRef.current().routing : undefined,
+        graphEscaped: routingRef ? routingRef.current().escaped : undefined,
       });
       if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
     };

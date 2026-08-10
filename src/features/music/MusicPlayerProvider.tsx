@@ -13,7 +13,12 @@ import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/m
 import { streamUrlSource } from '../../lib/domain/musicTrack';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { useLockDiagnostics } from './useLockDiagnostics';
-import { createSilentKeepalive, type KeepaliveContextState } from './silentKeepalive';
+import {
+  createSilentKeepalive,
+  type AudioRouting,
+  type KeepaliveContextState,
+} from './silentKeepalive';
+import { silentAudioClip } from './silentAudioClip';
 import { jamDestination } from '../jam/destination';
 import { addTracksToJam } from '../../api/jam';
 import { warmMusicTrack } from '../../api/music';
@@ -77,6 +82,10 @@ const STALL_WATCHDOG_MS = 40_000;
 // prove itself alive — if it hasn't reached `playing` by 15s, waiting longer
 // only extends dead air.
 const STALL_RETRY_GRACE_MS = 15_000;
+// How many keepalive routing/context transitions to keep for the escape
+// report. Enough to show the run-up (routed -> running -> interrupted ->
+// lost); not so many that a long session ships a wall of noise.
+const KEEPALIVE_EVENT_LOG_MAX = 24;
 
 export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -95,11 +104,39 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // changes.
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
+  // The third physical element, and the reason there are three rather than
+  // two. The owner's design routes the song into the keepalive's AudioContext
+  // so the tone and the song leave through one origin — and that bind is
+  // irreversible (see silentKeepalive.ts's "ONE AUDIO ORIGIN" note): an
+  // element that has been routed can never be handed back to the speaker, not
+  // by disconnecting it, not by a second context, not by anything.
+  //
+  // WHICH ELEMENT STAYS ROUTED AND WHICH IS RESERVED, and why it is not one of
+  // the two above: `promoteFromPreload` swaps which of slots A and B is
+  // active, so over a session BOTH of them end up being the playing element
+  // and therefore BOTH have to be routed for the "one origin" property to hold
+  // on every track rather than every other track. Reserving one of them
+  // instead would mean either half the tracks leave through a second origin —
+  // the exact thing this feature exists to remove — or giving up double
+  // buffering, which is itself one of the anti-freeze measures already
+  // deployed (b7cbb6c) and the only reason a preloaded track can start with no
+  // network at all. So slots A and B are both routed, and slot C is a third
+  // element that is never routed, never preloads, never plays a song, and
+  // exists purely so there is somewhere audible left to go if the graph dies.
+  //
+  // The cost of that choice, stated plainly: once the escape happens, the two
+  // double-buffer elements are captive for the rest of the page load and
+  // playback continues single-buffered on slot C. Sound without preloading
+  // beats preloading without sound.
+  const escapeAudioRef = useRef<HTMLAudioElement | null>(null);
   const setSlotA = useCallback((el: HTMLAudioElement | null) => {
     audioRef.current = el;
   }, []);
   const setSlotB = useCallback((el: HTMLAudioElement | null) => {
     preloadAudioRef.current = el;
+  }, []);
+  const setSlotC = useCallback((el: HTMLAudioElement | null) => {
+    escapeAudioRef.current = el;
   }, []);
   const lastTickRef = useRef(0);
   // Consecutive <audio> failures. Reset by a successful load; see onError below.
@@ -147,17 +184,64 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // the currentSrc effect.
   const pastKnownDurationRef = useRef<string | null>(null);
 
+  // True once playback has been handed off to the never-routed escape element
+  // (slot C). One-way: the two double-buffer elements are captive from that
+  // point on, so promotion and preloading must both stop. Mirrored into React
+  // state below because the preload effect is keyed on a derived value.
+  const graphEscapedRef = useRef(false);
+  const [graphEscaped, setGraphEscaped] = useState(false);
+  // Whether slot C has been given its gesture-backed unlock play (see the
+  // unlock effect). Recorded, not assumed: whether iOS actually requires it is
+  // the open question, and a trace that says the escape's play() was rejected
+  // on an element that WAS unlocked means something quite different from one
+  // that says it was never unlocked at all.
+  const escapeUnlockAttemptedRef = useRef(false);
+  const escapeUnlockPlayedRef = useRef(false);
+  // Detaches the "play again on the next gesture" listeners armed when the
+  // escape's own play() is refused. Null whenever none are armed.
+  const escapeRetryCleanupRef = useRef<(() => void) | null>(null);
+  // A short ring of the keepalive's own routing/context transitions, attached
+  // to the escape report. Without it, the report says the graph died but not
+  // what it did on the way there.
+  const keepaliveEventsRef = useRef<Array<Record<string, unknown>>>([]);
+
   // The silent Web Audio keepalive (see silentKeepalive.ts) — one graph for
   // the whole session, lazily built. Building the handle itself has no side
   // effect (no `AudioContext` is created until `.start()` is first called),
   // so a plain lazy-ref-init is enough; no `useEffect`/`useMemo` needed.
+  //
+  // `onRoutingLost` is dispatched through a ref rather than wired directly,
+  // because the handler it has to call (`escapeFromAudioGraph`) is declared
+  // further down and needs this very handle. The ref is assigned on every
+  // render, so by the time any callback can fire it holds today's closure.
+  const escapeFromAudioGraphRef = useRef<(reason: string) => void>(() => {});
   const keepaliveRef = useRef<ReturnType<typeof createSilentKeepalive> | null>(null);
-  if (!keepaliveRef.current) keepaliveRef.current = createSilentKeepalive();
+  if (!keepaliveRef.current) {
+    keepaliveRef.current = createSilentKeepalive({
+      onRoutingLost: (reason) => escapeFromAudioGraphRef.current(reason),
+      onEvent: (message, detail) => {
+        keepaliveEventsRef.current.push({ at: Date.now(), message, ...detail });
+        if (keepaliveEventsRef.current.length > KEEPALIVE_EVENT_LOG_MAX) {
+          keepaliveEventsRef.current.shift();
+        }
+      },
+    });
+  }
   // Read live by `useLockDiagnostics` on every sample — see that hook's new
   // parameter for why this is a ref-wrapped function rather than a reactive
   // value.
   const keepaliveStateRef = useRef<() => KeepaliveContextState>(() => null);
   keepaliveStateRef.current = () => keepaliveRef.current?.getState() ?? null;
+  // Whether the ACTIVE element's audio currently leaves through the graph, and
+  // whether the escape has already happened. Same live-read pattern.
+  const routingRef = useRef<() => { routing: AudioRouting; escaped: boolean }>(() => ({
+    routing: 'direct',
+    escaped: false,
+  }));
+  routingRef.current = () => ({
+    routing: keepaliveRef.current?.getRouting(audioRef.current) ?? 'direct',
+    escaped: graphEscapedRef.current,
+  });
 
   // Whether the element has produced a confirmed `playing` event for the
   // CURRENT play attempt — distinct from `state.isPlaying`, which the reducer
@@ -404,6 +488,174 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     [armStallWatchdog],
   );
 
+  // THE ESCAPE HATCH, and the reason the audio-graph feature is allowed to
+  // ship at all.
+  //
+  // Routing the song into the keepalive's AudioContext buys one origin, and
+  // costs this: if that context stops being able to make sound, the element
+  // carrying the song is mute and CANNOT be repaired. There is no un-route
+  // call, `disconnect()` only deepens the silence, and an element binds once
+  // per document so a fresh context cannot take it back either (all three
+  // verified against the spec, see silentKeepalive.ts). The only remaining
+  // path to sound is a physically different element that was never routed.
+  //
+  // That is slot C. This function moves playback onto it: same URL, same
+  // position, same volume/mute, and it becomes `audioRef.current` so every
+  // other part of this file — MediaSession, the stall watchdog, the seek
+  // effect, the diagnostics — keeps working with no knowledge that anything
+  // moved. Double buffering stops for the rest of the page load, because the
+  // two elements it needs are the captive ones.
+  //
+  // One-way and at-most-once by construction: there is exactly one unrouted
+  // element, so there is exactly one escape.
+  //
+  // WHAT THIS CANNOT PROMISE, said out loud rather than buried: slot C's
+  // `play()` here does NOT run inside a user gesture — the whole point is that
+  // it fires while the screen is locked. Whether iOS honours it depends on
+  // whether its autoplay unlock is per-element or per-document, which this
+  // codebase has never been able to determine (the same open question
+  // `fallbackFromFailedPromotion` was written for). The unlock in the gesture
+  // effect below is the mitigation; the `escapePlayRejected` report is what
+  // will finally answer the question with evidence instead of reasoning.
+  const escapeFromAudioGraph = useCallback(
+    (reason: string) => {
+      if (graphEscapedRef.current) return;
+      graphEscapedRef.current = true;
+      setGraphEscaped(true);
+      const routed = audioRef.current;
+      const preload = preloadAudioRef.current;
+      const escape = escapeAudioRef.current;
+      const url = srcUrlRef.current;
+      const at = routed ? routed.currentTime : 0;
+      const wantPlaying = stateRef.current.isPlaying;
+      // Close the dead graph before anything else. Whatever it is doing now,
+      // it is not carrying sound, and leaving an AudioContext alive next to
+      // the element that is about to take over only gives WebKit a second
+      // participant to weigh — the exact competition this design removed.
+      keepaliveRef.current?.close();
+      reportFailure('music.player.audioGraphEscape', reason, {
+        itemId: currentItemIdRef.current,
+        at: Number(at.toFixed(2)),
+        wantPlaying,
+        hasEscapeElement: Boolean(escape),
+        escapeUnlockAttempted: escapeUnlockAttemptedRef.current,
+        escapeUnlockPlayed: escapeUnlockPlayedRef.current,
+        hidden: typeof document !== 'undefined' && document.visibilityState === 'hidden',
+        keepaliveEvents: keepaliveEventsRef.current.slice(-KEEPALIVE_EVENT_LOG_MAX),
+      });
+      // Deliberately NOT `if (!escape || !url) return`. Adversarial review
+      // caught that pairing: with an escape element present but no `src` yet,
+      // bailing left `audioRef.current` pointing at a captive element, so the
+      // NEXT track would also load onto something that cannot sound. There is
+      // only one case with nothing to do — no escape element at all — and it
+      // cannot happen while slot C is rendered unconditionally.
+      if (!escape) return;
+      // Both captive elements go quiet. The routed one is producing nothing
+      // audible anyway, but it is still holding the media session as far as
+      // the OS is concerned, and the preload one must stop buffering into a
+      // future that is no longer coming.
+      if (routed && !routed.paused) routed.pause();
+      if (preload && !preload.paused) preload.pause();
+      preloadedUrlRef.current = null;
+      escape.volume = stateRef.current.volume;
+      escape.muted = stateRef.current.muted;
+      if (url) {
+        escape.src = url;
+        escape.load();
+        // `currentTime` cannot be set before the element knows how long the
+        // resource is; assigning it now is silently dropped. Restoring the
+        // position matters more than usual here — this runs mid-song, so
+        // without it the escape would restart the track from zero in the
+        // listener's ear.
+        //
+        // It reads the position LIVE rather than replaying the value captured
+        // above, because `loadedmetadata` can arrive an arbitrary time later
+        // and the user may have moved in the meantime. A version that closed
+        // over the escape-time position clobbered any seek made in that
+        // window — including a lock-screen `seekto`, whose own effect ran
+        // while the element still had no metadata and was therefore dropped.
+        // `seekNonce` is what distinguishes the two: it changes only when
+        // something actually asked to move.
+        const nonceAtHandover = stateRef.current.seekNonce;
+        const seekToHandover = () => {
+          const target = stateRef.current.seekNonce === nonceAtHandover
+            ? at
+            : stateRef.current.position;
+          if (!(target > 0)) return;
+          try {
+            escape.currentTime = target;
+          } catch {
+            // Not seekable (a live/chunked stream). Playing from the start
+            // beats not playing.
+          }
+        };
+        escape.addEventListener('loadedmetadata', seekToHandover, { once: true });
+      } else {
+        // Nothing was loaded to carry across; the declarative src effect owns
+        // whatever comes next, and it now writes to the escape element.
+        srcUrlRef.current = null;
+      }
+      audioRef.current = escape;
+      // Same signal a promotion sends: the physical element behind
+      // `audioRef.current` changed, so the diagnostics hook has to move its
+      // listeners onto it.
+      setAudioIdentityKey((key) => key + 1);
+      if (!wantPlaying || !url) return;
+      armStallWatchdog(currentItemIdRef.current);
+      const p = escape.play();
+      if (p && typeof p.then === 'function') {
+        p.catch(() => {
+          // iOS refused a programmatic play() on an element it does not
+          // consider unlocked — the per-element theory being true. Report it
+          // (this is the measurement), and take the only remaining shot:
+          // replay on the next real user interaction. That is late, but it is
+          // the difference between "the music came back when he touched the
+          // phone" and "the music never came back".
+          //
+          // Disarming the stall watchdog is the other half, and adversarial
+          // review is what surfaced it: a REJECTED play() is not a stall, but
+          // the watchdog cannot tell the difference — 40s later it would fire
+          // `load()`+`play()` on this same still-locked element, fail again,
+          // and then SKIP THE TRACK. Left alone it would walk silently
+          // through the whole queue, one track per minute, and report each
+          // one as a stall. A blocked element needs a gesture, not a retry.
+          clearStallWatchdog();
+          reportFailure(
+            'music.player.escapePlayRejected',
+            'escape element play() rejected outside a gesture',
+            {
+              itemId: currentItemIdRef.current,
+              escapeUnlockAttempted: escapeUnlockAttemptedRef.current,
+              escapeUnlockPlayed: escapeUnlockPlayedRef.current,
+            },
+          );
+          // Held in a ref so unmount can detach it. The sibling unlock effect
+          // cleans its own listeners up and this one did not — an asymmetry
+          // adversarial review flagged: after an unmount, a leaked `{once}`
+          // listener still fires and reaches into a torn-down instance.
+          const retry = () => {
+            escapeRetryCleanupRef.current?.();
+            const el = audioRef.current;
+            if (!el || !stateRef.current.isPlaying) return;
+            const again = el.play();
+            if (again && typeof again.then === 'function') again.catch(() => {});
+          };
+          escapeRetryCleanupRef.current = () => {
+            document.removeEventListener('pointerdown', retry);
+            document.removeEventListener('touchend', retry);
+            document.removeEventListener('keydown', retry);
+            escapeRetryCleanupRef.current = null;
+          };
+          document.addEventListener('pointerdown', retry, { once: true });
+          document.addEventListener('touchend', retry, { once: true });
+          document.addEventListener('keydown', retry, { once: true });
+        });
+      }
+    },
+    [armStallWatchdog, clearStallWatchdog],
+  );
+  escapeFromAudioGraphRef.current = escapeFromAudioGraph;
+
   // Drive the element to play a target track SYNCHRONOUSLY, from inside a user
   // gesture. This is the iOS-critical path: play() must be called within the
   // same call stack as the click/touch, before React flushes any effect.
@@ -423,7 +675,15 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         // event confirms real audio — never let a stale confirmation from the
         // PREVIOUS attempt keep MediaSession claiming 'playing' through it.
         setAudioConfirmedPlaying(false);
-        const wasPromoted = url === preloadedUrlRef.current && promoteFromPreload(url);
+        // After the escape, slots A and B are captive in a dead audio graph:
+        // promoting one of them would hand the track to an element that
+        // cannot make a sound. `preloadedUrlRef` is already cleared in that
+        // case, so this guard is belt-and-braces — and it is the kind of
+        // belt worth wearing, because the failure it prevents is silent.
+        const wasPromoted =
+          !graphEscapedRef.current &&
+          url === preloadedUrlRef.current &&
+          promoteFromPreload(url);
         if (wasPromoted) {
           promotedElement = audioRef.current;
         } else {
@@ -461,6 +721,20 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // still holds. Any failure (no Web Audio, a rejected resume(),
       // anything) is swallowed inside `start()` and cannot touch playback.
       keepaliveRef.current?.start();
+      // Mount the song ON TOP of the tone, in the same context: one origin,
+      // the tone underneath it, the song mixed in. This is the owner's design
+      // — "ambos salen por el mismo canal, solo que uno se monta antes" — and
+      // the order above is what makes "antes" true.
+      //
+      // Deliberately AFTER `start()` (the context has to exist) and BEFORE
+      // `play()` (so the element is already carried when it begins to sound,
+      // instead of switching origins mid-note). Never routes once the escape
+      // has happened: slot C is the one element that must stay reachable.
+      // Refusing is always safe — an unrouted element simply plays out of
+      // itself, which is exactly today's shipped behaviour.
+      if (!graphEscapedRef.current) {
+        keepaliveRef.current?.routeElement(audio);
+      }
       const p = audio.play();
       if (p && typeof p.then === 'function') {
         p.then(() => {
@@ -679,7 +953,14 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // access is only reliable while a track is actively playing — for a case
   // (pause during exactly the wrong few seconds) with no on-device evidence
   // either way.
-  const nextSrc = state.isPlaying && nextTrack?.streamUrl ? trackSrc(nextTrack) : null;
+  // `graphEscaped` (the React state, not the ref) is what makes this a real
+  // dependency: after the handover the preload element is one of the two
+  // captive ones, so buffering into it would spend the session's scarce
+  // background network on bytes that can never be played. Dropping to null
+  // also drives the preload effect's own cleanup branch, which releases the
+  // resource it is still holding.
+  const nextSrc =
+    !graphEscaped && state.isPlaying && nextTrack?.streamUrl ? trackSrc(nextTrack) : null;
 
   // Preload the NEXT track into the SEPARATE, hidden preload <audio> element
   // while the CURRENT one is still playing — the only point in the lifecycle
@@ -860,6 +1141,47 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     const unlock = () => {
       document.removeEventListener('pointerdown', unlock);
       document.removeEventListener('touchend', unlock);
+      document.removeEventListener('keydown', unlock);
+      // FIRST, before the active element is touched at all — and the order is
+      // the entire safety argument, so it must not be moved.
+      //
+      // The probe removed in `92b215f` played a SECOND element inside this
+      // same gesture and the owner's iPhone reported "it says it is playing
+      // but there is no sound". The mechanism that explains it is WebKit
+      // handing the single audio route to whoever called `play()` MOST
+      // RECENTLY, and that probe ran last: after the real element's play().
+      // This one runs first, on a `pointerdown` that precedes the `click`
+      // which starts the song, so every later `play()` — the active
+      // element's probe below, and the song itself in `playImperative` — is
+      // more recent than this. It is also 50ms of silence that ENDS on its
+      // own (no pause() racing anything) and needs no network, so it is over
+      // before a real track has finished loading.
+      //
+      // What it buys: slot C has then played once from a user gesture, which
+      // is what iOS requires per element IF its unlock is per-element. If it
+      // is per-document instead, this is harmless dead weight. Nobody has
+      // been able to determine which — so this is written to be safe under
+      // both readings rather than correct under one.
+      const escape = escapeAudioRef.current;
+      const clip = silentAudioClip();
+      if (escape && clip && !escapeUnlockAttemptedRef.current) {
+        escapeUnlockAttemptedRef.current = true;
+        try {
+          escape.src = clip;
+          const ep = escape.play();
+          if (ep && typeof ep.then === 'function') {
+            ep.then(() => {
+              escapeUnlockPlayedRef.current = true;
+            }).catch(() => {
+              // Refused. The escape can still try again from its own
+              // rejection path; nothing here is worth reporting on its own.
+            });
+          }
+        } catch {
+          // Never let the escape's preparation break the gesture that is
+          // about to start the music.
+        }
+      }
       const audio = audioRef.current;
       if (audio) {
         unlockedRef.current = true;
@@ -894,11 +1216,20 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         }
       }
     };
+    // `keydown` is here for the escape element's sake, not the active one's:
+    // adversarial review pointed out that a control activated from the
+    // keyboard (Enter/Space) dispatches no pointer or touch event at all, so
+    // a keyboard-only session would start music with slot C never having
+    // played — and slot C only matters when it is asked to take over without
+    // a gesture of its own. `keydown` precedes the resulting `click` the same
+    // way `pointerdown` does, so the ordering argument above holds unchanged.
     document.addEventListener('pointerdown', unlock, { once: true });
     document.addEventListener('touchend', unlock, { once: true });
+    document.addEventListener('keydown', unlock, { once: true });
     return () => {
       document.removeEventListener('pointerdown', unlock);
       document.removeEventListener('touchend', unlock);
+      document.removeEventListener('keydown', unlock);
     };
   }, []);
 
@@ -917,6 +1248,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       if (stallTimerRef.current !== null) {
         window.clearTimeout(stallTimerRef.current);
       }
+      escapeRetryCleanupRef.current?.();
       keepaliveRef.current?.close();
     };
   }, []);
@@ -1194,7 +1526,13 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // Read live off `audioRef` rather than an event target so every caller
   // (pause/waiting/stalled) can share this without threading the event through.
   // Records what actually happens to playback around a lock; see the hook.
-  useLockDiagnostics(audioRef, lockDiagnosticsTrackRef, audioIdentityKey, keepaliveStateRef);
+  useLockDiagnostics(
+    audioRef,
+    lockDiagnosticsTrackRef,
+    audioIdentityKey,
+    keepaliveStateRef,
+    routingRef,
+  );
 
   const publishFrozenPosition = useCallback(() => {
     if (
@@ -1571,6 +1909,33 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         ref={setSlotB}
         hidden
         preload="auto"
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleDurationChange}
+        onEnded={handleEnded}
+        onPlay={handlePlay}
+        onPlaying={handlePlaying}
+        onPause={handlePause}
+        onWaiting={handleWaiting}
+        onStalled={handleStalled}
+        onCanPlay={handleCanPlay}
+        onError={handleError}
+      />
+      {/* The escape element: never routed into the keepalive's AudioContext,
+          so it is the one place left that can still make a sound if that
+          graph dies — see `escapeFromAudioGraph`. It plays exactly two things
+          in its life: 50ms of embedded silence on the first user gesture (to
+          satisfy iOS's per-element unlock, if that is what iOS wants), and,
+          if the graph is ever lost, the song itself for the rest of the page
+          load. `preload="none"` because until that day comes it must cost
+          nothing at all. It carries the same handlers as the other two: the
+          moment it becomes `audioRef.current` it is the active element, and
+          every handler already ignores events from any element that is not
+          (`e.currentTarget !== audioRef.current`). */}
+      <audio
+        ref={setSlotC}
+        hidden
+        preload="none"
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onDurationChange={handleDurationChange}
