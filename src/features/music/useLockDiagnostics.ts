@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { reportFailure } from '../../lib/obs/report';
+import { timeRangeEnd } from './musicPlayerCore';
 
 // Why this exists: the defect only happens on the owner's iPhone, when he
 // locks it. There is no iOS simulator on Linux, driving a real iPhone needs a
@@ -34,12 +35,53 @@ const MEDIA_EVENTS = [
   'ratechange',
 ] as const;
 
-export function useLockDiagnostics(audioRef: { current: HTMLAudioElement | null }): void {
+/**
+ * Identifies which track a trace belongs to. Read live off a ref rather than
+ * passed as a reactive value: 31 real traces had to be matched back to a
+ * track by proximity to a server timestamp alone, because nothing here said
+ * which track was playing. That ref must stay fresh across every event this
+ * hook records without forcing a resubscribe on every ordinary track change
+ * (see `audioIdentityKey` below for what SHOULD force a resubscribe).
+ */
+export interface LockDiagnosticsTrackRef {
+  current: { itemId: string | null; videoId: string | null };
+}
+
+export function useLockDiagnostics(
+  audioRef: { current: HTMLAudioElement | null },
+  trackRef: LockDiagnosticsTrackRef,
+  // Double buffering (see MusicPlayerProvider's preload effect) can re-point
+  // `audioRef.current` at a DIFFERENT physical <audio> element mid-session,
+  // when a preloaded next track is promoted to active instead of reusing the
+  // element that just finished. `audioRef` itself is a stable ref object —
+  // mutating `.current` does not re-run an effect keyed on it — so this hook
+  // needs an explicit, reactive signal to know when to tear down the old
+  // element's listeners and attach to the new one. Bump this value exactly
+  // when (and only when) that swap happens; an ordinary track load on the
+  // SAME element must NOT bump it, or every track change would reset the
+  // trace buffer and lose the lead-up context to a hang that started right at
+  // a track boundary.
+  audioIdentityKey: number,
+): void {
+  // Lives OUTSIDE the effect below, in a ref that survives a resubscribe —
+  // caught by adversarial review: an earlier version declared this as a
+  // plain local inside the effect body, so every `audioIdentityKey` bump
+  // (i.e. every double-buffering promotion) silently emptied it. Promotion
+  // only ever happens for the exact population under investigation (a
+  // `streamUrl` preview track — the only kind that gets preloaded), so that
+  // version lost the lead-up context at PRECISELY the track boundary the
+  // hook exists to explain, which is the opposite of what the "don't
+  // resubscribe on an ordinary track change" design was trying to protect.
+  // Hoisting it here means the effect can tear down and re-attach listeners
+  // to the newly-active element while the accumulated samples ride along
+  // unchanged.
+  const traceRef = useRef<Array<Record<string, unknown>>>([]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || typeof document === 'undefined') return;
 
-    const trace: Array<Record<string, unknown>> = [];
+    const trace = traceRef.current;
     const push = (what: string) => {
       trace.push({
         at: Date.now(),
@@ -49,6 +91,25 @@ export function useLockDiagnostics(audioRef: { current: HTMLAudioElement | null 
         hidden: document.visibilityState === 'hidden',
         ready: audio.readyState,
         rate: audio.playbackRate,
+        // The track this sample is about. Its absence was the first gap: 31
+        // real traces had to be cross-referenced against the proxy's own logs
+        // by clock proximity alone to figure out which track a hang belonged
+        // to. Read from the ref (not a closed-over value) so it's always
+        // today's track even though this effect intentionally does NOT
+        // resubscribe on every track change.
+        itemId: trackRef.current.itemId,
+        videoId: trackRef.current.videoId,
+        // The second gap: `paused` and `mediaSessionState` are both blind to
+        // a silent stall — the traced hangs sat with `paused=false` and a
+        // lock screen that kept saying 'playing' through 60-110s of true
+        // silence. `buffered`'s end is the one signal that actually reports
+        // whether bytes are still arriving; a hang shows this value frozen
+        // across every sample from the last `stalled` onward, where a merely
+        // slow-but-live load keeps advancing it. Read through the shared
+        // `timeRangeEnd` guard — `TimeRanges.end()` throws `IndexSizeError`
+        // on an empty range, which is the normal state before any data has
+        // arrived at all.
+        bufferedEnd: timeRangeEnd(audio.buffered),
         // What the OS itself believes about the session — 'none' | 'paused' |
         // 'playing'. This is the piece the earlier traces lacked: they showed
         // the element's own state but not whether the lock screen agreed with
@@ -92,5 +153,9 @@ export function useLockDiagnostics(audioRef: { current: HTMLAudioElement | null 
       for (const type of MEDIA_EVENTS) audio.removeEventListener(type, onMedia);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [audioRef]);
+    // `trackRef` is a ref object (stable identity, read live inside `push`)
+    // and is deliberately NOT a dependency — see `audioIdentityKey`'s
+    // docstring for why an ordinary track change must not resubscribe this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioRef, audioIdentityKey]);
 }

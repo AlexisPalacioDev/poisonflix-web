@@ -171,9 +171,15 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
     expect(metadata?.artwork.some((a) => a.src.includes('maxWidth=512'))).toBe(true);
   });
 
-  it('mirrors playbackState: playing after playNow, paused after toggle', () => {
+  it('mirrors playbackState: playing after playNow AND a confirmed `playing` event, paused after toggle', () => {
     renderProvider();
     act(() => api.playNow([track], 0));
+    // Intent to play is there (`api.isPlaying === true`), but the element has
+    // not yet confirmed real audio — see the "does not report" test below for
+    // why this must stay 'paused' here, not 'playing'.
+    expect(playbackState).toBe('paused');
+
+    act(() => fireEvent.playing(document.querySelector('audio') as HTMLAudioElement));
     expect(playbackState).toBe('playing');
 
     act(() => api.toggle());
@@ -201,7 +207,55 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
 
     act(() => handlers.play?.({}));
     expect(api.isPlaying).toBe(true);
+    // Not 'playing' yet — no confirmed `playing` event for this resume.
+    expect(playbackState).toBe('paused');
+    act(() => fireEvent.playing(document.querySelector('audio') as HTMLAudioElement));
     expect(playbackState).toBe('playing');
+  });
+
+  it('does NOT report "playing" merely from intent — only once the element confirms real audio at least once', () => {
+    // The bug this fixes: `state.isPlaying` flips true the instant a gesture
+    // dispatches, well before the browser resumes audio. Every measured
+    // 60-110s on-device hang showed `mediaSessionState: 'playing'` for its
+    // ENTIRE length, from the very first sample, because nothing here ever
+    // checked for a real `playing` event before making the claim.
+    renderProvider();
+    act(() => api.playNow([track], 0));
+    expect(api.isPlaying).toBe(true);
+    expect(playbackState).not.toBe('playing');
+
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    act(() => fireEvent.playing(audio));
+    expect(playbackState).toBe('playing');
+  });
+
+  it('does NOT revert to "paused" on a mid-stream stall once already confirmed playing (43e1a32/2bbcde9)', () => {
+    // This is the deliberately narrower half of the fix above, added after
+    // adversarial review flagged the first version for reverting on every
+    // `waiting`/`stalled` too. That is the exact "tell the OS the music
+    // stopped when it is only buffering" mistake `43e1a32` (reverted by a
+    // wrong theory in `f79cb82`, then fixed for real in `2bbcde9`) already
+    // proved cost the owner his audio on every lock screen — there through
+    // `setPositionState`'s `playbackRate`, here it would be the same lie
+    // through `playbackState` instead. A stall mid-track means bytes are
+    // late, not that the CURRENT attempt's `playing` confirmation stops
+    // having happened.
+    renderProvider();
+    act(() => api.playNow([track], 0));
+    const audio = document.querySelector('audio') as HTMLAudioElement;
+    act(() => fireEvent.playing(audio));
+    expect(playbackState).toBe('playing');
+
+    act(() => fireEvent.waiting(audio));
+    expect(api.isPlaying).toBe(true);
+    expect(playbackState).toBe('playing'); // NOT reverted
+
+    act(() => fireEvent.stalled(audio));
+    expect(playbackState).toBe('playing'); // still not reverted
+
+    // A REAL pause is the one thing that does correctly flip it.
+    act(() => fireEvent.pause(audio));
+    expect(playbackState).toBe('paused');
   });
 
   it('clears metadata handlers on unmount', () => {

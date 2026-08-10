@@ -272,6 +272,21 @@ export function reducer(state: PlayerState, action: Action): PlayerState {
 // explicit override of the spec's provisional 250ms figure.
 export const BUFFERING_SETTLE_MS = 600;
 
+// `TimeRanges.end()` throws `IndexSizeError` on an empty range (jsdom
+// exercises this: the element starts with no seekable/buffered data at all).
+// Both the duration-mismatch diagnostics below and `useLockDiagnostics` need
+// to read a buffered/seekable end without risking that throw, and both need
+// the exact same guard — hence pulling it out here (the shared, component-free
+// module) instead of leaving a private copy in the provider that a second
+// caller would have had to duplicate.
+export function timeRangeEnd(ranges: TimeRanges): number | null {
+  try {
+    return ranges.length > 0 ? ranges.end(ranges.length - 1) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The buffering flag actually shown to the UI: a stuck `buffering` flag can
  * never outlive playback, without touching any of the 11 track-change reducer

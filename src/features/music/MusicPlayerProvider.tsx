@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type SyntheticEvent,
 } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/musicPrefs';
@@ -26,23 +27,12 @@ import {
   reducer,
   shouldForceAdvance,
   shuffleOrder,
+  timeRangeEnd,
   visibleBuffering,
   type Action,
   type MusicPlayerContextValue,
   type MusicTrack,
 } from './musicPlayerCore';
-
-// `TimeRanges.end()` throws `IndexSizeError` on an empty range (jsdom
-// exercises this: the element starts with no seekable/buffered data at all).
-// Diagnostics must never crash on that — read through this null-returning
-// guard instead of calling `.end()` directly.
-function timeRangeEnd(ranges: TimeRanges): number | null {
-  try {
-    return ranges.length > 0 ? ranges.end(ranges.length - 1) : null;
-  } catch {
-    return null;
-  }
-}
 
 // The <audio> element and everything that drives it. State lives in
 // `musicPlayerCore`; this module exports the component and nothing else, so
@@ -69,9 +59,47 @@ function mediaSessionArtwork(coverUrl: string | null): MediaImage[] {
 // Two dead tracks in a row is a broken upstream, not a broken file.
 const MAX_CONSECUTIVE_AUDIO_ERRORS = 3;
 
+// Milliseconds to wait, after calling play(), before treating the element as
+// genuinely stalled rather than merely slow. 31 real on-device traces (iPhone,
+// iOS 18.7 Safari) of auto-advance with the screen locked: healthy
+// transitions took 1-2s, degraded-but-alive ones took 18-35s, and every
+// transition that ran past that window never recovered on its own within the
+// 60-110s the owner watched it sit in total silence — no further event at
+// all. 40s sits comfortably above the slowest LIVE load actually measured
+// (35s), so a legitimately slow-but-working load is never mistaken for a
+// stall — see the "does not fire on a slow-but-live load" test, which matters
+// as much as the "does fire on a real stall" one.
+const STALL_WATCHDOG_MS = 40_000;
+// Grace window for the single retry (load()+play() again after the first
+// timeout). None of the measured hangs recovered on their own even after
+// 60-110s of silence, so there is no evidence a retry needs the full 40s to
+// prove itself alive — if it hasn't reached `playing` by 15s, waiting longer
+// only extends dead air.
+const STALL_RETRY_GRACE_MS = 15_000;
+
 export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  // Two physical <audio> elements so the NEXT track can be fully buffered on
+  // a SEPARATE element while the CURRENT one is still playing — see the
+  // preload effect below for the measurement this is built on. `audioRef`
+  // always points at whichever element is "active" (the one driving state and
+  // eligible to play); `preloadAudioRef` always points at the other one. They
+  // are NOT tied 1:1 to a fixed JSX element: `promoteFromPreload` swaps which
+  // physical node each one points at when a preloaded track is promoted, so
+  // every other reference to `audioRef.current` in this file keeps working
+  // unmodified after a swap. `setSlotA`/`setSlotB` are the only things React
+  // itself ever calls (once, at mount/unmount) — the swap logic reassigns
+  // `.current` on these two ref objects directly and React never overwrites
+  // that in between, because neither JSX element's `ref` prop identity ever
+  // changes.
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
+  const setSlotA = useCallback((el: HTMLAudioElement | null) => {
+    audioRef.current = el;
+  }, []);
+  const setSlotB = useCallback((el: HTMLAudioElement | null) => {
+    preloadAudioRef.current = el;
+  }, []);
   const lastTickRef = useRef(0);
   // Consecutive <audio> failures. Reset by a successful load; see onError below.
   const consecutiveErrorsRef = useRef(0);
@@ -90,6 +118,11 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // src-effect below detect "already loaded" and avoid a competing load() that
   // would cancel/restart the gesture-initiated play.
   const srcUrlRef = useRef<string | null>(null);
+  // The URL currently loaded (or being loaded) into the PRELOAD element, or
+  // null when nothing is preloaded. Set only by the preload effect below;
+  // consumed (and cleared) by `promoteFromPreload` and by that same effect
+  // once the eligible next track changes or stops being eligible.
+  const preloadedUrlRef = useRef<string | null>(null);
   // Flips true after the element has successfully played once. From that point
   // the media element is unlocked, so a later rejected play() must NOT silently
   // flip isPlaying back to paused (that only guards the genuine pre-unlock
@@ -113,6 +146,30 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // the currentSrc effect.
   const pastKnownDurationRef = useRef<string | null>(null);
 
+  // Whether the element has produced a confirmed `playing` event for the
+  // CURRENT play attempt — distinct from `state.isPlaying`, which the reducer
+  // sets to `true` at gesture time (the INTENT to play), before the browser
+  // has actually resumed audio. Driving MediaSession off `state.isPlaying`
+  // alone is exactly the reported lie: every measured 60-110s hang showed
+  // `mediaSessionState: 'playing'` for its entire length, because that flag
+  // flips the instant a gesture dispatches, never checking whether audio is
+  // actually flowing. This becomes true only on the real `playing` event, and
+  // false again the moment intent stops being backed by flowing audio.
+  const [audioConfirmedPlaying, setAudioConfirmedPlaying] = useState(false);
+  // Bumped exactly when `promoteFromPreload` repoints `audioRef.current` at a
+  // different physical element — see `useLockDiagnostics`'s docstring for why
+  // this (and not an ordinary track change) is what should make it
+  // resubscribe.
+  const [audioIdentityKey, setAudioIdentityKey] = useState(0);
+  // Bumped on a failed preload attempt (see the preload effect and
+  // `handleError`'s non-active branch) to force that effect to re-run even
+  // though the eligible next track (and therefore `nextSrc`) has not
+  // changed — without this, clearing `preloadedUrlRef` on a preload error
+  // has nothing that ever re-triggers the effect, so a track that failed to
+  // preload would silently never get a second attempt until the queue
+  // itself moved on.
+  const [preloadRetryTick, setPreloadRetryTick] = useState(0);
+
   const currentIndex = currentIndexOf(state);
   const current = currentIndex >= 0 ? (state.queue[currentIndex] ?? null) : null;
 
@@ -129,6 +186,14 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // Read inside the error handler, which must not re-create on every track.
   const currentItemIdRef = useRef<string | null>(null);
   currentItemIdRef.current = currentItemId;
+  // The track identity `useLockDiagnostics` stamps onto every sample. See that
+  // hook's docstring for why this is a ref (read live) rather than a value in
+  // its effect's dependency array.
+  const lockDiagnosticsTrackRef = useRef<{ itemId: string | null; videoId: string | null }>({
+    itemId: null,
+    videoId: null,
+  });
+  lockDiagnosticsTrackRef.current = { itemId: currentItemId, videoId: current?.videoId ?? null };
 
   // Resolve a track's playable URL, or null when it can't be built. A preview
   // track carries its own `streamUrl` (the /bff/music/stream proxy for a
@@ -145,19 +210,214 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     [session?.jellyfinUserId, session?.jellyfinToken],
   );
 
+  // Swap which physical <audio> element is "active" and which is
+  // "preloading": the element that has been silently buffering `url` while
+  // the CURRENT track played becomes the one asked to play, instead of
+  // assigning `url` onto the (about-to-be-abandoned) previously-active
+  // element and forcing a brand-new network load on it. Buffered bytes live
+  // on the specific HTMLMediaElement that fetched them — copying a `src`
+  // string onto a different element does not carry them over — so this is
+  // the only way "already preloaded" can mean anything. Never touches
+  // `.src`/`.load()` on the promoted element: that would throw away the
+  // entire point of having preloaded it. Returns false (and touches nothing)
+  // if there is no preload element to promote.
+  const promoteFromPreload = useCallback((url: string) => {
+    const promoted = preloadAudioRef.current;
+    if (!promoted) return false;
+    const demoted = audioRef.current;
+    // The demoted element may still be actively playing — a manual skip
+    // pressed before the current track naturally ended. Left alone, both
+    // elements would produce sound at once; only iOS's "only one media focus"
+    // rule (not our own bookkeeping) would eventually paper over that, and
+    // not reliably.
+    if (demoted && !demoted.paused) demoted.pause();
+    audioRef.current = promoted;
+    preloadAudioRef.current = demoted;
+    srcUrlRef.current = url;
+    preloadedUrlRef.current = null;
+    // `preload` is a property of the physical DOM node, NOT of the "role" —
+    // swapping which ref points at which node does nothing to it on its own.
+    // Caught by adversarial review: without this, the element that becomes
+    // the new PRELOADER after an odd number of promotions is left holding
+    // `preload="none"` from when it was still the JSX-declared main element,
+    // and the resource-selection algorithm honours that hint even under an
+    // explicit `.load()` call — silently turning preloading off on every
+    // other transition. Assign it explicitly so it always matches the
+    // element's CURRENT role, not its original JSX one.
+    promoted.preload = 'none';
+    if (demoted) demoted.preload = 'auto';
+    // The volume/mute effect further down is keyed on [state.volume,
+    // state.muted] and will not re-fire from a bare swap (neither value
+    // changed) — apply them to the newly-active element directly so a
+    // muted/volume-adjusted session does not silently un-mute itself the
+    // moment a preloaded track takes over.
+    promoted.volume = stateRef.current.volume;
+    promoted.muted = stateRef.current.muted;
+    setAudioIdentityKey((key) => key + 1);
+    return true;
+  }, []);
+
+  // Re-created every render so the timers below always run today's closures
+  // (current track, latest `advanceFromMediaEvent`) even when armed on an
+  // earlier render — the same ref-of-latest-closure technique `mediaActionsRef`
+  // uses further down for the MediaSession action handlers. Assigned after
+  // `advanceFromMediaEvent` is declared, below.
+  const stallTimerRef = useRef<number | null>(null);
+  // The track a pending watchdog fire is about. A fire whose key no longer
+  // matches is stale — the user (or an earlier arm) already moved on from it
+  // — and must be a no-op.
+  const stallWatchdogKeyRef = useRef<string | null>(null);
+  // 0 = watching the first attempt; 1 = already retried once via load()+play()
+  // and now watching whether THAT attempt reaches `playing`.
+  const stallRetryStageRef = useRef<0 | 1>(0);
+  const stallCheckRef = useRef<(key: string | null, stage: 0 | 1) => void>(() => {});
+
+  const clearStallWatchdog = useCallback(() => {
+    if (stallTimerRef.current !== null) {
+      window.clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  // Arms (or re-arms) the watchdog for the play attempt just made on `key`'s
+  // track. Always restarts at stage 0 — a fresh `playImperative` call means a
+  // fresh attempt, even if a previous one was mid-retry.
+  const armStallWatchdog = useCallback((key: string | null) => {
+    if (stallTimerRef.current !== null) window.clearTimeout(stallTimerRef.current);
+    stallWatchdogKeyRef.current = key;
+    stallRetryStageRef.current = 0;
+    stallTimerRef.current = window.setTimeout(() => {
+      stallTimerRef.current = null;
+      stallCheckRef.current(key, 0);
+    }, STALL_WATCHDOG_MS);
+  }, []);
+
+  // MITIGATION for the unresolved per-element-vs-per-document autoplay-unlock
+  // risk documented on the belt-and-suspenders unlock effect below: if the
+  // PROMOTED element's very first play() rejects, do not let the track sit
+  // silent. Reverse `promoteFromPreload`'s ref swap and preload flags, then
+  // load+play `url` on the element that was demoted back into "active" — that
+  // element is the one guaranteed to have received a real user gesture at
+  // some point this session (it is how audio ever started playing at all), so
+  // it is the one place still known to be unlocked if iOS's unlock turns out
+  // to be scoped per-element. Worst case this degrades to EXACTLY the
+  // pre-double-buffering behaviour: a fresh `.src` + `.load()` + `.play()` on
+  // a single already-unlocked element — measured at 10/21 successful
+  // locked-screen transitions, not 0/21. Also reports via `reportFailure`
+  // under its own scope: whether this ever fires on a real device is the one
+  // piece of evidence that tells us if iOS's unlock is per-element at all,
+  // and today there is none.
+  //
+  // `promotedElement` is the identity `playImperative` captured AT THE MOMENT
+  // it promoted — a rejection is delivered asynchronously (a promise
+  // `.catch`), and adversarial review found a real path in this same file
+  // that can move `audioRef.current`/`srcUrlRef` again before that rejection
+  // lands: a manual skip (or another auto-advance) while THIS promotion's
+  // play() is still pending (`promoteFromPreload`'s `demoted.pause()` on the
+  // NEW attempt rejects the OLD one). Acting on a stale rejection would
+  // silently move a NEWER, already-correct playback state backwards — one
+  // traced case left the player stuck on the wrong track with no
+  // self-correction. Bailing out when the world has moved on since this
+  // specific promotion is what keeps the fallback confined to the one case it
+  // exists for.
+  //
+  // This guard does NOT, by itself, cover the stall watchdog's own retry
+  // (`audio.load()` on the SAME element aborting THIS SAME pending play()) —
+  // a second adversarial pass confirmed neither `audioRef.current` nor
+  // `srcUrlRef.current` change in that case, so the identity check above
+  // would pass right through it. That path is closed instead at the call
+  // site in `playImperative`, by never invoking this function at all for an
+  // `AbortError` — see the comment there for why that rejection reason
+  // specifically means "this file interrupted itself", not "iOS refused".
+  const fallbackFromFailedPromotion = useCallback(
+    (target: MusicTrack | null, url: string, promotedElement: HTMLAudioElement) => {
+      if (audioRef.current !== promotedElement || srcUrlRef.current !== url) {
+        // Stale: something else (a later gesture, another auto-advance,
+        // another promotion) already moved playback on from the attempt
+        // that just rejected. Acting now would undo THAT progress, not fix
+        // this one.
+        return;
+      }
+      const failed = audioRef.current;
+      const original = preloadAudioRef.current;
+      reportFailure(
+        'music.player.promotionPlayRejected',
+        'promoted preload element play() rejected; falling back to the original element',
+        { itemId: target?.itemId ?? null, videoId: target?.videoId ?? null },
+      );
+      if (!original) return; // nothing to fall back to (only one element ever existed)
+      if (failed && !failed.paused) failed.pause();
+      audioRef.current = original;
+      preloadAudioRef.current = failed;
+      srcUrlRef.current = url;
+      preloadedUrlRef.current = null;
+      original.preload = 'none';
+      if (failed) failed.preload = 'auto';
+      original.volume = stateRef.current.volume;
+      original.muted = stateRef.current.muted;
+      original.src = url;
+      original.load();
+      setAudioIdentityKey((key) => key + 1);
+      // Fresh full-budget watchdog for this new attempt, defensively — NOT a
+      // continuation of whatever stage/timeout the interrupted attempt's
+      // watchdog was on. (The specific scenario this was first written to
+      // guard against — reaching the fallback FROM the stall watchdog's own
+      // stage-1 retry — turned out to be closed one layer up instead: that
+      // retry's `audio.load()` rejects the pending promotion with
+      // `AbortError`, which the caller in `playImperative` now filters out
+      // before ever calling this function at all. This call stays anyway as
+      // defense-in-depth for whatever genuine, non-Abort rejection DOES
+      // reach here — it should never depend on the interrupted attempt's
+      // watchdog stage having been favourable.)
+      armStallWatchdog(target?.itemId ?? null);
+      // Not gesture-synchronous (this runs from a rejected promise's .catch, a
+      // microtask) — but so is the stall watchdog's own retry `play()` further
+      // down, on the SAME reasoning: `original` already produced a real
+      // `playing` event earlier this session, and iOS's on-device probe
+      // (`020406d`) already confirmed a non-gesture play() is accepted on an
+      // element that has previously played, with a new src, from a media-event
+      // task. This is not a new risk, just the existing one reused.
+      const p = original.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          unlockedRef.current = true;
+        }).catch(() => {
+          // Both elements rejected. Nothing further to fall back to — same
+          // "gesture-initiated, don't lie about state" swallow the caller
+          // already applies to every other play() rejection in this file.
+        });
+      }
+    },
+    [armStallWatchdog],
+  );
+
   // Drive the element to play a target track SYNCHRONOUSLY, from inside a user
   // gesture. This is the iOS-critical path: play() must be called within the
   // same call stack as the click/touch, before React flushes any effect.
   const playImperative = useCallback(
     (target: MusicTrack | null) => {
-      const audio = audioRef.current;
-      if (!audio) return;
+      if (!audioRef.current) return;
       const url = trackSrc(target);
+      // The exact element THIS call promoted, if it did — captured so the
+      // (asynchronous) rejection handler below can tell a fallback that still
+      // applies from a stale one; see `fallbackFromFailedPromotion`'s
+      // docstring for the race this closes.
+      let promotedElement: HTMLAudioElement | null = null;
       // Only (re)assign src when the target actually differs from what's loaded;
       // re-assigning the same src would reset currentTime and stall playback.
       if (url && srcUrlRef.current !== url) {
-        srcUrlRef.current = url;
-        audio.src = url;
+        // A gap of unknown length is about to open before the NEXT `playing`
+        // event confirms real audio — never let a stale confirmation from the
+        // PREVIOUS attempt keep MediaSession claiming 'playing' through it.
+        setAudioConfirmedPlaying(false);
+        const wasPromoted = url === preloadedUrlRef.current && promoteFromPreload(url);
+        if (wasPromoted) {
+          promotedElement = audioRef.current;
+        } else {
+          const audio = audioRef.current;
+          srcUrlRef.current = url;
+          audio.src = url;
+        }
         // Seed the scale from what the source already told us. Without this a
         // streamed preview shows 0:00 and a full-looking bar until (or unless)
         // the element works the length out for itself.
@@ -166,18 +426,46 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SET_DURATION', duration: known });
         }
       }
+      const audio = audioRef.current;
+      if (!audio) return;
+      armStallWatchdog(target?.itemId ?? null);
       const p = audio.play();
       if (p && typeof p.then === 'function') {
         p.then(() => {
           unlockedRef.current = true;
-        }).catch(() => {
+        }).catch((err: unknown) => {
+          // MITIGATION (see `fallbackFromFailedPromotion`'s docstring): the
+          // promoted preload element has never received a user gesture of
+          // its own — if iOS's autoplay unlock turns out to be per-element
+          // rather than per-document, its play() rejects here, silently,
+          // every single time. Falling back to the original (gesture-backed)
+          // element is what keeps that scenario at today's 10/21 instead of
+          // dropping to 0/21.
+          //
+          // AbortError is filtered out here on purpose — verified by a
+          // second adversarial pass to be reachable in practice, not just in
+          // theory: the stall watchdog's own stage-0 retry (`audio.load()`,
+          // see below) on THIS SAME element aborts whatever play() is still
+          // pending on it, including this very promoted attempt, with
+          // `AbortError`. That is this file interrupting itself, not iOS
+          // refusing anything — treating it as a real block would both log
+          // false "promotionPlayRejected" evidence (poisoning the one signal
+          // this mitigation exists to collect) AND run the fallback for no
+          // reason while the watchdog's own retry is still in flight,
+          // stepping on it. A genuine autoplay rejection (NotAllowedError,
+          // etc.) is never reported as AbortError, so nothing real is lost by
+          // skipping it here.
+          const isAbort = err instanceof DOMException && err.name === 'AbortError';
+          if (!isAbort && promotedElement && url) {
+            fallbackFromFailedPromotion(target, url, promotedElement);
+          }
           // Gesture-initiated: don't flip to paused. If the element is still
           // locked the belt-and-suspenders unlock listener handles it; once
           // unlocked, transient rejections must not lie about play state.
         });
       }
     },
-    [trackSrc],
+    [trackSrc, promoteFromPreload, armStallWatchdog, fallbackFromFailedPromotion],
   );
 
   // Run a reducer action that (may) start/resume playback from a user gesture:
@@ -223,6 +511,70 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     runGesture(action);
   }, [runGesture]);
 
+  // The watchdog's actual check, run from the timers `armStallWatchdog` sets
+  // up. Reassigned every render (not a useCallback) purely so it always
+  // closes over today's `current`/`advanceFromMediaEvent` — the timer that
+  // invokes it is armed once but may fire many renders later.
+  stallCheckRef.current = (key, stage) => {
+    if (stallWatchdogKeyRef.current !== key || stallRetryStageRef.current !== stage) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    // No `readyState`/`paused` re-check here on purpose — adversarial review
+    // caught an earlier version that had one (`readyState > 1` treated as
+    // "not stalled"), and it was actively wrong for exactly the scenario
+    // double buffering is meant to help: a PROMOTED element can legitimately
+    // already be at `readyState` 4 (fully preloaded) while still never
+    // having produced a `playing` event, if its `play()` was silently
+    // rejected — `readyState > 1` would have waved that through as healthy.
+    // The only fact this callback needs is the one thing that is guaranteed:
+    // `handlePlaying` calls `clearStallWatchdog()` synchronously and
+    // `clearTimeout` is unconditional in single-threaded JS, so if this
+    // callback is running AT ALL, `playing` has not fired for this attempt —
+    // full stop, nothing left to double-check. `handlePause`,`handleEnded`,
+    // and `handleError`'s active branch clear it the same way for their own
+    // terminal outcomes, so a genuine user pause or a track that already
+    // ended/errored can't reach here either.
+    if (stage === 0) {
+      stallRetryStageRef.current = 1;
+      reportFailure('music.player.stallWatchdog', 'no playing event before timeout; retrying', {
+        itemId: key,
+        videoId: current?.videoId ?? null,
+        readyState: audio.readyState,
+        bufferedEnd: timeRangeEnd(audio.buffered),
+      });
+      audio.load();
+      const p = audio.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      stallTimerRef.current = window.setTimeout(() => {
+        stallTimerRef.current = null;
+        stallCheckRef.current(key, 1);
+      }, STALL_RETRY_GRACE_MS);
+      return;
+    }
+
+    // Second trip: even a fresh load()+play() never produced `playing` within
+    // the shorter grace window. There is no evidence a third attempt would
+    // behave differently — none of the measured hangs recovered on their own
+    // even after 60-110s — so skip forward instead of sitting in more
+    // silence.
+    stallRetryStageRef.current = 0;
+    reportFailure('music.player.stallWatchdog', 'retry also stalled; skipping track', {
+      itemId: key,
+      videoId: current?.videoId ?? null,
+      readyState: audio.readyState,
+      bufferedEnd: timeRangeEnd(audio.buffered),
+    });
+    consecutiveErrorsRef.current += 1;
+    // Same breaker `onError` uses: skipping past one dead track is right,
+    // sprinting through a whole queue because the network is truly gone is
+    // not.
+    if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_AUDIO_ERRORS) {
+      dispatch({ type: 'SET_PLAYING', value: false });
+      return;
+    }
+    advanceFromMediaEvent();
+  };
+
   // The URL the current track resolves to (preview streamUrl or Jellyfin). Used
   // as the src-effect key so re-renders that don't change the source never
   // reload/restart playback.
@@ -238,6 +590,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       srcUrlRef.current = null;
       durationReportedRef.current = null;
       pastKnownDurationRef.current = null;
+      setAudioConfirmedPlaying(false);
       audio.removeAttribute('src');
       audio.load();
       return;
@@ -246,6 +599,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     srcUrlRef.current = currentSrc;
     durationReportedRef.current = null;
     pastKnownDurationRef.current = null;
+    setAudioConfirmedPlaying(false);
     audio.src = currentSrc;
     audio.load();
     // `isPlaying` is intentionally not a dep — the play/pause effect below owns it.
@@ -276,6 +630,92 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     warmMusicTrack(nextTrack.videoId, streamUrlSource(nextTrack.streamUrl), 'full');
   }, [state.isPlaying, nextTrack?.videoId, nextTrack?.streamUrl]);
 
+  // The URL the immediately-next queue track resolves to, but ONLY while the
+  // current one is playing, and only for a track that isn't in the library
+  // yet (has a `streamUrl`) — the same population the full-depth server warm
+  // above targets. Computed here (not inside the effect) so the effect's own
+  // dependency array can be this one string, the same pattern `currentSrc`
+  // above already uses.
+  //
+  // Gating on `state.isPlaying` is a deliberate, explicit tradeoff, not an
+  // oversight: a pause — including an involuntary one, e.g. iOS handing audio
+  // focus to a phone call — drops `nextSrc` to `null`, and the preload effect
+  // below then discards whatever had been buffered and calls `load()` again
+  // on resume, paying a fresh fetch for the one transition right after an
+  // interruption. The alternative (keep buffering through a pause) would
+  // violate the one constraint this whole feature is built on — network
+  // access is only reliable while a track is actively playing — for a case
+  // (pause during exactly the wrong few seconds) with no on-device evidence
+  // either way.
+  const nextSrc = state.isPlaying && nextTrack?.streamUrl ? trackSrc(nextTrack) : null;
+
+  // Preload the NEXT track into the SEPARATE, hidden preload <audio> element
+  // while the CURRENT one is still playing — the only point in the lifecycle
+  // where iOS reliably grants this tab any meaningful network access at all.
+  //
+  // The measurement this is built on: 21 on-device auto-advances with the
+  // phone locked (iPhone, iOS 18.7 Safari), 10 succeeded and 11 hung for
+  // 60-110s with the identical shape (`waiting` -> `stalled` -> total
+  // silence, `readyState` stuck at 0-1, no further event of any kind). Three
+  // server-log cross-checks cleared the backend: one hang's file finished on
+  // the worker 9.84s in while the phone's connection sat stalled 112s until
+  // Caddy reset it; one hang had NO server-side activity at all — the track
+  // was never even requested; one hang's file was ready on the worker 12s
+  // BEFORE `play()` and it still hung 89s. In all three, the bottleneck was
+  // the phone failing to open/use a connection, not the server being slow.
+  //
+  // `020406d`'s on-device probe found that iOS "will start a PRELOADED track
+  // from an `ended` handler" — preloaded is the word doing the work. Nothing
+  // has been, since the single element that plays everything is
+  // `preload="none"`. Fetching the next track's bytes now, onto a DIFFERENT
+  // element that is never told to play, and promoting THAT element (see
+  // `promoteFromPreload`) when the track actually changes, is what turns that
+  // finding into something more than a fact nothing acts on.
+  //
+  // NOT a fix, and not claimed as one: this raises the odds, it does not
+  // guarantee them. None of the three cross-checked hangs above were caused
+  // by anything the client had or hadn't buffered — iOS can freeze the tab's
+  // network at any point regardless of what's already loaded. A client-side
+  // buffer only helps the transitions where the freeze happens to land after
+  // the buffer was filled.
+  //
+  // Restricted to `streamUrl` tracks (same criterion as the full-depth server
+  // warm above): a downloaded library track plays straight off Jellyfin
+  // DirectPlay, which appears to track playback/session state per request on
+  // the server; opening a second concurrent GET against the same item purely
+  // to prebuffer risks confusing that bookkeeping for a payoff this slice has
+  // no on-device evidence for, so it is left alone for now. Only ever one
+  // track ahead — the production worker has already fallen over once under
+  // load, and this is speculative work for a track that hasn't been
+  // requested yet.
+  useEffect(() => {
+    const preload = preloadAudioRef.current;
+    if (!preload) return;
+    if (!nextSrc) {
+      // Checked against the DOM, not just `preloadedUrlRef` — a promotion
+      // (`promoteFromPreload`) already clears that ref as part of the swap,
+      // but the demoted element can still be holding the just-finished
+      // track's `src` (e.g. the queue ran out right after a promotion, so
+      // this branch is reached with a ref that's already null). Gating only
+      // on the ref left that stale resource — and its now-permanent
+      // `preload="auto"` from the swap — sitting loaded forever.
+      if (preloadedUrlRef.current !== null || preload.hasAttribute('src')) {
+        preloadedUrlRef.current = null;
+        preload.removeAttribute('src');
+        preload.load();
+      }
+      return;
+    }
+    if (preloadedUrlRef.current === nextSrc) return; // already (being) loaded
+    preloadedUrlRef.current = nextSrc;
+    preload.src = nextSrc;
+    preload.load();
+    // `preloadRetryTick` has no bearing on WHAT gets loaded (only `nextSrc`
+    // does) — it exists purely so `handleError`'s non-active branch can force
+    // this effect to run again after a failed attempt, even when the
+    // eligible next track hasn't changed.
+  }, [nextSrc, preloadRetryTick]);
+
   // Reflect the isPlaying flag onto the element. A rejected play() while the
   // element is still locked (autoplay policy, no src) flips the flag back so the
   // UI stays truthful — but only before the first successful play; afterwards
@@ -297,46 +737,207 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [state.isPlaying, currentItemId]);
 
+  // Keep the stall watchdog's lifecycle tied to the SAME ground truth as the
+  // effect above (`state.isPlaying` + `currentItemId`), not just to
+  // `playImperative`'s call sites. Adversarial review found `armStallWatchdog`
+  // was ONLY ever invoked from `playImperative` — so any transition that
+  // changes what should be playing WITHOUT going through it left a stale
+  // watchdog running:
+  //
+  //  - Emptying the queue (`removeFromQueue` down to nothing) dispatches
+  //    `REMOVE` directly; nothing ever paused the element or cleared the
+  //    timer, so a watchdog armed for the just-removed track fired anyway —
+  //    `load()`+`play()` on a src-less element, a false report, and a
+  //    consecutive-error charged against nothing.
+  //  - Removing the CURRENT track while others remain reassigns `current` to
+  //    whatever shifted into its slot WITHOUT changing `isPlaying` (see the
+  //    `REMOVE` reducer branch) and without calling `playImperative` either —
+  //    so the OLD watchdog (armed for the removed track, on whatever timeout
+  //    had already elapsed) kept counting down and fired against the NEW
+  //    current track: wrong `itemId` in the report, and a timeout budget with
+  //    no relationship to when the new track actually started loading.
+  //
+  // Keying this off the same two reactive values the declarative play/pause
+  // effect already trusts fixes both: any `currentItemId` change re-arms
+  // fresh (correct track, full budget), and `isPlaying` turning false (paused
+  // by the user OR the queue running out) clears it — the latter also closes
+  // a related gap in `handlePause` alone: a `pause()` call on an element
+  // whose `paused` was already `true` (e.g. after a play() that silently
+  // never started) produces NO `pause` event at all per spec, so a handler
+  // keyed only on that event can miss a user's own pause entirely. `dispatch`
+  // updating `state.isPlaying` is unconditional and synchronous regardless of
+  // what the DOM element does, so this effect cannot miss it the same way.
+  useEffect(() => {
+    if (!state.isPlaying || !currentItemId) {
+      clearStallWatchdog();
+      return;
+    }
+    armStallWatchdog(currentItemId);
+  }, [state.isPlaying, currentItemId, clearStallWatchdog, armStallWatchdog]);
+
   // Belt-and-suspenders: unlock the media element on the very first user
   // interaction anywhere in the document. If a track is loaded but paused, a
   // guarded no-op play()->pause() satisfies iOS's user-activation requirement
   // so a later programmatic play() (e.g. auto-advance on `ended`) is allowed.
   // Safe when nothing is loaded — it does nothing. Fires at most once.
+  //
+  // PREVENTION, paired with the MITIGATION in `fallbackFromFailedPromotion`
+  // above: this also probes the PRELOAD element in the SAME gesture (see the
+  // second half of `unlock` below), not just the active one. Why both exist,
+  // rather than trusting one: whether iOS's autoplay unlock is scoped
+  // PER-ELEMENT or PER-DOCUMENT/session is genuinely unresolved from here —
+  // no iOS simulator on Linux, and this is exactly the kind of thing that
+  // cannot be inferred from spec text alone. If unlock is per-document, the
+  // preload probe below is redundant but harmless. If it is per-element,
+  // this is the ONLY chance the preload element ever gets to be unlocked by
+  // an actual user gesture: absent it, its very first `play()` in a session
+  // is always issued later, from `handleEnded`'s media-event task (via
+  // `promoteFromPreload`), which is not itself a user gesture. `020406d`'s
+  // on-device probe proved iOS accepts a non-gesture `play()` from an
+  // `ended` handler for an ALREADY-unlocked element with a NEW src — it did
+  // NOT test a second element that had never played at all, so this
+  // prevention step is still unverified on a real device. If it does not
+  // work, `fallbackFromFailedPromotion` (see `playImperative`) is what keeps
+  // a rejected promoted `play()` from going to total silence instead of
+  // degrading to today's already-measured 10/21.
   useEffect(() => {
     const unlock = () => {
       document.removeEventListener('pointerdown', unlock);
       document.removeEventListener('touchend', unlock);
       const audio = audioRef.current;
-      if (!audio) return;
-      unlockedRef.current = true;
-      if (srcUrlRef.current && !stateRef.current.isPlaying) {
-        // Open the suppression window synchronously, BEFORE play() — its
-        // resulting `play`/`pause` events must be swallowed by the handlers
-        // below, not observed as a real user play/pause.
-        probeRef.current = true;
-        const p = audio.play();
-        if (p && typeof p.then === 'function') {
-          p.then(() => {
-            if (stateRef.current.isPlaying) {
-              // The user won the race with a real play in the meantime —
-              // nothing to suppress, and pausing now would be a real pause.
+      if (audio) {
+        unlockedRef.current = true;
+        if (srcUrlRef.current && !stateRef.current.isPlaying) {
+          // Open the suppression window synchronously, BEFORE play() — its
+          // resulting `play`/`pause` events must be swallowed by the handlers
+          // below, not observed as a real user play/pause.
+          probeRef.current = true;
+          const p = audio.play();
+          if (p && typeof p.then === 'function') {
+            p.then(() => {
+              if (stateRef.current.isPlaying) {
+                // The user won the race with a real play in the meantime —
+                // nothing to suppress, and pausing now would be a real pause.
+                probeRef.current = false;
+                return;
+              }
+              audio.pause(); // its `pause` event closes the window (see onPause)
+            }).catch(() => {
               probeRef.current = false;
-              return;
-            }
-            audio.pause(); // its `pause` event closes the window (see onPause)
-          }).catch(() => {
+            });
+          } else {
             probeRef.current = false;
+          }
+          // Belt-and-suspenders: if the probe's play() never settles, don't
+          // deadlock reconciliation forever. A leaked probe-pause after this is
+          // harmless — the probe only runs when `!isPlaying`, so the dispatch
+          // it would have made is an identity-return no-op anyway.
+          window.setTimeout(() => {
+            probeRef.current = false;
+          }, 3000);
+        }
+      }
+
+      // Second half of the PREVENTION described above: probe the PRELOAD
+      // element too, AFTER the active element's own probe/play() call above.
+      // That ordering is the best available sequencing, NOT a proven
+      // safeguard: whether starting the active element's play() first
+      // actually stops a later muted play() on a SECOND element from
+      // stealing iOS's single-active-element audio focus is unverified from
+      // here. WebKit's historical "only one media session at a time" rule
+      // has generally favoured whichever element played MOST RECENTLY, which
+      // would argue against this ordering mattering at all — so this is not
+      // relied upon as a guarantee, only chosen because it cannot make things
+      // worse and might help.
+      //
+      // No separate suppression flag (unlike `probeRef` for the active
+      // element) is needed for this probe's own `play`/`pause` events: every
+      // shared handler on both <audio> elements
+      // (`handlePlay`/`handlePause`/`handleWaiting`/`handleStalled`/etc.) is
+      // gated on `e.currentTarget !== audioRef.current`, and the preload
+      // element cannot be `audioRef.current` this early — that requires a
+      // promotion, which requires a track to have already ended, which
+      // requires playback to have already started from this very gesture.
+      // So these events are already-inert no-ops, exactly like the ones the
+      // ordinary preload-then-promote flow already produces.
+      //
+      // Muted unconditionally before play(), regardless of whether the
+      // element already holds a `src` (normally it won't yet, this early,
+      // since preloading only ever starts once a track is already playing)
+      // — the one hard requirement is that NOTHING audible ever comes out of
+      // this element while it is only precaching, and muting is the only way
+      // to guarantee that regardless of what it happens to be holding.
+      // Restored to its previous value once the attempt settles (see
+      // `restore` below) so it does not linger muted into a later promotion
+      // (though `promoteFromPreload` would reset it anyway — this is
+      // belt-and-suspenders on top of that).
+      const preload = preloadAudioRef.current;
+      if (preload) {
+        const wasMuted = preload.muted;
+        // Adversarial review measured this on a real Chromium build: calling
+        // play() on an element with NO source, from inside a gesture, stays
+        // PENDING forever — it neither resolves nor rejects on its own. With
+        // no guard, that would leave `preload.muted` stuck `true` and the
+        // element permanently "wanting to play" (per spec) for the rest of
+        // the session, in a browser where it never gets interrupted by a
+        // real preload starting. `settled` + the timeout below are what stop
+        // that: everything past this point is written to run at most once,
+        // whichever of (resolve / reject / 3s timeout) happens first.
+        let settled = false;
+        const restore = () => {
+          if (settled) return;
+          settled = true;
+          // Identity guard — a second adversarial pass found this matters
+          // even here, not just in `fallbackFromFailedPromotion`: if THIS
+          // exact element gets promoted to active (a real track ending)
+          // while this probe's play() is still pending, `preload` (this
+          // closure's captured node) is no longer the preloader — it is the
+          // one actually driving sound. A stale `pause()` from the 3s safety
+          // timeout would silence real playback; skip entirely once the
+          // node's role has moved on.
+          if (preloadAudioRef.current !== preload) return;
+          preload.pause();
+          preload.muted = wasMuted;
+          // Belt-and-suspenders against the probe silently advancing the
+          // element's position: reachable if this element already held a
+          // real preloaded track when the probe ran (e.g. playback started
+          // via a path that never fired the `pointerdown`/`touchend` this
+          // effect listens for). `promoteFromPreload` never seeks on its
+          // own, so without this a later promotion would start the NEXT
+          // track a few hundred ms to a few seconds into itself instead of
+          // at 0.
+          preload.currentTime = 0;
+        };
+        preload.muted = true;
+        const p2 = preload.play();
+        if (p2 && typeof p2.then === 'function') {
+          p2.then(() => {
+            restore();
+          }).catch((err: unknown) => {
+            restore();
+            // An AbortError here is expected noise, not evidence of an
+            // autoplay block, and must not be reported as one: it fires
+            // whenever something ELSE interrupts this still-pending play()
+            // first — most commonly the ordinary preload effect assigning a
+            // real `src` and calling `.load()` a moment later, or this
+            // probe's OWN `restore()` pausing it once the timeout below
+            // fires. Given the measurement above (a src-less play() never
+            // settles on its own), filtering AbortError out is what keeps
+            // this scope from reporting "blocked" on every single session
+            // regardless of what iOS actually did — the one thing this
+            // report exists to distinguish.
+            const name = err instanceof DOMException ? err.name : null;
+            if (name === 'AbortError') return;
+            reportFailure(
+              'music.player.preloadUnlockProbe',
+              err,
+              { readyState: preload.readyState, errorName: name },
+            );
           });
         } else {
-          probeRef.current = false;
+          restore();
         }
-        // Belt-and-suspenders: if the probe's play() never settles, don't
-        // deadlock reconciliation forever. A leaked probe-pause after this is
-        // harmless — the probe only runs when `!isPlaying`, so the dispatch
-        // it would have made is an identity-return no-op anyway.
-        window.setTimeout(() => {
-          probeRef.current = false;
-        }, 3000);
+        window.setTimeout(restore, 3000);
       }
     };
     document.addEventListener('pointerdown', unlock, { once: true });
@@ -347,12 +948,16 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // The settle timer lives in a ref (armed/cleared from event handlers, not
-  // effects) so it must be cleared explicitly on unmount too.
+  // The settle timer and the stall watchdog both live in refs (armed/cleared
+  // from event handlers, not effects) so both must be cleared explicitly on
+  // unmount too.
   useEffect(() => {
     return () => {
       if (bufferingTimerRef.current !== null) {
         window.clearTimeout(bufferingTimerRef.current);
+      }
+      if (stallTimerRef.current !== null) {
+        window.clearTimeout(stallTimerRef.current);
       }
     };
   }, []);
@@ -562,15 +1167,34 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     });
   }, [current]);
 
-  // Keep the OS play/pause indicator in sync with our state.
+  // Keep the OS play/pause indicator in sync with reality, not merely with
+  // intent, for the ONE gap that was actually traced: `state.isPlaying` flips
+  // true the instant a gesture dispatches — well before the browser has
+  // actually resumed audio — so mirroring it alone reported 'playing' to the
+  // lock screen for the FULL length of every measured hang, from the very
+  // first sample (`play` at t=0, `mediaSessionState: playing`), through
+  // 60-110s of true silence that never produced a single `playing` event.
+  // `audioConfirmedPlaying` closes exactly that gap: it is false until the
+  // CURRENT play attempt's first real `playing` event, so this says 'playing'
+  // only once both the intent AND that first confirmation agree.
+  //
+  // It deliberately does NOT re-litigate the mid-stream case: once an attempt
+  // HAS been confirmed, `audioConfirmedPlaying` stays true through a later
+  // `waiting`/`stalled` (see `handleStalled`'s comment) — flipping this back
+  // to 'paused' on every buffering blip is the same "tell the OS the music
+  // stopped when it is only buffering" mistake `43e1a32`/`2bbcde9` already
+  // proved cost the owner his audio on every lock, just delivered through
+  // `playbackState` instead of `setPositionState`. 'paused' otherwise (Media
+  // Session has no third "buffering" value) covers only: nothing loaded, a
+  // real pause, or a play attempt that has not yet been confirmed even once.
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.playbackState = current
-      ? state.isPlaying
+      ? state.isPlaying && audioConfirmedPlaying
         ? 'playing'
         : 'paused'
       : 'none';
-  }, [state.isPlaying, current]);
+  }, [state.isPlaying, audioConfirmedPlaying, current]);
 
   // Publish position/duration for a freshly-loaded track immediately, using
   // the already-known length (the same `durationSeconds` seed `playImperative`
@@ -611,7 +1235,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // Read live off `audioRef` rather than an event target so every caller
   // (pause/waiting/stalled) can share this without threading the event through.
   // Records what actually happens to playback around a lock; see the hook.
-  useLockDiagnostics(audioRef);
+  useLockDiagnostics(audioRef, lockDiagnosticsTrackRef, audioIdentityKey);
 
   const publishFrozenPosition = useCallback(() => {
     if (
@@ -722,161 +1346,283 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [state, current, currentIndex, runGesture, autoplay]);
 
+  // Both <audio> elements below share this exact handler set, guarded by
+  // `e.currentTarget !== audioRef.current`: since `promoteFromPreload` can
+  // repoint which physical element `audioRef` calls "active" mid-session,
+  // wiring the full state-syncing logic to a FIXED JSX element would leave it
+  // listening to the wrong node after a swap. Routing on the live value of
+  // `audioRef.current` instead means the swap needs no corresponding change
+  // here at all. `onError` is the one handler that behaves differently for
+  // the non-active (preloading) element — a failed preload must not touch
+  // `consecutiveErrorsRef` or advance a queue that is still playing fine.
+  const handleTimeUpdate = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    // Throttle to ~1/s — a raw timeupdate fires 4-60x/s.
+    const now = e.currentTarget.currentTime;
+    if (Math.abs(now - lastTickRef.current) < 1) return;
+    lastTickRef.current = now;
+    dispatch({ type: 'SET_POSITION', position: now });
+
+    // The forced-advance guard: iOS's fMP4 defect duplicates the
+    // element's reported duration, so `ended` never arrives (or arrives
+    // ~2x too late) — see `shouldForceAdvance`'s docstring. Reusing it
+    // (not re-deriving the mismatch check here) is what keeps this from
+    // ever tripping on a healthy track. At most one forced advance per
+    // track load (`pastKnownDurationRef`), same guard shape as
+    // `durationReportedRef` above.
+    const track = current;
+    const itemKey = currentItemIdRef.current;
+    // OBSERVE ONLY — deliberately does not advance the queue.
+    //
+    // This started out as a fix: force the queue on when playback reaches
+    // the track's known length, so a doubled element duration could not
+    // strand it. An adversarial review took that apart. Advancing here
+    // fires on a legitimate scrub past the known length, races `ended`
+    // into a double NEXT that silently eats a track, and never rearms
+    // under repeat-one. Worse, it could not have fixed the reported
+    // symptom anyway: `durationSeconds` is only set by
+    // `searchResultToTrack`, so every library / favourites / history
+    // queue is outside it.
+    //
+    // And the premise itself is unproven. The owner's lock screen showed
+    // a FULL bar at 2:33 — if the element believed 5:06 we would have
+    // published 5:06 and the bar would have sat half empty. That reads
+    // like `ended` never arriving at a correct duration, which is a
+    // different bug with a different fix.
+    //
+    // So: measure first. This records how often the condition the fix
+    // assumed actually occurs on a real device, at zero risk to playback.
+    // Once `music.player.pastKnownDuration` reports (or doesn't) from the
+    // owner's phone, we will know whether that fix was ever the answer.
+    if (
+      itemKey &&
+      pastKnownDurationRef.current !== itemKey &&
+      shouldForceAdvance(e.currentTarget.duration, track?.durationSeconds, now)
+    ) {
+      pastKnownDurationRef.current = itemKey;
+      reportPastKnownDuration();
+    }
+
+    // Feed the lock-screen scrubber (same throttle). setPositionState
+    // throws on NaN/Infinity or position > duration, so guard the values.
+    if (
+      'mediaSession' in navigator &&
+      typeof navigator.mediaSession.setPositionState === 'function'
+    ) {
+      const duration = e.currentTarget.duration;
+      if (Number.isFinite(duration) && duration > 0) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration,
+            position: Math.min(Math.max(now, 0), duration),
+            playbackRate: 1,
+          });
+        } catch {
+          /* invalid position state — skip this tick */
+        }
+      }
+    }
+  };
+
+  const handleLoadedMetadata = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
+  };
+
+  const handleDurationChange = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
+    reportDurationMismatch('durationchange');
+  };
+
+  const handleEnded = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    clearStallWatchdog();
+    setAudioConfirmedPlaying(false);
+    reportDurationMismatch('ended');
+    advanceFromMediaEvent();
+  };
+
+  const handlePlay = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    // Swallowed while the unlock probe's own play() is in flight — it
+    // is not a real user play.
+    if (probeRef.current) return;
+    dispatch({ type: 'SYNC_MEDIA', playing: true });
+  };
+
+  const handlePlaying = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    clearStallWatchdog();
+    setAudioConfirmedPlaying(true);
+    // A track that ACTUALLY plays proves the chain is healthy again — moved
+    // here from `onLoadedMetadata` after adversarial review: `readyState`
+    // reaching HAVE_METADATA (1) is exactly the traced hang's own resting
+    // state (`ready<=1`, no further event for 60-110s), so resetting the
+    // breaker there made it unreachable — a stall-watchdog skip that landed
+    // on a track which got as far as metadata (readyState 1) but never
+    // played reset the very counter meant to stop it, letting the retry/skip
+    // cycle run unbounded through an entire queue instead of tripping
+    // `MAX_CONSECUTIVE_AUDIO_ERRORS`. Only a confirmed `playing` proves the
+    // chain is actually healthy, not just reachable.
+    consecutiveErrorsRef.current = 0;
+    if (bufferingTimerRef.current !== null) {
+      window.clearTimeout(bufferingTimerRef.current);
+      bufferingTimerRef.current = null;
+    }
+    dispatch({ type: 'SYNC_MEDIA', playing: true, buffering: false });
+  };
+
+  const handlePause = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    if (probeRef.current) {
+      // Closes the suppression window FROM this task — a `.then()`/
+      // `.catch()` microtask would run before this event's task and
+      // let the probe's own pause leak through as a user pause.
+      probeRef.current = false;
+      return;
+    }
+    // Safari fires `pause` right after `ended`; that pause must not
+    // undo the NEXT auto-advance the `ended` handler already dispatched.
+    if (e.currentTarget.ended) return;
+    // A genuine pause — whoever asked for it (the user, or the OS taking
+    // audio focus) — means there is nothing left to watch for on this
+    // attempt. Without this, a watchdog armed just before a manual pause
+    // would still fire later and force a retry/skip the user never asked
+    // for.
+    clearStallWatchdog();
+    setAudioConfirmedPlaying(false);
+    publishFrozenPosition(); // a real pause — stop the lock screen's clock now
+    dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
+  };
+
+  const handleWaiting = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    // Deliberately does NOT touch `audioConfirmedPlaying` — see
+    // `handleStalled` just below for why, and the MediaSession playbackState
+    // effect for the narrower thing `audioConfirmedPlaying` actually guards.
+    //
+    // Buffering is NOT stopping. `publishFrozenPosition` reports
+    // `playbackRate: 0`, which tells the OS the session is not
+    // playing — and a phone that has just locked throttles the
+    // network, so `waiting`/`stalled` fire exactly then, not on a
+    // real stop. This call was added (43e1a32) and then reverted
+    // (f79cb82) on the theory that the owner was testing in a
+    // private/incognito tab; he has since confirmed he was not, and
+    // the device traces show playback dying 50-180s after lock, right
+    // after two `stalled` events — buffering, not incognito. Removed
+    // again for good. The cost is a lock-screen scrubber that creeps
+    // for a second while buffering, which is worth paying.
+    armBufferingTimer();
+  };
+
+  const handleStalled = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    // `audioConfirmedPlaying` is deliberately NOT reset here, on purpose,
+    // after adversarial review flagged the first version of this fix for
+    // doing exactly that: it fed into MediaSession's `playbackState`, and
+    // flipping that to 'paused' on every `waiting`/`stalled` is the same
+    // category of "tell the OS the music stopped when it is only buffering"
+    // that `43e1a32`/`2bbcde9` already proved harmful on this owner's actual
+    // iPhone (audio died on every lock) and deliberately reverted for
+    // `setPositionState`'s `playbackRate`. `audioConfirmedPlaying` only ever
+    // gates the INITIAL "playing" claim for a play attempt that has not yet
+    // produced a single `playing` event (exactly the traced lie: `play()`
+    // called, `mediaSessionState: 'playing'` from t=0, then 60-110s of
+    // silence with no confirmation ever having arrived) — once that attempt
+    // HAS been confirmed, a later mid-stream stall does not retroactively
+    // unconfirm it, for the same reason `publishFrozenPosition` does not run
+    // here either.
+    armBufferingTimer();
+  };
+
+  const handleCanPlay = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (e.currentTarget !== audioRef.current) return;
+    clearBuffering();
+  };
+
+  const handleError = (e: SyntheticEvent<HTMLAudioElement>) => {
+    const el = e.currentTarget;
+    if (el !== audioRef.current) {
+      // A dead/unreachable resource for the SPECULATIVE next track. The
+      // current track is unaffected — do not touch `consecutiveErrorsRef`
+      // or advance the queue. Still worth a report: this entire feature's
+      // justification is a measurement, and a preload path that silently
+      // dies on-device would otherwise produce zero signal (caught by
+      // adversarial review — the original comment here claimed a "later
+      // effect pass" would retry, which was false without `preloadRetryTick`
+      // forcing the preload effect to actually re-run).
+      reportFailure('music.player.preloadError', el.error?.message ?? 'preload error', {
+        code: el.error?.code,
+        videoId: nextTrack?.videoId ?? null,
+      });
+      preloadedUrlRef.current = null;
+      setPreloadRetryTick((tick) => tick + 1);
+      return;
+    }
+    // Nothing listened for this before, and the worker returns 502 for a
+    // stale yt-dlp resolve or a throttled upstream — routine, not rare.
+    // With no handler the element just stopped: `isPlaying` stayed true,
+    // no NEXT was dispatched, and the UI showed a pause button at 0:00
+    // forever while the queue refused to advance past the dead track.
+    clearStallWatchdog();
+    setAudioConfirmedPlaying(false);
+    reportFailure('music.player.audioError', el.error?.message ?? 'media error', {
+      code: el.error?.code,
+      itemId: currentItemIdRef.current,
+    });
+
+    consecutiveErrorsRef.current += 1;
+    // Skipping past one broken track is right; sprinting through a whole
+    // radio queue because the worker is down is not. Stop and stay stopped
+    // so the failure is visible instead of looking like an instant finish.
+    if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_AUDIO_ERRORS) {
+      dispatch({ type: 'SET_PLAYING', value: false });
+      return;
+    }
+    // Same reasoning as `onEnded`: skipping a dead track has to drive the
+    // element from this handler, or a locked phone never resumes.
+    advanceFromMediaEvent();
+  };
+
   return (
     <MusicPlayerContext.Provider value={value}>
       <audio
-        ref={audioRef}
+        ref={setSlotA}
         hidden
         preload="none"
-        onTimeUpdate={(e) => {
-          // Throttle to ~1/s — a raw timeupdate fires 4-60x/s.
-          const now = e.currentTarget.currentTime;
-          if (Math.abs(now - lastTickRef.current) < 1) return;
-          lastTickRef.current = now;
-          dispatch({ type: 'SET_POSITION', position: now });
-
-          // The forced-advance guard: iOS's fMP4 defect duplicates the
-          // element's reported duration, so `ended` never arrives (or arrives
-          // ~2x too late) — see `shouldForceAdvance`'s docstring. Reusing it
-          // (not re-deriving the mismatch check here) is what keeps this from
-          // ever tripping on a healthy track. At most one forced advance per
-          // track load (`pastKnownDurationRef`), same guard shape as
-          // `durationReportedRef` above.
-          const track = current;
-          const itemKey = currentItemIdRef.current;
-          // OBSERVE ONLY — deliberately does not advance the queue.
-          //
-          // This started out as a fix: force the queue on when playback reaches
-          // the track's known length, so a doubled element duration could not
-          // strand it. An adversarial review took that apart. Advancing here
-          // fires on a legitimate scrub past the known length, races `ended`
-          // into a double NEXT that silently eats a track, and never rearms
-          // under repeat-one. Worse, it could not have fixed the reported
-          // symptom anyway: `durationSeconds` is only set by
-          // `searchResultToTrack`, so every library / favourites / history
-          // queue is outside it.
-          //
-          // And the premise itself is unproven. The owner's lock screen showed
-          // a FULL bar at 2:33 — if the element believed 5:06 we would have
-          // published 5:06 and the bar would have sat half empty. That reads
-          // like `ended` never arriving at a correct duration, which is a
-          // different bug with a different fix.
-          //
-          // So: measure first. This records how often the condition the fix
-          // assumed actually occurs on a real device, at zero risk to playback.
-          // Once `music.player.pastKnownDuration` reports (or doesn't) from the
-          // owner's phone, we will know whether that fix was ever the answer.
-          if (
-            itemKey &&
-            pastKnownDurationRef.current !== itemKey &&
-            shouldForceAdvance(e.currentTarget.duration, track?.durationSeconds, now)
-          ) {
-            pastKnownDurationRef.current = itemKey;
-            reportPastKnownDuration();
-          }
-
-          // Feed the lock-screen scrubber (same throttle). setPositionState
-          // throws on NaN/Infinity or position > duration, so guard the values.
-          if (
-            'mediaSession' in navigator &&
-            typeof navigator.mediaSession.setPositionState === 'function'
-          ) {
-            const duration = e.currentTarget.duration;
-            if (Number.isFinite(duration) && duration > 0) {
-              try {
-                navigator.mediaSession.setPositionState({
-                  duration,
-                  position: Math.min(Math.max(now, 0), duration),
-                  playbackRate: 1,
-                });
-              } catch {
-                /* invalid position state — skip this tick */
-              }
-            }
-          }
-        }}
-        onLoadedMetadata={(e) => {
-          // A track that loads proves the chain is healthy again.
-          consecutiveErrorsRef.current = 0;
-          dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
-        }}
-        onDurationChange={(e) => {
-          dispatch({ type: 'SET_DURATION', duration: e.currentTarget.duration || 0 });
-          reportDurationMismatch('durationchange');
-        }}
-        onEnded={() => {
-          reportDurationMismatch('ended');
-          advanceFromMediaEvent();
-        }}
-        onPlay={() => {
-          // Swallowed while the unlock probe's own play() is in flight — it
-          // is not a real user play.
-          if (probeRef.current) return;
-          dispatch({ type: 'SYNC_MEDIA', playing: true });
-        }}
-        onPlaying={() => {
-          if (bufferingTimerRef.current !== null) {
-            window.clearTimeout(bufferingTimerRef.current);
-            bufferingTimerRef.current = null;
-          }
-          dispatch({ type: 'SYNC_MEDIA', playing: true, buffering: false });
-        }}
-        onPause={(e) => {
-          if (probeRef.current) {
-            // Closes the suppression window FROM this task — a `.then()`/
-            // `.catch()` microtask would run before this event's task and
-            // let the probe's own pause leak through as a user pause.
-            probeRef.current = false;
-            return;
-          }
-          // Safari fires `pause` right after `ended`; that pause must not
-          // undo the NEXT auto-advance the `ended` handler already dispatched.
-          if (e.currentTarget.ended) return;
-          publishFrozenPosition(); // a real pause — stop the lock screen's clock now
-          dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
-        }}
-        onWaiting={() => {
-          // Buffering is NOT stopping. `publishFrozenPosition` reports
-          // `playbackRate: 0`, which tells the OS the session is not
-          // playing — and a phone that has just locked throttles the
-          // network, so `waiting`/`stalled` fire exactly then, not on a
-          // real stop. This call was added (43e1a32) and then reverted
-          // (f79cb82) on the theory that the owner was testing in a
-          // private/incognito tab; he has since confirmed he was not, and
-          // the device traces show playback dying 50-180s after lock, right
-          // after two `stalled` events — buffering, not incognito. Removed
-          // again for good. The cost is a lock-screen scrubber that creeps
-          // for a second while buffering, which is worth paying.
-          armBufferingTimer();
-        }}
-        onStalled={() => {
-          armBufferingTimer();
-        }}
-        onCanPlay={clearBuffering}
-        onError={(e) => {
-          // Nothing listened for this before, and the worker returns 502 for a
-          // stale yt-dlp resolve or a throttled upstream — routine, not rare.
-          // With no handler the element just stopped: `isPlaying` stayed true,
-          // no NEXT was dispatched, and the UI showed a pause button at 0:00
-          // forever while the queue refused to advance past the dead track.
-          const el = e.currentTarget;
-          reportFailure('music.player.audioError', el.error?.message ?? 'media error', {
-            code: el.error?.code,
-            itemId: currentItemIdRef.current,
-          });
-
-          consecutiveErrorsRef.current += 1;
-          // Skipping past one broken track is right; sprinting through a whole
-          // radio queue because the worker is down is not. Stop and stay stopped
-          // so the failure is visible instead of looking like an instant finish.
-          if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_AUDIO_ERRORS) {
-            dispatch({ type: 'SET_PLAYING', value: false });
-            return;
-          }
-          // Same reasoning as `onEnded`: skipping a dead track has to drive the
-          // element from this handler, or a locked phone never resumes.
-          advanceFromMediaEvent();
-        }}
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleDurationChange}
+        onEnded={handleEnded}
+        onPlay={handlePlay}
+        onPlaying={handlePlaying}
+        onPause={handlePause}
+        onWaiting={handleWaiting}
+        onStalled={handleStalled}
+        onCanPlay={handleCanPlay}
+        onError={handleError}
+      />
+      {/* The preload element: only ever loads a resource, never plays one —
+          see the preload effect above. `preload="auto"` (vs. the main
+          element's deliberate "none") because this element ONLY ever holds
+          the definite next-up track while the current one is actively
+          playing, so eager buffering is exactly the intended behaviour here. */}
+      <audio
+        ref={setSlotB}
+        hidden
+        preload="auto"
+        onTimeUpdate={handleTimeUpdate}
+        onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleDurationChange}
+        onEnded={handleEnded}
+        onPlay={handlePlay}
+        onPlaying={handlePlaying}
+        onPause={handlePause}
+        onWaiting={handleWaiting}
+        onStalled={handleStalled}
+        onCanPlay={handleCanPlay}
+        onError={handleError}
       />
       {children}
     </MusicPlayerContext.Provider>
