@@ -147,8 +147,12 @@ describe('MusicPlayerProvider — PREVENTION: unlock probe reaches both elements
     act(() => fireEvent.pointerDown(document));
 
     // Both got a play() call from the SAME gesture...
-    const activeCallIndex = playSpy.mock.instances.indexOf(active);
-    const preloadCallIndex = playSpy.mock.instances.indexOf(preload);
+    // `mock.contexts`, not `mock.instances`: instances is for constructor calls
+    // (and is typed as the return value here, which is a Promise, not the
+    // element). contexts holds the `this` each call was made on, which is the
+    // element we actually want to identify.
+    const activeCallIndex = playSpy.mock.contexts.indexOf(active);
+    const preloadCallIndex = playSpy.mock.contexts.indexOf(preload);
     expect(activeCallIndex).toBeGreaterThanOrEqual(0);
     expect(preloadCallIndex).toBeGreaterThanOrEqual(0);
     // ...and specifically in that order: the active element's own probe/play()
