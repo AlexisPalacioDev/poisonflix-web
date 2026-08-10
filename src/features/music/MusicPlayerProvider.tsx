@@ -13,6 +13,7 @@ import { getAutoplayPreference, setAutoplayPreference } from '../../lib/domain/m
 import { streamUrlSource } from '../../lib/domain/musicTrack';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { useLockDiagnostics } from './useLockDiagnostics';
+import { createSilentKeepalive, type KeepaliveContextState } from './silentKeepalive';
 import { jamDestination } from '../jam/destination';
 import { addTracksToJam } from '../../api/jam';
 import { warmMusicTrack } from '../../api/music';
@@ -145,6 +146,18 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // the observe-only block below). Reset alongside `durationReportedRef` in
   // the currentSrc effect.
   const pastKnownDurationRef = useRef<string | null>(null);
+
+  // The silent Web Audio keepalive (see silentKeepalive.ts) — one graph for
+  // the whole session, lazily built. Building the handle itself has no side
+  // effect (no `AudioContext` is created until `.start()` is first called),
+  // so a plain lazy-ref-init is enough; no `useEffect`/`useMemo` needed.
+  const keepaliveRef = useRef<ReturnType<typeof createSilentKeepalive> | null>(null);
+  if (!keepaliveRef.current) keepaliveRef.current = createSilentKeepalive();
+  // Read live by `useLockDiagnostics` on every sample — see that hook's new
+  // parameter for why this is a ref-wrapped function rather than a reactive
+  // value.
+  const keepaliveStateRef = useRef<() => KeepaliveContextState>(() => null);
+  keepaliveStateRef.current = () => keepaliveRef.current?.getState() ?? null;
 
   // Whether the element has produced a confirmed `playing` event for the
   // CURRENT play attempt — distinct from `state.isPlaying`, which the reducer
@@ -430,6 +443,18 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       if (!audio) return;
       armStallWatchdog(target?.itemId ?? null);
       const p = audio.play();
+      // Silent keepalive (see silentKeepalive.ts): started here, AFTER the
+      // real element's play() call above, and never awaited — the real track
+      // commands, and this file's own gesture-synchronous rule (see this
+      // function's docstring) means nothing here may delay that call, which
+      // already happened on the line above. `playImperative` only ever runs
+      // when `runGesture` has decided real playback is actually starting
+      // (see its own call site), which is exactly the lifecycle this
+      // keepalive is meant to track — not "mounted", but "playing". Failure
+      // here (no Web Audio support, a rejected `resume()`, anything) is
+      // swallowed entirely inside `start()`: this call can never affect the
+      // line above it.
+      keepaliveRef.current?.start();
       if (p && typeof p.then === 'function') {
         p.then(() => {
           unlockedRef.current = true;
@@ -775,6 +800,23 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     armStallWatchdog(currentItemId);
   }, [state.isPlaying, currentItemId, clearStallWatchdog, armStallWatchdog]);
 
+  // Stop side of the silent keepalive's lifecycle (the start side lives in
+  // `playImperative`, gesture-synchronous). Keyed on `state.isPlaying` alone,
+  // the same ground truth `visibleBuffering`/the effect above trust: it goes
+  // false on a real user pause, on the consecutive-error breaker tripping,
+  // AND on the queue simply running out (`NEXT`'s "end of the play order, no
+  // repeat" branch and `REMOVE`'s "queue emptied" branch both set it — see
+  // musicPlayerCore.ts's reducer), so this one effect covers "the user
+  // paused" and "the queue ended" without needing to special-case either.
+  // `suspend()` (not `close()`) on purpose: REQUIREMENT 1 is "not left
+  // running forever for no reason", not "torn down" — keeping the graph
+  // intact means a later resume needs no fresh construction, and the
+  // multiple-pause/resume-cycles test below asserts exactly that no second
+  // context ever gets built.
+  useEffect(() => {
+    if (!state.isPlaying) keepaliveRef.current?.suspend();
+  }, [state.isPlaying]);
+
   // Belt-and-suspenders: unlock the media element on the very first user
   // interaction anywhere in the document. If a track is loaded but paused, a
   // guarded no-op play()->pause() satisfies iOS's user-activation requirement
@@ -950,7 +992,11 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
 
   // The settle timer and the stall watchdog both live in refs (armed/cleared
   // from event handlers, not effects) so both must be cleared explicitly on
-  // unmount too.
+  // unmount too. The keepalive's `AudioContext` (if one was ever built) is
+  // torn down here too — REQUIREMENT 1's "not left running forever" endpoint:
+  // `suspend()` (the pause-lifecycle effect above) keeps it around for a
+  // later resume, but the provider going away for good has no later resume to
+  // wait for, so this is the one place that actually calls `close()`.
   useEffect(() => {
     return () => {
       if (bufferingTimerRef.current !== null) {
@@ -959,6 +1005,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       if (stallTimerRef.current !== null) {
         window.clearTimeout(stallTimerRef.current);
       }
+      keepaliveRef.current?.close();
     };
   }, []);
 
@@ -1235,7 +1282,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // Read live off `audioRef` rather than an event target so every caller
   // (pause/waiting/stalled) can share this without threading the event through.
   // Records what actually happens to playback around a lock; see the hook.
-  useLockDiagnostics(audioRef, lockDiagnosticsTrackRef, audioIdentityKey);
+  useLockDiagnostics(audioRef, lockDiagnosticsTrackRef, audioIdentityKey, keepaliveStateRef);
 
   const publishFrozenPosition = useCallback(() => {
     if (

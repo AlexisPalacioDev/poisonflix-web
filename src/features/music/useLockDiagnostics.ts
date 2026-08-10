@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { reportFailure } from '../../lib/obs/report';
 import { timeRangeEnd } from './musicPlayerCore';
+import type { KeepaliveContextState } from './silentKeepalive';
 
 // Why this exists: the defect only happens on the owner's iPhone, when he
 // locks it. There is no iOS simulator on Linux, driving a real iPhone needs a
@@ -62,6 +63,12 @@ export function useLockDiagnostics(
   // trace buffer and lose the lead-up context to a hang that started right at
   // a track boundary.
   audioIdentityKey: number,
+  // Read live (same reasoning as `trackRef`, not passed as a reactive value)
+  // so every sample reports today's keepalive state without forcing a
+  // resubscribe. Optional so any caller other than MusicPlayerProvider (e.g.
+  // a narrower future test) is not forced to wire up a keepalive it may not
+  // have — the field is simply omitted from every sample when absent.
+  keepaliveStateRef?: { current: () => KeepaliveContextState },
 ): void {
   // Lives OUTSIDE the effect below, in a ref that survives a resubscribe —
   // caught by adversarial review: an earlier version declared this as a
@@ -118,6 +125,12 @@ export function useLockDiagnostics(
         // `mediaSession`, and jsdom (tests) does not either.
         mediaSessionState:
           'mediaSession' in navigator ? navigator.mediaSession.playbackState : undefined,
+        // The silent Web Audio keepalive's own state ('running' | 'suspended'
+        // | 'closed' | null) — see silentKeepalive.ts. Not proven to prevent
+        // the hang; recorded so a future trace can at least say whether the
+        // keepalive was still alive when playback died, instead of that being
+        // one more unanswerable question.
+        keepaliveState: keepaliveStateRef ? keepaliveStateRef.current() : undefined,
       });
       if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
     };
