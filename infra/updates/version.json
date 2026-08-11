@@ -1,6 +1,6 @@
 {
-  "versionCode": 17,
-  "versionName": "1.17",
-  "apk": "poisonflix-v17.apk",
-  "notes": "Ver todo: la biblioteca, tendencias y cada categoría ahora se recorren enteras, no solo los primeros 20. Playlists de música: crear, agregar, quitar y bajar un álbum completo. Borrar música descargada. Y 'Próximamente' para lo pedido que todavía no arrancó."
+  "versionCode": 18,
+  "versionName": "1.18",
+  "apk": "poisonflix-v18.apk",
+  "notes": "Jam en el proyector: entrá a una sala y el proyector suena en fase con los demás. Podés crear salas, invitar y mandar canciones a la sala desde tu música."
 }
