@@ -540,7 +540,22 @@ describe('MusicPlayerProvider — auto-advance drives the element from the media
     expect(api.currentIndex).toBe(1);
   });
 
-  it('leaves repeat-one to the effect so it cannot restart from the very end', async () => {
+  it('restarts repeat-one from the media event itself, rewinding before it plays', async () => {
+    // REVERSED DELIBERATELY. This used to assert that repeat-one made NO
+    // synchronous play() call — the reasoning being that replaying the same
+    // source from its end could fire `ended` again before the seek-to-zero
+    // effect landed, so the work was left to that effect.
+    //
+    // That reasoning was about event ordering and it ignored where the effect
+    // runs: React schedules effects through the scheduler, and a tab iOS has
+    // frozen may never run one. A repeat-one track on a locked phone therefore
+    // stopped dead at the end of its first play — the reported bug in its
+    // purest form.
+    //
+    // The ordering concern is answered directly instead of by deferral:
+    // rewinding to 0 BEFORE calling play() means the element cannot be at its
+    // end when it starts, so it cannot re-fire `ended`. Both happen inside the
+    // media event's own task, exactly like a tap.
     renderProvider();
     await act(async () => {
       api.playNow(tracks, 0);
@@ -548,12 +563,94 @@ describe('MusicPlayerProvider — auto-advance drives the element from the media
     act(() => api.setRepeat('one'));
     playSpy.mockClear();
 
-    endedRaw(audioEl());
-    // Nothing synchronous here on purpose: replaying the same source from its
-    // end could fire `ended` again before the seek-to-zero lands.
-    expect(playSpy).not.toHaveBeenCalled();
+    const active = audioEl();
+    active.currentTime = 123;
+    endedRaw(active);
+
+    // Synchronous, from the event's own task — not deferred to an effect.
+    expect(playSpy).toHaveBeenCalled();
+    // And rewound FIRST, which is what makes a second `ended` impossible.
+    expect(active.currentTime).toBe(0);
 
     await act(async () => {});
     expect(api.currentIndex).toBe(0); // looped, not advanced
+  });
+});
+
+describe('MusicPlayerProvider — refusing to sound the wrong thing', () => {
+  // Every test here is a regression from a defect adversarial review found in
+  // the mixer rewrite. They share a shape worth naming: the mixer deliberately
+  // keeps a stale source on its slots (an element with no src cannot be routed
+  // into the audio graph, and losing graph membership over one unplayable
+  // track is a bad trade), which means "there is nothing to play" can no
+  // longer be expressed by emptying the element. It has to be an explicit
+  // decision not to call play(), and these assert that it is.
+
+  /** `ended` straight off the DOM node, bypassing React's synthetic system —
+   *  the same helper the auto-advance suite above uses, redeclared here
+   *  because it is scoped to that describe block. */
+  function endedRaw(el: HTMLAudioElement) {
+    el.dispatchEvent(new Event('ended'));
+  }
+
+  it('plays nothing when the current track has no resolvable URL', async () => {
+    // The defect: `play()` ran on whatever the slot still held, so the
+    // listener heard the song they had just heard while the UI showed a
+    // different one. A track with no `itemId` and no `streamUrl` resolves to
+    // no URL at all (see `trackSrc`).
+    const unplayable: MusicTrack = {
+      itemId: '',
+      title: 'No source',
+      artist: null,
+      coverUrl: null,
+    };
+    renderProvider();
+    await act(async () => {
+      api.playNow([tracks[0], unplayable], 0);
+    });
+    const sounding = audioEl();
+    expect(sounding.getAttribute('src')).toContain('Audio/a/stream.m4a');
+    playSpy.mockClear();
+
+    await act(async () => {
+      endedRaw(sounding);
+    });
+
+    expect(api.current?.title).toBe('No source');
+    // The element still holds track A — that is fine and deliberate — but
+    // nothing asked it to play again.
+    expect(playSpy.mock.instances).not.toContain(sounding);
+  });
+
+  it('does not claim to be playing when the very first play() is refused', async () => {
+    // The defect: `unlockedRef` lost its only reader when the declarative
+    // effect stopped calling `play()` itself, so a first play refused by iOS
+    // left the transport showing "playing" forever — the exact lie the rest of
+    // this file exists to prevent.
+    playSpy.mockRejectedValue(new DOMException('not allowed', 'NotAllowedError'));
+    renderProvider();
+
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+
+    expect(api.isPlaying).toBe(false);
+  });
+
+  it('still trusts a gesture once the session has played successfully', async () => {
+    // The other half of the same rule: after the first success, a transient
+    // rejection must NOT flip playback off.
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    expect(api.isPlaying).toBe(true);
+
+    playSpy.mockRejectedValue(new DOMException('interrupted', 'NotAllowedError'));
+    await act(async () => {
+      api.next();
+    });
+
+    expect(api.isPlaying).toBe(true);
   });
 });

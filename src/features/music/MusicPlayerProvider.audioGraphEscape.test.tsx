@@ -17,9 +17,11 @@ import { ROUTING_LOSS_GRACE_MS } from './silentKeepalive';
 // The trade that makes that a real risk: the bind is irreversible. There is no
 // un-route call, `disconnect()` only deepens the silence, and an element binds
 // once per document — so an element routed into a context that dies is an
-// element that can never make a sound again. The escape is a THIRD <audio>
-// element that is never routed, and this suite asserts that playback actually
-// lands on it, still holding the same track at the same position.
+// element that can never make a sound again. The mixer owns THREE routed slots
+// (they rotate through the current/next/prev roles, so every one of them ends
+// up audible and every one of them has to be routed), and the escape is a
+// FOURTH <audio> element that is never routed. This suite asserts that playback
+// actually lands on it, still holding the same track at the same position.
 //
 // jsdom has no Web Audio and cannot lock an iPhone's screen, so nothing here
 // proves the hypothesis the feature is a bet on. What it does prove is the
@@ -132,11 +134,28 @@ function renderProvider() {
   );
 }
 
-/** The three physical elements in JSX order: [active, preload, escape]. This
- *  order is fixed for the lifetime of the document — what moves is only which
- *  of them the provider treats as active. */
+/** The four physical elements in JSX order: the three mixer slots followed by
+ *  the escape. This order is fixed for the lifetime of the document — what
+ *  moves is only which slot the engine treats as current/next/prev. */
 function audios(): HTMLAudioElement[] {
   return Array.from(document.querySelectorAll('audio'));
+}
+
+/** The three mixer slots — the ones routed into the AudioContext. */
+function slots(): HTMLAudioElement[] {
+  return audios().filter((el) => el.getAttribute('preload') !== 'none');
+}
+
+/** The escape element, found by the property that DEFINES it rather than by a
+ *  position: it is the only one that must never cost anything until the graph
+ *  dies, so it is the only `preload="none"` element in the document. Asking for
+ *  a fixed index made this suite silently point at a mixer slot the day a third
+ *  slot was inserted ahead of it, and the tests then asserted the escape
+ *  properties of an element that is routed. */
+function escapeAudio(): HTMLAudioElement {
+  const found = audios().filter((el) => el.getAttribute('preload') === 'none');
+  expect(found).toHaveLength(1);
+  return found[0];
 }
 
 function ctx(): FakeAudioContext {
@@ -178,10 +197,15 @@ describe('MusicPlayerProvider — one audio origin', () => {
   });
 
   it('routes the promoted element too, so a preloaded track leaves by the same origin', async () => {
-    // Double buffering swaps which physical element is active on every
-    // advance. If only the first one were ever routed, every other track
-    // would leave through a second origin — the exact thing this design
-    // removes.
+    // The mixer rotates which slot holds the `current` role on every advance,
+    // so a slot that is merely buffering today is the audible one tomorrow. If
+    // only the first one were ever routed, every other track would leave
+    // through a second origin — the exact thing this design removes.
+    //
+    // Two slots, not three, because routing happens when a slot is given a
+    // URL: with a two-track queue there is never a `prev` to buffer, so the
+    // third slot has nothing to be routed for yet. What matters is that the
+    // promoted one was routed BEFORE it became audible, not by which index.
     renderProvider();
     await act(async () => {
       api.playNow([PREVIEW_A, PREVIEW_B], 0);
@@ -206,7 +230,7 @@ describe('MusicPlayerProvider — one audio origin', () => {
     await act(async () => {
       fireEvent.pointerDown(document);
     });
-    expect(audios()[2].getAttribute('src')).toMatch(/^data:/);
+    expect(escapeAudio().getAttribute('src')).toMatch(/^data:/);
 
     await act(async () => {
       api.playNow([PREVIEW_A, PREVIEW_B], 0);
@@ -215,7 +239,7 @@ describe('MusicPlayerProvider — one audio origin', () => {
       audios()[0].dispatchEvent(new Event('ended'));
     });
 
-    expect(ctx().routedElements).not.toContain(audios()[2]);
+    expect(ctx().routedElements).not.toContain(escapeAudio());
   });
 });
 
@@ -238,7 +262,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
 
   it('KEEPS SOUND COMING OUT: playback moves to an element that was never routed', async () => {
     const routed = await playThenKillTheGraph();
-    const escape = audios()[2];
+    const escape = escapeAudio();
 
     expect(playTargets).toContain(escape);
     expect(playTargets).not.toContain(routed);
@@ -254,7 +278,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
     });
     const routed = audios()[0];
     Object.defineProperty(routed, 'currentTime', { configurable: true, value: 73.5 });
-    const escape = audios()[2];
+    const escape = escapeAudio();
     let seekedTo: number | null = null;
     Object.defineProperty(escape, 'currentTime', {
       configurable: true,
@@ -289,7 +313,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
     });
     const routed = audios()[0];
     Object.defineProperty(routed, 'currentTime', { configurable: true, value: 10 });
-    const escape = audios()[2];
+    const escape = escapeAudio();
     let seekedTo: number | null = null;
     Object.defineProperty(escape, 'currentTime', {
       configurable: true,
@@ -325,12 +349,20 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
     expect(report?.detail).toHaveProperty('escapeUnlockPlayed');
   });
 
-  it('stops preloading afterwards — the preload element is captive too', async () => {
+  it('stops preloading afterwards — the other mixer slots are captive too', async () => {
     // Buffering into an element that can never be played would spend the
     // session's scarce background network on bytes nobody can hear.
-    await playThenKillTheGraph();
+    //
+    // Asserted over EVERY slot that is not the one that was playing, rather
+    // than over a single hardcoded neighbour: the mixer buffers into two of
+    // them at once (`next` and `prev`), so checking only one would leave the
+    // other free to keep downloading and still go green.
+    const routed = await playThenKillTheGraph();
 
-    expect(audios()[1].hasAttribute('src')).toBe(false);
+    for (const slot of slots()) {
+      if (slot === routed) continue;
+      expect(slot.hasAttribute('src')).toBe(false);
+    }
   });
 
   it('tears the dead context down instead of leaving it beside the escape', async () => {
@@ -345,7 +377,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
     // from any element that is not it. If the handover did not repoint that
     // ref, the escape would play while the app believed nothing was.
     await playThenKillTheGraph();
-    const escape = audios()[2];
+    const escape = escapeAudio();
 
     await act(async () => {
       escape.dispatchEvent(new Event('ended'));
@@ -358,8 +390,9 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
 
   it('does not escape while the graph is merely paused by the user', async () => {
     // A pause puts the context in a non-running state ON PURPOSE. Treating
-    // that as a dead graph would spend the one-way handover — and the
-    // session's double buffering — on every single pause.
+    // that as a dead graph would spend the one-way handover — and with it the
+    // whole mixer, whose three slots go captive the moment it fires — on every
+    // single pause.
     //
     // The clock has to be driven here, not just the event: the loss is only
     // declared after a grace window, so a version of this test that emitted
@@ -387,7 +420,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
     }
 
     expect(recordedFailures().some((f) => f.scope === 'music.player.audioGraphEscape')).toBe(false);
-    expect(playTargets).not.toContain(audios()[2]);
+    expect(playTargets).not.toContain(escapeAudio());
   });
 
   it('escapes on a stuck interruption, once the grace window has passed', async () => {
@@ -406,7 +439,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
       await act(async () => {
         ctx().emitState('interrupted');
       });
-      expect(playTargets).not.toContain(audios()[2]);
+      expect(playTargets).not.toContain(escapeAudio());
       expect(ctx().resume).toHaveBeenCalled();
 
       await act(async () => {
@@ -416,7 +449,7 @@ describe('MusicPlayerProvider — escaping a dead audio graph', () => {
       vi.useRealTimers();
     }
 
-    expect(playTargets).toContain(audios()[2]);
+    expect(playTargets).toContain(escapeAudio());
   });
 
   it('happens at most once, however many times the context reports failing', async () => {
@@ -441,7 +474,7 @@ describe('MusicPlayerProvider — when the escape element itself is refused', ()
     (HTMLMediaElement.prototype.play as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       function (this: HTMLMediaElement) {
         playTargets.push(this);
-        return this === audios()[2]
+        return this === escapeAudio()
           ? Promise.reject(new DOMException('not allowed', 'NotAllowedError'))
           : Promise.resolve();
       },
@@ -467,7 +500,7 @@ describe('MusicPlayerProvider — when the escape element itself is refused', ()
 
   it('plays again on the next real interaction', async () => {
     await escapeIntoARefusal();
-    const escape = audios()[2];
+    const escape = escapeAudio();
     playTargets.length = 0;
     // The refusal is over: the touch that wakes the phone is a gesture.
     (HTMLMediaElement.prototype.play as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -546,7 +579,7 @@ describe('MusicPlayerProvider — preparing the escape element', () => {
     // most recently. This one asks first, on `pointerdown`, before the click
     // that starts the song.
     renderProvider();
-    const escape = audios()[2];
+    const escape = escapeAudio();
 
     await act(async () => {
       fireEvent.pointerDown(document);
@@ -564,12 +597,64 @@ describe('MusicPlayerProvider — preparing the escape element', () => {
 
   it('uses an embedded clip, so it needs no network at the moment the network is gone', async () => {
     renderProvider();
-    const escape = audios()[2];
+    const escape = escapeAudio();
 
     await act(async () => {
       fireEvent.pointerDown(document);
     });
 
     expect(escape.getAttribute('src')).toMatch(/^data:audio\/wav;base64,/);
+  });
+});
+
+describe('MusicPlayerProvider — the queue keeps moving after an escape', () => {
+  // Both of these are regressions from real defects an adversarial probe found
+  // in the mixer wiring, and both had the same shape: the engine deliberately
+  // goes inert once the graph is dead, so any code path that asks IT where the
+  // sound should go silently stops working — while every indicator stays
+  // green. The escape element is not the engine's to manage.
+
+  it('sends the NEXT track to the escape element, not to a captive slot', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow([PREVIEW_A, PREVIEW_B], 0);
+    });
+    await act(async () => {
+      ctx().emitState('closed');
+    });
+    const escape = escapeAudio();
+    expect(escape.getAttribute('src')).toContain('videoId=vid-a');
+
+    await act(async () => {
+      api.next();
+    });
+
+    // The defect: the engine answers 'unchanged' to everything after an
+    // escape, so a caller that only asked the engine left the escape element
+    // still holding track A — playback stuck on one song forever.
+    expect(escape.getAttribute('src')).toContain('videoId=vid-b');
+    expect(api.current?.itemId).toBe('vid-b');
+  });
+
+  it('keeps playing through the escape element when a track ends', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow([PREVIEW_A, PREVIEW_B], 0);
+    });
+    await act(async () => {
+      ctx().emitState('closed');
+    });
+    const escape = escapeAudio();
+    playTargets.length = 0;
+
+    await act(async () => {
+      escape.dispatchEvent(new Event('ended'));
+    });
+
+    // The defect: re-syncing the active element after the auto-advance pointed
+    // `audioRef` back at a mixer slot — captive in the dead graph and unable
+    // to make a sound — so the queue advanced and nothing played.
+    expect(playTargets).toContain(escape);
+    expect(playTargets.some((el) => slots().includes(el))).toBe(false);
   });
 });

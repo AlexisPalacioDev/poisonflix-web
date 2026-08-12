@@ -124,16 +124,20 @@ afterEach(() => {
 });
 
 describe('MusicPlayerProvider — double buffering: preloading the next track', () => {
-  it('renders three <audio> elements: two for double buffering, one held in reserve', () => {
+  it('renders four <audio> elements: three mixer slots, one held in reserve', () => {
     renderProvider();
-    // The third is the escape element (slot C) — never routed into the
-    // keepalive's AudioContext, so it stays audible if that graph dies. See
-    // `escapeFromAudioGraph`. The first two are still the double-buffer pair,
-    // and every other assertion in this file destructures them positionally,
-    // so their order matters as much as the count.
-    expect(audios()).toHaveLength(3);
-    const [, , escape] = audios();
+    // The first three are the mixer's peer slots — they take turns as
+    // current/next/prev as the engine rotates roles, and all three are routed
+    // into the one AudioContext. The FOURTH is the escape element, never
+    // routed, so it stays audible if that graph dies (see
+    // `escapeFromAudioGraph`). Other assertions in this file destructure the
+    // first two positionally, so order matters as much as the count.
+    expect(audios()).toHaveLength(4);
+    const [, , , escape] = audios();
     expect(escape.hasAttribute('src')).toBe(false);
+    // The escape is identifiable without counting: it is the only one that is
+    // not allowed to spend any network before it is needed.
+    expect(escape.preload).toBe('none');
   });
 
   it('preloads the next track onto the SECOND element while the current one plays', async () => {
@@ -236,35 +240,59 @@ describe('MusicPlayerProvider — double buffering: preloading the next track', 
     expect(api.currentIndex).toBe(1);
   });
 
-  it('keeps preloading working across MULTIPLE promotions — the `preload` attribute follows the role, not the DOM node', async () => {
-    // Regression test for a bug adversarial review caught: `preload` is a
-    // property of the physical node, not of "whichever one is currently the
-    // preloader". The first promotion alone couldn't expose it (the node
-    // that starts as JSX's preload element already has `preload="auto"`);
-    // only a SECOND promotion — where the roles invert back — could, because
-    // by then the preloading node is the one that started life as the main,
-    // `preload="none"` element, and that value doesn't automatically follow
-    // the role swap. Three tracks and two `ended` events are the minimum
-    // that reaches a second promotion.
+  it('keeps preloading working across MULTIPLE rotations — every slot can always fetch', async () => {
+    // This started as a regression test for a bug adversarial review caught:
+    // `preload` is a property of the physical node, not of "whichever one is
+    // currently the preloader", so the old two-element design had to flip the
+    // attribute on every promotion or the node that started life as the
+    // `preload="none"` main element would silently stop fetching once it
+    // became the preloader.
+    //
+    // The mixer removes the failure mode rather than managing it: three peer
+    // slots that all keep `preload="auto"` for the whole session, because any
+    // of them may be asked to buffer at any time. The property being asserted
+    // is the same one the original test cared about — a slot about to preload
+    // is always actually allowed to fetch — but it now has to hold across
+    // rotations WITHOUT anything maintaining it, which is the stronger claim.
+    // Three tracks and two `ended` events still reach a second rotation.
     renderProvider();
     await act(async () => {
       api.playNow([PREVIEW_A, PREVIEW_B, PREVIEW_C], 0);
     });
-    const [elA, elB] = audios();
-    expect(elA.preload).toBe('none'); // active (holds A)
-    expect(elB.preload).toBe('auto'); // preloading (holds B)
+    const slots = audios().slice(0, 3);
+    // `preload="auto"` on all three is a precondition, not the claim: it is
+    // hardcoded in the JSX and no code path touches it, so asserting it alone
+    // would be a tautology (adversarial review caught an earlier version of
+    // this test doing exactly that). What has to hold is the BEHAVIOUR that
+    // attribute existed to protect — that after every rotation, some slot has
+    // actually buffered the track that comes next.
+    expect(slots.map((el) => el.preload)).toEqual(['auto', 'auto', 'auto']);
 
-    endedRaw(elA); // A -> B: elB promoted (active), elA repurposed to preload C
+    const holderOf = (fragment: string) =>
+      slots.find((el) => el.getAttribute('src')?.includes(fragment));
+
+    // Before any rotation: A sounding, B buffered on another slot.
+    expect(holderOf('videoId=vid-a')).toBeDefined();
+    expect(holderOf('videoId=vid-b')).toBeDefined();
+
+    const holdingA = holderOf('videoId=vid-a');
+    endedRaw(holdingA!); // A -> B
     await act(async () => {});
     expect(api.currentIndex).toBe(1);
-    expect(elB.preload).toBe('none'); // now active
-    expect(elA.preload).toBe('auto'); // now preloading — MUST be 'auto' to actually fetch
+    // The slot freed by the rotation picked up C — the real claim.
+    expect(holderOf('videoId=vid-c')).toBeDefined();
+    // …and A is still held, ready for an instant step back.
+    expect(holderOf('videoId=vid-a')).toBeDefined();
 
-    endedRaw(elB); // B -> C: elA promoted back to active
+    const holdingB = holderOf('videoId=vid-b');
+    endedRaw(holdingB!); // B -> C
     await act(async () => {});
     expect(api.currentIndex).toBe(2);
-    expect(elA.preload).toBe('none'); // active again
-    expect(elB.preload).toBe('auto'); // preloading again
+    // C is sounding and B stayed buffered behind it. Nothing was reloaded to
+    // get here: three tracks, three slots, one fetch each.
+    expect(holderOf('videoId=vid-c')).toBeDefined();
+    expect(holderOf('videoId=vid-b')).toBeDefined();
+    expect(slots.map((el) => el.preload)).toEqual(['auto', 'auto', 'auto']);
   });
 
   it('a manual skip while the current track is still playing pauses the demoted element (no overlapping audio)', async () => {

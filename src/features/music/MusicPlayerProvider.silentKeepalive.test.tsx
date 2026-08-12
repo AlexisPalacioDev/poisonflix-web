@@ -199,7 +199,14 @@ describe('MusicPlayerProvider — silent keepalive lifecycle', () => {
     expect(FakeAudioContext.instances[0].lastGain?.gain.value).toBe(0);
   });
 
-  it('suspends the keepalive when the user pauses', async () => {
+  it('does NOT suspend the tone when the user pauses — that is what holds the session', async () => {
+    // This test asserted the OPPOSITE until the mixer landed, and the reversal
+    // is deliberate. Suspending on every pause hands the audio session back to
+    // the OS, and then pressing play on a locked phone is asking for it back
+    // with no user gesture to justify it — the same hole the mixer closed for
+    // track changes, just moved onto the pause button. The current track
+    // pauses, the neighbours were already paused, and the tone keeps running
+    // underneath all of it.
     vi.stubGlobal('AudioContext', FakeAudioContext);
     renderProvider();
 
@@ -215,8 +222,8 @@ describe('MusicPlayerProvider — silent keepalive lifecycle', () => {
       await flushMicrotasks();
     });
 
-    expect(ctx.suspendMock).toHaveBeenCalled();
-    expect(ctx.state).toBe('suspended');
+    expect(ctx.suspendMock).not.toHaveBeenCalled();
+    expect(ctx.state).toBe('running');
   });
 
   it('keeps the keepalive alive across an auto-advance — the exact gap the feature targets — instead of suspending between tracks', async () => {
@@ -266,7 +273,13 @@ describe('MusicPlayerProvider — silent keepalive lifecycle', () => {
     });
 
     expect(api.isPlaying).toBe(false);
-    expect(ctx.suspendMock).toHaveBeenCalled();
+    // Same reversal as the pause case above, for the same reason: a queue that
+    // ran out is still a music session the listener may resume, and giving the
+    // audio session back is a one-way move on a locked phone. What the queue
+    // running out DOES change is intent — see the keepalive's own
+    // `setPlaybackIntent` tests for why that distinction has to exist.
+    expect(ctx.suspendMock).not.toHaveBeenCalled();
+    expect(ctx.state).toBe('running');
   });
 
   it('does not create a second AudioContext across repeated pause/resume cycles', async () => {

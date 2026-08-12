@@ -196,44 +196,59 @@ describe('MusicPlayerProvider — PREVENTION: only the active element is ever pr
   });
 });
 
-describe('MusicPlayerProvider — MITIGATION: fallback when a promoted play() rejects', () => {
-  it('falls back to the original element and keeps playing when the promoted play() rejects', async () => {
+describe('MusicPlayerProvider — MITIGATION: when a rotated slot refuses to play', () => {
+  // THE MECHANISM CHANGED, the risk did not. The old design had one
+  // gesture-backed element that played everything, so a promoted element whose
+  // play() was refused could be swapped back to it. The mixer has no such
+  // element: all three slots are peers and each becomes the playing element in
+  // turn, so there is nowhere to fall back TO — rotating again would just hand
+  // the track to another slot with the same problem.
+  //
+  // What replaces it: report the refusal (whether it ever fires on a real
+  // device is the one piece of evidence that would tell us iOS's autoplay
+  // unlock is per-element at all), disarm the stall watchdog so it cannot walk
+  // the queue skipping tracks that were never stalled, and replay on the next
+  // real user interaction. Deliberately NO reload: the slot is holding a fully
+  // buffered track, and reloading would throw that away to fix something that
+  // is not about buffering.
+  it('does not reload the refused slot, and plays again on the next interaction', async () => {
     renderProvider();
     await act(async () => {
       api.playNow([PREVIEW_A, PREVIEW_B], 0);
     });
     const [first, second] = audios();
-    expect(second.getAttribute('src')).toContain('videoId=vid-b'); // B preloaded onto the second element
+    expect(second.getAttribute('src')).toContain('videoId=vid-b'); // B buffered on the next slot
 
-    const { srcSets: firstSrcSets } = trackSrcAssignments(first);
-    // The NEXT play() call after `ended` is the promotion's own — see
-    // MusicPlayerProvider.tsx's `playImperative`: nothing else calls play()
-    // in between `ended` and it.
+    const { srcSets: secondSrcSets } = trackSrcAssignments(second);
+    // Spied locally: this file mocks play/pause globally but not load, and
+    // "the buffered slot was not reloaded" is half of what this test asserts.
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
     playSpy.mockImplementationOnce(() =>
       Promise.reject(new DOMException('not allowed', 'NotAllowedError')),
     );
-    playSpy.mockClear(); // isolate the calls this test actually asserts on
 
     await act(async () => {
       endedRaw(first);
     });
 
     // The queue still advanced (the reducer dispatch does not depend on
-    // whether play() succeeds)...
+    // whether play() succeeds).
     expect(api.currentIndex).toBe(1);
     expect(api.isPlaying).toBe(true);
-    // ...and the ORIGINAL element — the one that actually received a user
-    // gesture this session — was given track B's URL and asked to play,
-    // exactly the pre-double-buffering behaviour that is measured at 10/21
-    // rather than 0/21.
-    expect(firstSrcSets.some((s) => s.includes('videoId=vid-b'))).toBe(true);
-    // Cleared right before `endedRaw`, so this can only be true if the
-    // fallback itself called play() on `first` — not a leftover from the
-    // initial `playNow`.
-    expect(playSpy.mock.instances).toContain(first);
+    // The buffered slot was NOT reassigned or reloaded — the whole point of
+    // having preloaded it survives the refusal.
+    expect(secondSrcSets).toHaveLength(0);
+    expect(loadSpy.mock.instances).not.toContain(second);
+
+    // And a real interaction gets the sound back.
+    playSpy.mockClear();
+    await act(async () => {
+      fireEvent.pointerDown(document);
+    });
+    expect(playSpy.mock.instances).toContain(second);
   });
 
-  it('reports the rejected promotion via reportFailure with its own scope', async () => {
+  it('reports the refused rotation via reportFailure with its own scope', async () => {
     renderProvider();
     await act(async () => {
       api.playNow([PREVIEW_A, PREVIEW_B], 0);
@@ -247,7 +262,7 @@ describe('MusicPlayerProvider — MITIGATION: fallback when a promoted play() re
       endedRaw(first);
     });
 
-    const report = recordedFailures().find((f) => f.scope === 'music.player.promotionPlayRejected');
+    const report = recordedFailures().find((f) => f.scope === 'music.player.rotationPlayRejected');
     expect(report).toBeDefined();
     expect(report?.detail).toMatchObject({ itemId: 'vid-b', videoId: 'vid-b' });
   });

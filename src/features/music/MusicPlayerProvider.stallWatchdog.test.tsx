@@ -427,3 +427,43 @@ describe('MusicPlayerProvider — stall watchdog lifecycle (armed/cleared by sta
     );
   });
 });
+
+describe('MusicPlayerProvider — the stall watchdog covers repeat-one too', () => {
+  it('arms a watchdog for a repeat-one loop that never reaches `playing`', async () => {
+    // Repeat-one is the one path that does NOT go through `playImperative`
+    // (the only other place that arms the watchdog), and the effect that would
+    // otherwise re-arm is keyed on `[isPlaying, currentItemId]` — neither of
+    // which changes when a track loops onto itself. `handleEnded` clears the
+    // watchdog on its way in, so before this fix a repeat-one loop that hung
+    // had no detection at all.
+    //
+    // That is the worst possible place for a blind spot: repeat-one was made
+    // synchronous by this rewrite precisely BECAUSE it was the path dying on a
+    // locked screen.
+    vi.useFakeTimers();
+    renderProvider();
+    await act(async () => {
+      api.playNow(TRACKS, 0);
+    });
+    act(() => api.setRepeat('one'));
+
+    const audio = audioEl();
+    pinStalledReadyState(audio);
+    audio.dispatchEvent(new Event('ended')); // loops back to the same track
+    await act(async () => {});
+    expect(api.currentIndex).toBe(0); // looped, not advanced
+
+    loadSpy.mockClear();
+    playSpy.mockClear();
+    act(() => {
+      vi.advanceTimersByTime(STALL_WATCHDOG_MS);
+    });
+
+    // The watchdog noticed: a retry happened and it was reported.
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(
+      recordedFailures().filter((f) => f.scope === 'music.player.stallWatchdog').length,
+    ).toBe(1);
+  });
+});

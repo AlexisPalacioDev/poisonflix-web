@@ -56,6 +56,14 @@ function renderProvider() {
   );
 }
 
+/** The `<audio>` element currently carrying `urlFragment`. With three rotating
+ *  mixer slots, the element playing a given track is not a fixed DOM node. */
+function activeElementFor(urlFragment: string): HTMLAudioElement | undefined {
+  return Array.from(document.querySelectorAll('audio')).find((el) =>
+    el.getAttribute('src')?.includes(urlFragment),
+  );
+}
+
 function audioEl(): HTMLAudioElement {
   return document.querySelector('audio') as HTMLAudioElement;
 }
@@ -135,7 +143,16 @@ describe('MusicPlayerProvider — gesture-synchronous playback (iOS regression)'
     });
 
     expect(syncPlayCount).toBeGreaterThanOrEqual(1);
-    expect(audioEl().getAttribute('src')).toContain('Audio/b/stream.m4a');
+    // The track no longer lands on a fixed DOM node: the mixer rotates roles
+    // between three peer slots, so "the active element" is whichever one holds
+    // the new track — deliberately NOT `audioEl()` (the first node), which is
+    // now the OUTGOING element still holding track A as `prev`. Finding the
+    // element by the track it carries asserts the same thing the src check
+    // always did (the gesture reached the right track, synchronously) without
+    // assuming which physical node it landed on.
+    const active = activeElementFor('Audio/b/stream.m4a');
+    expect(active).toBeDefined();
+    expect(playSpy.mock.contexts).toContain(active);
     expect(api.currentIndex).toBe(1);
   });
 
@@ -151,7 +168,13 @@ describe('MusicPlayerProvider — gesture-synchronous playback (iOS regression)'
     });
 
     expect(syncPlayCount).toBeGreaterThanOrEqual(1);
-    expect(audioEl().getAttribute('src')).toContain('Audio/c/stream.m4a');
+    // Same as above — and a jump is the case worth stating explicitly: it is
+    // the one transition no neighbour had buffered, so the mixer loads it onto
+    // a NEIGHBOUR slot and rotates into that, rather than reassigning the src
+    // of the element that is sounding.
+    const active = activeElementFor('Audio/c/stream.m4a');
+    expect(active).toBeDefined();
+    expect(playSpy.mock.contexts).toContain(active);
   });
 
   it('re-playNow of the SAME track does not reassign src (no needless reload)', () => {
