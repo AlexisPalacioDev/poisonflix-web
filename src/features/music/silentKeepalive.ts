@@ -144,7 +144,36 @@ export interface SilentKeepaliveHandle {
    * own stale snapshot of `.state` was not.
    */
   suspend(): void;
-  /** Tears the context down for good. Call on provider unmount only. */
+  /**
+   * Declare whether the caller currently WANTS sound, without touching the
+   * context at all.
+   *
+   * `suspend()` conflates two things that only look alike: it silences the
+   * graph AND it records that a non-running context is expected rather than
+   * broken (`evaluateHealth` exempts a context that nobody asked to be
+   * running). A mixer that keeps its tone alive through a pause — so the OS
+   * never sees the page go quiet — still needs the second half: without it,
+   * `wantSound` stays true forever after the first `start()`, and iOS
+   * interrupting the context while the user has it PAUSED (measured: it
+   * interrupts the moment the page goes `hidden`) reads as a routing failure.
+   * The caller then burns its one-way escape on a session nobody was even
+   * listening to.
+   *
+   * So: `setPlaybackIntent(false)` on pause, `true` when playback resumes.
+   * Never suspends, never resumes, never builds anything.
+   */
+  setPlaybackIntent(wanted: boolean): void;
+  /**
+   * Tears the context down for good. Call on provider unmount only.
+   *
+   * TERMINAL once anything has been routed, and that is not a stylistic
+   * choice: closing a context does NOT release the elements bound to it (an
+   * element binds once per document, full stop — see the note at the top of
+   * this file). A later rebuild would produce a live context carrying nothing,
+   * while every real element sits mute in the dead one — silence with no
+   * error, no event, and `isRoutingLost()` still reporting false. So a handle
+   * that has carried elements refuses to build again after `close()`.
+   */
   close(): void;
   /**
    * Current `AudioContext` state, or `null` when no Web Audio support exists
@@ -172,8 +201,30 @@ export interface SilentKeepaliveHandle {
    *
    * Must be safe to call from inside the gesture-synchronous `playImperative`
    * path: like every other method here it never throws and never awaits.
+   *
+   * `options.gain` inserts a per-element `GainNode` between the element and the
+   * destination, so several routed elements can share one context while only
+   * the chosen one is audible (see `musicAudioEngine`, which routes the
+   * current/next/prev slots into this same graph). Omitting it keeps the
+   * original unity-connect behaviour — element -> destination, nothing in
+   * between — which is what the "no gain node of our own" measurement below
+   * covers. A ROLE gain of exactly 0 or 1 does not double-apply the user's
+   * volume slider the way an arbitrary gain would: the element's own
+   * `volume`/`muted` are still the only thing scaling the signal when the role
+   * gain is 1, and when it is 0 the element is meant to be inaudible anyway.
    */
-  routeElement(el: HTMLMediaElement): boolean;
+  routeElement(el: HTMLMediaElement, options?: { gain?: number }): boolean;
+  /**
+   * Set an already-routed element's role gain (0 = inaudible, 1 = full).
+   * Returns false when the element was never routed WITH a gain node, in which
+   * case nothing changed — an element routed at unity has no gain node to move
+   * and silencing it is the caller's job (`pause()`).
+   *
+   * Ramps over a few milliseconds rather than stepping: an instantaneous jump
+   * between 0 and 1 on a signal that is mid-waveform is a discontinuity, and a
+   * discontinuity in a sample stream is an audible click.
+   */
+  setElementGain(el: HTMLMediaElement, value: number): boolean;
   /** Whether `el`'s sound currently leaves through this graph. Diagnostics. */
   getRouting(el: HTMLMediaElement | null | undefined): AudioRouting;
   /** True once `onRoutingLost` has fired. The handle is inert from then on. */
@@ -208,6 +259,13 @@ const SILENT_BUFFER_SECONDS = 1;
 // timer alone, but a frozen tab is the one case nothing in this file can
 // reach.
 export const ROUTING_LOSS_GRACE_MS = 1_500;
+
+// Seconds a role gain takes to travel between 0 and 1. Long enough that the
+// sample stream has no step discontinuity in it (that is what a click IS),
+// short enough that a listener pressing "next" does not perceive a fade —
+// 20ms is roughly one waveform period at the bottom of human hearing, so
+// nothing musical survives inside the ramp.
+const GAIN_RAMP_SECONDS = 0.02;
 
 /**
  * Whether `el`'s currently loaded source is same-origin, and therefore safe to
@@ -299,6 +357,11 @@ export function createSilentKeepalive(
   // only question ever asked of it, and because a bound element must never be
   // kept alive by this module's bookkeeping.
   const routedElements = new WeakSet<HTMLMediaElement>();
+  // Per-element role gain nodes, for callers that routed WITH a gain (see
+  // `routeElement`'s `options.gain`). Only holds the elements that asked for
+  // one — an element routed at unity is absent, and `setElementGain` reports
+  // that honestly rather than pretending to have silenced it.
+  const elementGains = new WeakMap<HTMLMediaElement, GainNode>();
   // Whether ANY element has been bound. Separate from the WeakSet because the
   // difference between "a dead context with nothing captive" (harmless, just
   // rebuild) and "a dead context holding the only element that can make sound"
@@ -309,6 +372,11 @@ export function createSilentKeepalive(
   // not be re-bound to it anyway — `InvalidStateError`) and must never fire
   // `onRoutingLost` twice.
   let routingLost = false;
+  // Latched by `close()` once elements have been bound. Those elements are
+  // captive in the closed context forever, so building a replacement would
+  // create a live graph carrying nothing while every real element stays mute
+  // in the dead one — undetectably, since no error or event is emitted.
+  let closedForGood = false;
   // Whether the caller currently wants sound. `suspend()` puts the context in
   // a non-running state ON PURPOSE (the user paused), and a graph that is
   // silent because nobody asked for sound is not a graph that has failed.
@@ -404,7 +472,7 @@ export function createSilentKeepalive(
   // effects are simply absent for the rest of the session and music keeps
   // playing exactly as it does today.
   function buildGraph(): boolean {
-    if (routingLost) return false;
+    if (routingLost || closedForGood) return false;
     if (ctx && ctx.state !== 'closed') return true;
     // A closed context with an element bound to it is NOT rebuildable: the
     // captive element cannot be re-bound to the replacement, so a second
@@ -507,9 +575,25 @@ export function createSilentKeepalive(
     safeInvoke(() => current.suspend());
   };
 
+  const setPlaybackIntent = (wanted: boolean) => {
+    wantSound = wanted;
+    // Re-evaluate immediately: intent turning true on a context that is
+    // ALREADY interrupted emits no `statechange` of its own (nothing changed),
+    // so without this the graph could sit captive and mute with nobody
+    // watching. Intent turning false clears any countdown that was running for
+    // an outage nobody is listening through.
+    if (!wanted) clearLossTimer();
+    evaluateHealth();
+  };
+
   const close = () => {
     wantSound = false;
     clearLossTimer();
+    // Terminal for a handle that has carried elements — see `close`'s
+    // docstring. Set BEFORE the early return so a second `close()`, or a
+    // `close()` on a handle whose context was already torn down by the
+    // browser, still latches it.
+    if (anyRouted) closedForGood = true;
     if (!ctx) return;
     const toClose = ctx;
     // Dropped BEFORE the close() call, which is also what keeps our own
@@ -524,7 +608,7 @@ export function createSilentKeepalive(
 
   const getState = (): KeepaliveContextState => ctx?.state ?? null;
 
-  const routeElement = (el: HTMLMediaElement): boolean => {
+  const routeElement = (el: HTMLMediaElement, options?: { gain?: number }): boolean => {
     if (!el) return false;
     if (routedElements.has(el)) return true;
     if (routingLost) return false;
@@ -552,7 +636,21 @@ export function createSilentKeepalive(
       // (Unverified on iOS, where element volume is read-only anyway.)
       // The zero-gain tone reaches the same destination through its own gain
       // node — same origin, two sources, one output.
-      node.connect(current.destination);
+      //
+      // A caller that passes `options.gain` is mixing SEVERAL routed elements
+      // into this one context and needs to choose which of them is audible;
+      // it gets a gain node of its own here. Everyone else keeps the measured
+      // unity connect above, unchanged.
+      const roleGain = options?.gain;
+      if (typeof roleGain === 'number' && Number.isFinite(roleGain)) {
+        const g = current.createGain();
+        g.gain.value = Math.min(Math.max(roleGain, 0), 1);
+        node.connect(g);
+        g.connect(current.destination);
+        elementGains.set(el, g);
+      } else {
+        node.connect(current.destination);
+      }
       routedElements.add(el);
       anyRouted = true;
       emit('routed', {});
@@ -571,6 +669,62 @@ export function createSilentKeepalive(
     }
   };
 
+  const setElementGain = (el: HTMLMediaElement, value: number): boolean => {
+    const g = el ? elementGains.get(el) : undefined;
+    const current = ctx;
+    if (!g || !current) return false;
+    const target = Math.min(Math.max(Number.isFinite(value) ? value : 0, 0), 1);
+    try {
+      const now = current.currentTime;
+      // `cancelAndHoldAtTime`, NOT `cancelScheduledValues`, and the difference
+      // is the whole reason a fast next/prev/next does not click:
+      // `cancelScheduledValues` removes the in-flight ramp and the parameter
+      // REVERTS to the value of the last event before `now` — it does not stay
+      // where the signal actually got to. Reading `.value` afterwards and
+      // re-anchoring there (an earlier version of this function) therefore
+      // anchors at the wrong place, which is the discontinuity it was written
+      // to prevent. `cancelAndHoldAtTime` holds the parameter at its CURRENT
+      // interpolated value, which is the only correct starting point.
+      //
+      // Safari shipped it as `cancelAndHoldAtTime`; older WebKit only ever had
+      // the prefixed `cancelValuesAndHoldAtTime`. Where neither exists, fall
+      // back to cancel + explicit anchor: wrong on the rare mid-ramp reversal,
+      // correct in the common case where nothing was in flight.
+      const param = g.gain as AudioParam & {
+        cancelAndHoldAtTime?: (t: number) => void;
+        cancelValuesAndHoldAtTime?: (t: number) => void;
+      };
+      const hold = param.cancelAndHoldAtTime ?? param.cancelValuesAndHoldAtTime;
+      if (typeof hold === 'function') {
+        hold.call(param, now);
+      } else {
+        param.cancelScheduledValues(now);
+        param.setValueAtTime(param.value, now);
+      }
+      g.gain.linearRampToValueAtTime(target, now + GAIN_RAMP_SECONDS);
+    } catch {
+      // Partial `AudioParam` (jsdom, older webkit shapes): assign directly.
+      // A click at the switch beats a gain that never moves at all.
+      //
+      // Cancel first, best-effort: assigning `.value` does NOT clear pending
+      // automation, so if an earlier call did manage to schedule a ramp before
+      // this one started throwing, that ramp would keep running and overwrite
+      // the value just assigned. On a partial implementation there is usually
+      // nothing to cancel and this throws too, which is fine.
+      try {
+        g.gain.cancelScheduledValues(0);
+      } catch {
+        // No automation API at all — then there is no pending ramp either.
+      }
+      try {
+        g.gain.value = target;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  };
+
   const getRouting = (el: HTMLMediaElement | null | undefined): AudioRouting =>
     el && routedElements.has(el) ? 'graph' : 'direct';
 
@@ -579,9 +733,11 @@ export function createSilentKeepalive(
   return {
     start,
     suspend,
+    setPlaybackIntent,
     close,
     getState,
     routeElement,
+    setElementGain,
     getRouting,
     isRoutingLost,
   };
