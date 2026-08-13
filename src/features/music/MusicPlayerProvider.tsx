@@ -108,6 +108,11 @@ const MAX_HIDDEN_RESUME_ATTEMPTS = 3;
 // happened: timers frozen for minutes and released together the moment the
 // phone woke up.
 const STALL_TIMER_LATE_RATIO = 1.5;
+// How close to the end a seek has to land before it is read as "take me to the
+// end of this track" rather than "play the last fraction of a second". A
+// lock-screen scrubber dragged to the right edge does not report the duration
+// exactly, and nobody aims for the last quarter-second of a song on purpose.
+const SEEK_TO_END_EPSILON_SECONDS = 0.25;
 
 export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -956,6 +961,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  // Latest `advanceFromMediaEvent`, for callers declared before it.
+  const advanceFromMediaEventRef = useRef<() => void>(() => {});
+
   // Latest `playImperative`, reachable from effects that must not list it as
   // a dependency (see the play/pause effect below for why).
   const playImperativeRef = useRef(playImperative);
@@ -1044,6 +1052,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     }
     runGesture(action);
   }, [runGesture, armStallWatchdog, clearStallWatchdog, armGestureRetry, noteRejection]);
+  advanceFromMediaEventRef.current = advanceFromMediaEvent;
 
   // The watchdog's actual check, run from the timers `armStallWatchdog` sets
   // up. Reassigned every render (not a useCallback) purely so it always
@@ -1664,6 +1673,28 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    // SCRUBBING TO THE END MEANS "next track", NOT "start this one again".
+    //
+    // The owner dragged the lock-screen scrubber to the end of a song and it
+    // restarted from zero instead of advancing. The cause is the two lines
+    // that used to be here, in the order they ran: seeking to the end leaves
+    // the element FINISHED, and `play()` on a finished element rewinds it to 0
+    // and plays again — that is what the spec says it does. The restart won
+    // the race against the `ended` event that was meant to move the queue on.
+    //
+    // Asking for the end is asking for the track to be over, so it goes
+    // through the same path a natural finish takes: `advanceFromMediaEvent`,
+    // which respects repeat-one and drives the element itself rather than
+    // waiting on an event a rewound element will now never fire.
+    const duration = audio.duration;
+    const seekingToEnd =
+      Number.isFinite(duration) &&
+      duration > 0 &&
+      state.position >= duration - SEEK_TO_END_EPSILON_SECONDS;
+    if (seekingToEnd && state.isPlaying) {
+      advanceFromMediaEventRef.current();
+      return;
+    }
     audio.currentTime = state.position;
     if (state.isPlaying) {
       const p = audio.play();

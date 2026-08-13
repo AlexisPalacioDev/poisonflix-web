@@ -738,3 +738,66 @@ describe('MusicPlayerProvider — a pause nobody asked for, with the screen off'
     expect(api.isPlaying).toBe(false);
   });
 });
+
+describe('MusicPlayerProvider — scrubbing to the end means next, not restart', () => {
+  /** Which physical node is "current" is the engine's business — a rotation
+   *  can move it — so the duration goes on all of them. */
+  function setDurationOnAll(seconds: number) {
+    for (const el of Array.from(document.querySelectorAll('audio'))) {
+      Object.defineProperty(el, 'duration', { value: seconds, configurable: true });
+    }
+  }
+  /** The lock-screen scrubber ends up here: MediaSession `seekto` dispatches a
+   *  SEEK, which is what `api.seek` does too. */
+  it('advances the queue when a seek lands at the end of the track', async () => {
+    // The owner dragged the lock-screen scrubber to the end of a song and it
+    // started over instead of moving on. Cause, in the order it ran: seeking
+    // to the end leaves the element FINISHED, and `play()` on a finished
+    // element rewinds it to 0 and plays again — per spec. That restart won the
+    // race against the `ended` event that was supposed to advance the queue.
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    setDurationOnAll(200);
+    expect(api.currentIndex).toBe(0);
+
+    await act(async () => {
+      api.seek(200);
+    });
+
+    expect(api.currentIndex).toBe(1);
+  });
+
+  it('leaves an ordinary mid-track seek alone', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    setDurationOnAll(200);
+
+    await act(async () => {
+      api.seek(90);
+    });
+
+    expect(api.currentIndex).toBe(0);
+    expect(Math.round(audioEl().currentTime)).toBe(90);
+  });
+
+  it('loops instead of advancing when repeat-one is on', async () => {
+    // Asking for the end is asking for the track to be over, so it goes
+    // through the same path a natural finish takes — which respects repeat.
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    act(() => api.setRepeat('one'));
+    setDurationOnAll(200);
+
+    await act(async () => {
+      api.seek(200);
+    });
+
+    expect(api.currentIndex).toBe(0);
+  });
+});
