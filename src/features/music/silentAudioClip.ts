@@ -72,3 +72,98 @@ export function silentAudioClip(): string {
   }
   return cached;
 }
+
+// ── THE PLACEHOLDER TONE ─────────────────────────────────────────────────
+//
+// A SECOND clip, deliberately not the one above, because it answers a
+// different question and the difference is what made the first attempt fail on
+// the owner's phone.
+//
+// The clip above exists to satisfy iOS's per-element user-activation rule: it
+// must be inaudible and it must END ON ITS OWN in a few milliseconds. Digital
+// silence is exactly right for that.
+//
+// The placeholder tone has the opposite job: to hold a real now-playing
+// session for as long as it takes the song to arrive, so the phone can be
+// locked immediately after tapping play. On device that did not work — no
+// lock-screen panel appeared at all — and two properties of the first clip
+// explain why:
+//
+//   1. IT IS PURE DIGITAL SILENCE. Every sample is the 8-bit midpoint, so the
+//      decoded signal is a flat line. WebKit does not owe a now-playing
+//      session to a page that is technically "playing" nothing, and the
+//      observed behaviour is that it does not grant one.
+//   2. IT IS 50 MILLISECONDS. Even looping, a resource that short reads more
+//      like a UI blip than like media playback.
+//
+// So this one carries an actual waveform at an amplitude nobody can hear — ±2
+// counts of a 16-bit range, about -84 dBFS, which is far below the noise floor
+// of any speaker or headphone — and runs for a full second before looping.
+// Real signal, real duration, inaudible in practice.
+const TONE_SAMPLE_RATE = 8_000;
+const TONE_SAMPLE_COUNT = TONE_SAMPLE_RATE; // one second
+// 16-bit PCM is SIGNED, so silence is 0 and this is a genuine oscillation
+// around it. Two counts out of 32768 is inaudible; zero would be the flat line
+// that gets ignored.
+const TONE_AMPLITUDE = 2;
+const TONE_BYTES_PER_SAMPLE = 2;
+
+function buildToneWavDataUri(): string {
+  const dataBytes = TONE_SAMPLE_COUNT * TONE_BYTES_PER_SAMPLE;
+  const bytes = new Uint8Array(WAV_HEADER_BYTES + dataBytes);
+  const view = new DataView(bytes.buffer);
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+
+  writeAscii(0, 'RIFF');
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(8, 'WAVE');
+  writeAscii(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, TONE_SAMPLE_RATE, true);
+  view.setUint32(28, TONE_SAMPLE_RATE * TONE_BYTES_PER_SAMPLE, true);
+  view.setUint16(32, TONE_BYTES_PER_SAMPLE, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, 'data');
+  view.setUint32(40, dataBytes, true);
+
+  // A slow triangle rather than a square: a square wave at any amplitude has
+  // instantaneous edges, and an edge is broadband — at the loop seam that is
+  // the one thing that could actually become an audible tick.
+  const period = 200; // 40 Hz at 8 kHz, well below anything a phone reproduces
+  for (let i = 0; i < TONE_SAMPLE_COUNT; i += 1) {
+    const phase = (i % period) / period;
+    const triangle = phase < 0.5 ? phase * 4 - 1 : 3 - phase * 4;
+    view.setInt16(
+      WAV_HEADER_BYTES + i * TONE_BYTES_PER_SAMPLE,
+      Math.round(triangle * TONE_AMPLITUDE),
+      true,
+    );
+  }
+
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  return `data:audio/wav;base64,${btoa(binary)}`;
+}
+
+let toneCached: string | null = null;
+
+/**
+ * One second of inaudible-but-real audio, for the placeholder element that
+ * holds the now-playing session while a track loads. Built once per page load.
+ *
+ * Returns an empty string if it cannot be built; callers must treat that as
+ * "no tone", never as a source to assign.
+ */
+export function placeholderToneClip(): string {
+  if (toneCached !== null) return toneCached;
+  try {
+    toneCached = buildToneWavDataUri();
+  } catch {
+    toneCached = '';
+  }
+  return toneCached;
+}

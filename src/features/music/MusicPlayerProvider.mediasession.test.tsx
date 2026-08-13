@@ -373,3 +373,46 @@ describe('MusicPlayerProvider — setPositionState honesty (Task 3)', () => {
     );
   });
 });
+
+describe('MusicPlayerProvider — the OS is told playback started, not that it is pending', () => {
+  it('reports playing while the tone holds the session, before the track confirms', () => {
+    // THE BUG THIS IS FOR: the owner got no lock-screen panel at all, and had
+    // to keep waiting before he could lock the phone. `audioConfirmedPlaying`
+    // is false until the TRACK fires its first `playing`, which on a cold
+    // stream is 5-10 seconds after the tap — and iOS draws no now-playing
+    // panel for a session it has been told is paused. The placeholder was
+    // holding real audio the whole time; the flag meant to keep this honest
+    // was hiding it.
+    //
+    // Not a lie either: the tone is a real element playing real (inaudible)
+    // samples. What `audioConfirmedPlaying` exists to prevent — claiming
+    // 'playing' through total silence — is unchanged.
+    renderProvider();
+    act(() => api.playNow([track], 0));
+
+    const tone = document.querySelector<HTMLAudioElement>('audio[loop]');
+    expect(tone).not.toBeNull();
+    // jsdom never really starts playback, so say what the gesture achieved.
+    Object.defineProperty(tone!, 'paused', { value: false, configurable: true });
+    act(() => {
+      tone!.dispatchEvent(new Event('play'));
+    });
+
+    expect(navigator.mediaSession.playbackState).toBe('playing');
+  });
+
+  it('still reports paused when nothing at all is producing audio', () => {
+    // The other half: with the tone stopped and the track unconfirmed, there
+    // is genuinely no audio, and the OS must not be told otherwise.
+    renderProvider();
+    act(() => api.playNow([track], 0));
+
+    const tone = document.querySelector<HTMLAudioElement>('audio[loop]');
+    Object.defineProperty(tone!, 'paused', { value: true, configurable: true });
+    act(() => {
+      tone!.dispatchEvent(new Event('pause'));
+    });
+
+    expect(navigator.mediaSession.playbackState).toBe('paused');
+  });
+});

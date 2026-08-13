@@ -15,7 +15,7 @@ import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { useLockDiagnostics } from './useLockDiagnostics';
 import { type AudioRouting, type KeepaliveContextState } from './silentKeepalive';
 import { createMusicAudioEngine, graphRoutingEnabled } from './musicAudioEngine';
-import { silentAudioClip } from './silentAudioClip';
+import { placeholderToneClip, silentAudioClip } from './silentAudioClip';
 import { jamDestination } from '../jam/destination';
 import { addTracksToJam } from '../../api/jam';
 import { warmMusicTrack } from '../../api/music';
@@ -195,6 +195,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // BEFORE the track is even resolved. From that instant the OS has a session
   // to show and the screen can be locked; the song joins when it is ready.
   const toneRef = useRef<HTMLAudioElement | null>(null);
+  // Bumped whenever the tone starts or stops, purely so the MediaSession
+  // effect re-runs — an element's `paused` is not reactive state.
+  const [toneTick, setToneTick] = useState(0);
   const setToneSlot = useCallback((el: HTMLAudioElement | null) => {
     toneRef.current = el;
   }, []);
@@ -202,9 +205,17 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const startTone = useCallback(() => {
     const tone = toneRef.current;
     if (!tone) return;
+    // The element's `paused` is not reactive, so the MediaSession effect below
+    // cannot see it change on its own. Nudge it.
+    setToneTick((n) => n + 1);
     try {
       if (!tone.getAttribute('src')) {
-        const clip = silentAudioClip();
+        // NOT `silentAudioClip()`. That one is digital silence lasting 50ms —
+        // right for satisfying a per-element unlock, wrong for holding a
+        // now-playing session, and on the owner's phone it produced no
+        // lock-screen panel at all. See `placeholderToneClip` for why: WebKit
+        // does not owe a session to a page playing a flat line.
+        const clip = placeholderToneClip();
         if (!clip) return;
         tone.src = clip;
         tone.loop = true;
@@ -224,6 +235,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const stopTone = useCallback(() => {
     const tone = toneRef.current;
     if (!tone) return;
+    setToneTick((n) => n + 1);
     try {
       if (!tone.paused) tone.pause();
     } catch {
@@ -1865,12 +1877,29 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // real pause, or a play attempt that has not yet been confirmed even once.
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
+    // THE TONE COUNTS AS PLAYING, and leaving it out is why no lock-screen
+    // panel appeared at all.
+    //
+    // `audioConfirmedPlaying` is false until the TRACK produces its first
+    // `playing` event, which is 5-10 seconds after the tap on a cold stream.
+    // Reporting 'paused' through that window is not a harmless understatement:
+    // iOS draws no now-playing panel for a paused session, so the whole point
+    // of the placeholder — being able to lock the phone immediately — was
+    // undone by the very flag meant to keep this honest.
+    //
+    // And it is not a lie. Audio IS flowing: the tone is a real element
+    // playing real (inaudible) samples. The thing
+    // `audioConfirmedPlaying` was added to prevent was claiming 'playing'
+    // through 60-110s of TOTAL silence, when nothing whatsoever was sounding.
+    // That guarantee is unchanged — it now reads "something is actually
+    // producing audio", which is what the OS is being told.
+    const tonePlaying = Boolean(toneRef.current && !toneRef.current.paused);
     navigator.mediaSession.playbackState = current
-      ? state.isPlaying && audioConfirmedPlaying
+      ? state.isPlaying && (audioConfirmedPlaying || tonePlaying)
         ? 'playing'
         : 'paused'
       : 'none';
-  }, [state.isPlaying, audioConfirmedPlaying, current]);
+  }, [state.isPlaying, audioConfirmedPlaying, current, toneTick]);
 
   // Publish position/duration for a freshly-loaded track immediately, using
   // the already-known length (the same `durationSeconds` seed `playImperative`
@@ -2470,7 +2499,20 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           drive state, and never advance the queue. It steps aside the moment
           the real track is confirmed sounding (`handlePlaying`) and comes back
           to cover the gap at `ended`. */}
-      <audio ref={setToneSlot} hidden preload="auto" loop />
+      <audio
+        ref={setToneSlot}
+        hidden
+        preload="auto"
+        loop
+        // The ONLY handlers it carries, and they are not the media-state ones
+        // the mixer slots use: they exist so the MediaSession effect learns
+        // that this element started or stopped. An element's `paused` is not
+        // reactive, and the OS is told 'playing' partly on the strength of
+        // this element — so if it stops on its own (iOS taking the session,
+        // a decode failure), that has to be observable rather than assumed.
+        onPlay={() => setToneTick((n) => n + 1)}
+        onPause={() => setToneTick((n) => n + 1)}
+      />
       <audio
         ref={setSlotD}
         hidden
