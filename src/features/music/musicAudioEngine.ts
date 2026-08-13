@@ -196,43 +196,57 @@ export interface MusicAudioEngineHandle {
 
 /**
  * Whether the song's own output is fed INTO the keepalive's AudioContext (the
- * owner's "one output" design) or left to leave the element directly.
+ * "one output" design) or left to leave its element directly.
  *
- * THIS IS A MEASUREMENT SWITCH, not a preference, and it exists because the
- * question behind it cannot be answered by reading code. The owner's device
- * traces show the AudioContext being `interrupted` while hidden and the song
- * still carrying `routing: 'graph'` — i.e. audio fed into a pipe that is no
- * longer connected. Whether routing is CAUSING the locked-screen silence or
- * merely present during it is exactly the kind of thing this codebase has
- * guessed wrong before, so it gets an experiment instead of an opinion.
+ * DEFAULTS TO OFF, and that is a reversal of the shipped design. The reasoning,
+ * written down because it overrides an explicit request:
  *
- * Flip it from the phone, with no rebuild and no deploy:
+ * The benefit was never demonstrated. silentKeepalive.ts says so about its own
+ * hypothesis in as many words — "PLAUSIBLE, NOT PROVEN", no device trace
+ * confirms either half. Routing was adopted on an argument, not a measurement.
  *
- *     https://…/musica?audioroute=off     → songs leave the element directly
- *     https://…/musica?audioroute=on      → back to one shared output
+ * The cost IS demonstrated, and it is asymmetric. `createMediaElementSource`
+ * binds an element to a context for the lifetime of the document: there is no
+ * un-route, `disconnect()` only deepens the silence, and a second context
+ * cannot adopt the element. So when that context stops carrying sound, every
+ * element inside it is mute FOREVER. The owner's traces show exactly that
+ * happening: the AudioContext went `interrupted` 11 times across 118 samples
+ * while the song was still routed into it, and `graphEscaped` was false in
+ * every single one — the escape hatch built for this never fired once, because
+ * it depended on a timer that a backgrounded iOS tab does not run.
  *
- * The choice persists in localStorage, so one visit sets it for the session
- * that follows. Every diagnostic sample records which mode it was taken in
- * (`routeMode`), so two nights of traces can be compared directly rather than
- * remembered.
+ * An unrouted `<audio>` element cannot fail that way. It is also the shape iOS
+ * supports best for background playback and MediaSession, which is the other
+ * half of what the owner reported broken.
  *
- * Defaults to ON — the shipped design stays the default until data says
- * otherwise.
+ * A feature that is unproven on the upside and catastrophic on the downside
+ * does not get to be the default. It stays one flip away, because if a trace
+ * ever shows routing helping, this is how it comes back:
+ *
+ *     https://…/musica?audioroute=on    songs share one output again
+ *     https://…/musica?audioroute=off   back to the default
+ *
+ * The choice persists in localStorage and every diagnostic sample records
+ * which mode it was taken in (`routeMode`), so the two can still be compared.
+ *
+ * NOTE what this does NOT turn off: the silent tone still runs, and the slots
+ * still rotate. The tone never captures an element, so it cannot take playback
+ * down with it; the rotation is the part that removed the src reassignment,
+ * and it is independent of where the sound leaves.
  */
 const ROUTE_MODE_KEY = 'poisonflix:music.routeToGraph';
 
 export function graphRoutingEnabled(): boolean {
   try {
-    if (typeof window === 'undefined') return true;
+    if (typeof window === 'undefined') return false;
     const param = new URLSearchParams(window.location.search).get('audioroute');
     if (param === 'off' || param === 'on') {
       window.localStorage.setItem(ROUTE_MODE_KEY, param === 'on' ? '1' : '0');
     }
-    return window.localStorage.getItem(ROUTE_MODE_KEY) !== '0';
+    return window.localStorage.getItem(ROUTE_MODE_KEY) === '1';
   } catch {
-    // Private mode, disabled storage, anything — fall back to the shipped
-    // behaviour rather than silently changing how audio leaves the page.
-    return true;
+    // Private mode, disabled storage, anything — fall back to the safe side.
+    return false;
   }
 }
 

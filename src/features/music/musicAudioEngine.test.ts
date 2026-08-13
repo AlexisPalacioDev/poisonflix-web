@@ -123,9 +123,16 @@ function gainFor(ctx: FakeAudioContext, el: FakeAudioElement): FakeGainNode | un
   return target instanceof FakeGainNode ? target : undefined;
 }
 
+// Routing the song into the shared AudioContext is OPT-IN now, not the
+// default: the bind an element gets from `createMediaElementSource` is
+// irreversible, and the device traces showed the context interrupting 11 times
+// with the audio captive inside it while the escape never once fired. The
+// routed mode still exists and is still correct — it is what most of this file
+// exercises — so these tests turn it on explicitly instead of inheriting it.
 beforeEach(() => {
   FakeAudioContext.instances = [];
   vi.stubGlobal('AudioContext', FakeAudioContext);
+  window.localStorage.setItem('poisonflix:music.routeToGraph', '1');
 });
 
 afterEach(() => {

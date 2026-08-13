@@ -654,3 +654,80 @@ describe('MusicPlayerProvider — refusing to sound the wrong thing', () => {
     expect(api.isPlaying).toBe(true);
   });
 });
+
+describe('MusicPlayerProvider — a pause nobody asked for, with the screen off', () => {
+  /** Pretend the page is backgrounded, the way locking the phone does. */
+  function setHidden(hidden: boolean) {
+    Object.defineProperty(document, 'visibilityState', {
+      value: hidden ? 'hidden' : 'visible',
+      configurable: true,
+    });
+  }
+
+  afterEach(() => setHidden(false));
+
+  function pauseRaw(el: HTMLAudioElement) {
+    el.dispatchEvent(new Event('pause'));
+  }
+
+  it('answers it by resuming, instead of letting the music just end', async () => {
+    // 19 of the owner's device traces are exactly this shape: `pause` arrives
+    // while hidden, playback was supposed to be running, and nothing ever
+    // starts it again — so from his side the music ends mid-session and stays
+    // ended until he picks up the phone.
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    const audio = audioEl();
+    setHidden(true);
+    playSpy.mockClear();
+
+    await act(async () => {
+      pauseRaw(audio);
+    });
+
+    expect(playSpy.mock.instances).toContain(audio);
+    // And the UI is not flipped to paused in the meantime: the attempt may
+    // well succeed, and a flicker through a state that never happened is its
+    // own bug on a lock screen.
+    expect(api.isPlaying).toBe(true);
+  });
+
+  it('gives up after a few attempts instead of fighting the OS forever', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    const audio = audioEl();
+    setHidden(true);
+
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        pauseRaw(audio);
+      });
+    }
+
+    // Budget spent: the last pause is accepted and reconciled rather than
+    // answered, so a phone call or a real session handover settles instead of
+    // looping.
+    expect(api.isPlaying).toBe(false);
+  });
+
+  it('never fights a pause the user made with the app in front of them', async () => {
+    renderProvider();
+    await act(async () => {
+      api.playNow(tracks, 0);
+    });
+    const audio = audioEl();
+    setHidden(false);
+    playSpy.mockClear();
+
+    await act(async () => {
+      pauseRaw(audio);
+    });
+
+    expect(playSpy.mock.instances).not.toContain(audio);
+    expect(api.isPlaying).toBe(false);
+  });
+});

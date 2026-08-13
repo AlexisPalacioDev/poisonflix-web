@@ -89,6 +89,25 @@ const KEEPALIVE_EVENT_LOG_MAX = 24;
 // the same `MEDIA_ERR_SRC_NOT_SUPPORTED`. One retry covers a genuine blip; a
 // third would only be more noise on a connection that playback needs.
 const MAX_PRELOAD_FAILURES = 2;
+// How many times a pause we did not ask for, while the page is hidden, may be
+// answered by resuming. The owner's traces contain 19 `pause-while-hidden`
+// samples: iOS stops the element on its own and nothing ever starts it again,
+// so the music is simply over until he picks the phone up. Answering that
+// pause from the event's own task is the one moment the browser still lets us
+// act (the same reason auto-advance lives there).
+//
+// Bounded because the alternative to "give up too early" is "fight the OS
+// forever": if iOS is pausing because a call came in or the session is truly
+// gone, each retry is refused and a loop would just burn battery. Three is
+// enough to ride out a transient stop and few enough to stay quiet after a
+// real one. Reset on every confirmed `playing`.
+const MAX_HIDDEN_RESUME_ATTEMPTS = 3;
+// How much longer than its own timeout a watchdog timer may take before its
+// firing is treated as a thawed backlog rather than a real stall. 1.5x leaves
+// room for ordinary scheduler jitter while catching the case that actually
+// happened: timers frozen for minutes and released together the moment the
+// phone woke up.
+const STALL_TIMER_LATE_RATIO = 1.5;
 
 export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -163,6 +182,8 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const lastTickRef = useRef(0);
   // Consecutive <audio> failures. Reset by a successful load; see onError below.
   const consecutiveErrorsRef = useRef(0);
+  // Unrequested hidden pauses answered since the last confirmed `playing`.
+  const hiddenResumesRef = useRef(0);
   const [autoplay, setAutoplayState] = useState(getAutoplayPreference);
   const { session } = useAuth();
 
@@ -463,6 +484,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // 0 = watching the first attempt; 1 = already retried once via load()+play()
   // and now watching whether THAT attempt reaches `playing`.
   const stallRetryStageRef = useRef<0 | 1>(0);
+  // When the pending watchdog was armed, so its firing can be checked against
+  // real elapsed time — see `stallCheckRef` for the thawed-backlog case.
+  const stallArmedAtRef = useRef(0);
   const stallCheckRef = useRef<(key: string | null, stage: 0 | 1) => void>(() => {});
 
   const clearStallWatchdog = useCallback(() => {
@@ -479,6 +503,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     if (stallTimerRef.current !== null) window.clearTimeout(stallTimerRef.current);
     stallWatchdogKeyRef.current = key;
     stallRetryStageRef.current = 0;
+    stallArmedAtRef.current = Date.now();
     stallTimerRef.current = window.setTimeout(() => {
       stallTimerRef.current = null;
       stallCheckRef.current(key, 0);
@@ -951,6 +976,27 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     if (stallWatchdogKeyRef.current !== key || stallRetryStageRef.current !== stage) return;
     const audio = audioRef.current;
     if (!audio) return;
+    // A TIMER THAT FIRED LATE IS NOT EVIDENCE OF A STALL.
+    //
+    // Measured: all four of the owner's watchdog reports landed inside the
+    // SAME SECOND, two of them "skipping track", for two different tracks. He
+    // was not watching four stalls — he had picked the phone up, and iOS
+    // released every timer it had frozen at once. The watchdog read that
+    // backlog as proof that nothing was playing and walked the queue forward,
+    // so coming back to the app moved his music on by itself.
+    //
+    // A timer that took far longer than it was set for has learned nothing
+    // about the element: the tab was suspended for most of that window, which
+    // is precisely when playback cannot be judged. Re-arm and give this track
+    // a fair, awake window instead of spending its budget on frozen time.
+    const armedFor = stage === 0 ? STALL_WATCHDOG_MS : STALL_RETRY_GRACE_MS;
+    const elapsed = Date.now() - stallArmedAtRef.current;
+    const overdue = elapsed > armedFor * STALL_TIMER_LATE_RATIO;
+    if (overdue || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
+      noteRef.current?.('watchdogDeferred', { elapsed, armedFor, stage });
+      armStallWatchdog(key);
+      return;
+    }
     // No `readyState`/`paused` re-check here on purpose — adversarial review
     // caught an earlier version that had one (`readyState > 1` treated as
     // "not stalled"), and it was actively wrong for exactly the scenario
@@ -977,6 +1023,10 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       audio.load();
       const p = audio.play();
       if (p && typeof p.catch === 'function') p.catch(() => {});
+      // Restart the clock for stage 1: the lateness check below measures each
+      // stage against its OWN window, and carrying stage 0's start forward
+      // made every stage-1 firing look like a thawed backlog.
+      stallArmedAtRef.current = Date.now();
       stallTimerRef.current = window.setTimeout(() => {
         stallTimerRef.current = null;
         stallCheckRef.current(key, 1);
@@ -1986,6 +2036,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // `MAX_CONSECUTIVE_AUDIO_ERRORS`. Only a confirmed `playing` proves the
     // chain is actually healthy, not just reachable.
     consecutiveErrorsRef.current = 0;
+    // Real audio is flowing again, so the hidden-pause budget is spent on the
+    // NEXT outage rather than being exhausted once per session.
+    hiddenResumesRef.current = 0;
     if (bufferingTimerRef.current !== null) {
       window.clearTimeout(bufferingTimerRef.current);
       bufferingTimerRef.current = null;
@@ -2044,6 +2097,46 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // Before reconciling: if this pause arrived while the graph was already
     // unable to carry sound, this event is the only notice we will get.
     escapeIfGraphIsDead();
+
+    // A PAUSE NOBODY ASKED FOR, WITH THE SCREEN OFF — answer it instead of
+    // accepting it.
+    //
+    // 19 of the owner's traces are exactly this: `pause` arrives while hidden,
+    // playback was supposed to be running, and nothing ever starts it again.
+    // From his side the music just ends mid-session and stays ended until he
+    // touches the phone. The intent is read BEFORE the dispatch below, which
+    // is what turns intent into "paused".
+    //
+    // Driven from this event's own task, like auto-advance, because that is
+    // the one context a backgrounded tab still gets to act in — an effect
+    // scheduled here may never run at all.
+    const el = e.currentTarget;
+    if (
+      stateRef.current.isPlaying &&
+      !probeRef.current &&
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'hidden' &&
+      hiddenResumesRef.current < MAX_HIDDEN_RESUME_ATTEMPTS
+    ) {
+      hiddenResumesRef.current += 1;
+      noteRef.current?.('hiddenResume', { attempt: hiddenResumesRef.current });
+      const again = el.play();
+      if (again && typeof again.then === 'function') {
+        again.catch((err: unknown) => {
+          // Refused — the OS really is taking the session (a call, a route
+          // change, a policy stop). Record why, and let the reconcile below
+          // stand: the UI should say paused, because it is.
+          noteRejection('hidden-resume', err);
+        });
+      }
+      // Deliberately NOT dispatching a pause here: this attempt may well
+      // succeed, and flipping the UI to paused in between would make the lock
+      // screen flicker through a state that never really happened. A refusal
+      // produces its own `pause` event, which lands back here with the counter
+      // already spent and reconciles then.
+      return;
+    }
+
     dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
   };
 

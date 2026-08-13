@@ -162,7 +162,15 @@ function ctx(): FakeAudioContext {
   return FakeAudioContext.instances[0];
 }
 
+// Every describe below is about the shared graph: what enters it, and how
+// playback gets back out when it dies. That graph is OPT-IN now, not the
+// default — `createMediaElementSource` binds an element irreversibly, and the
+// device traces showed the AudioContext interrupting 11 times with the song
+// captive inside it while the escape never fired once. The routed mode is
+// still supported and still has to work, so this file switches it on
+// explicitly rather than relying on a default that no longer exists.
 beforeEach(() => {
+  window.localStorage.setItem('poisonflix:music.routeToGraph', '1');
   playTargets = [];
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
     this: HTMLMediaElement,
@@ -181,6 +189,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   clearSession();
+  // The switch lives in localStorage, which outlives a test. Leaving it set
+  // would silently put every later test in a mode it never asked for.
+  window.localStorage.removeItem('poisonflix:music.routeToGraph');
 });
 
 describe('MusicPlayerProvider — one audio origin', () => {

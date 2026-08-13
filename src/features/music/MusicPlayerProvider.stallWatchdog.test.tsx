@@ -467,3 +467,51 @@ describe('MusicPlayerProvider — the stall watchdog covers repeat-one too', () 
     ).toBe(1);
   });
 });
+
+describe('MusicPlayerProvider — a thawed timer is not a stall', () => {
+  it('re-arms instead of skipping when the timer fired far too late', async () => {
+    // MEASURED. All four of the owner's watchdog reports landed inside the
+    // same second, two of them "skipping track", for two different tracks. He
+    // was not watching four stalls: he had picked the phone up and iOS
+    // released every frozen timer at once. The watchdog read that backlog as
+    // proof nothing was playing and walked his queue forward on its own.
+    //
+    // A timer that took far longer than it was set for learned nothing about
+    // the element — the tab was suspended for most of that window, which is
+    // exactly when playback cannot be judged.
+    vi.useFakeTimers();
+    renderProvider();
+    await act(async () => {
+      api.playNow(TRACKS, 0);
+    });
+    const audio = audioEl();
+    pinStalledReadyState(audio);
+
+    loadSpy.mockClear();
+    playSpy.mockClear();
+
+    // Simulate the freeze faithfully: the WALL CLOCK moves on while the timer
+    // queue does not run at all, and then the timer is released. Advancing
+    // timers alone would not reproduce it — that runs them on schedule, which
+    // is the opposite of what a suspended tab does.
+    act(() => {
+      vi.advanceTimersByTime(STALL_WATCHDOG_MS - 1);
+      vi.setSystemTime(Date.now() + STALL_WATCHDOG_MS * 5);
+      vi.advanceTimersByTime(1);
+    });
+
+    // Deferred, not acted on: no retry, no skip, still on the same track.
+    expect(loadSpy).not.toHaveBeenCalled();
+    expect(api.currentIndex).toBe(0);
+    expect(
+      recordedFailures().filter((f) => f.scope === 'music.player.stallWatchdog').length,
+    ).toBe(0);
+
+    // And it gave the track a fresh, awake window rather than dropping the
+    // watch entirely.
+    act(() => {
+      vi.advanceTimersByTime(STALL_WATCHDOG_MS);
+    });
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+  });
+});
