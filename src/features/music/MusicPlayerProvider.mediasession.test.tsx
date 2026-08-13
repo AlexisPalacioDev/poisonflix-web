@@ -200,14 +200,15 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
     expect(metadata?.artwork.some((a) => a.src.includes('maxWidth=512'))).toBe(true);
   });
 
-  it('mirrors playbackState: playing after playNow AND a confirmed `playing` event, paused after toggle', () => {
+  it('mirrors playbackState: playing after playNow, paused after toggle', () => {
     renderProvider();
     act(() => api.playNow([track], 0));
-    // Intent to play is there (`api.isPlaying === true`), but the element has
-    // not yet confirmed real audio — see the "does not report" test below for
-    // why this must stay 'paused' here, not 'playing'.
-    expect(playbackState).toBe('paused');
+    // Playing from the moment it is asked for — see the "reports playing from
+    // the moment the listener asks" test below for why this no longer waits on
+    // a separate confirmation.
+    expect(playbackState).toBe('playing');
 
+    // A confirmation, when it arrives, changes nothing.
     act(() => fireEvent.playing(document.querySelector('audio') as HTMLAudioElement));
     expect(playbackState).toBe('playing');
 
@@ -236,25 +237,40 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
 
     act(() => handlers.play?.({}));
     expect(api.isPlaying).toBe(true);
-    // Not 'playing' yet — no confirmed `playing` event for this resume.
-    expect(playbackState).toBe('paused');
-    act(() => fireEvent.playing(document.querySelector('audio') as HTMLAudioElement));
+    // The control reflects what was asked for, immediately: a lock-screen
+    // button that stays on "play" after being pressed is the thing the owner
+    // reported having to press twice.
     expect(playbackState).toBe('playing');
   });
 
-  it('does NOT report "playing" merely from intent — only once the element confirms real audio at least once', () => {
-    // The bug this fixes: `state.isPlaying` flips true the instant a gesture
-    // dispatches, well before the browser resumes audio. Every measured
-    // 60-110s on-device hang showed `mediaSessionState: 'playing'` for its
-    // ENTIRE length, from the very first sample, because nothing here ever
-    // checked for a real `playing` event before making the claim.
+  it('reports "playing" from the moment the listener asks for it', () => {
+    // REVERSED DELIBERATELY, and the reason is worth keeping because the old
+    // behaviour was also right about something.
+    //
+    // It used to wait for the element's own `playing` event before claiming
+    // 'playing', because every measured 60-110s on-device hang had reported
+    // 'playing' for its entire length from the first sample. Describing a hang
+    // accurately is worth something.
+    //
+    // But it cost more than it bought. `audioConfirmedPlaying` only turns true
+    // on the ACTIVE element's `playing` event, and the mixer rotates which
+    // element that is — so a missed or mis-targeted event left it stuck false
+    // and the lock-screen control showed PAUSE through a song that was audibly
+    // running. The owner reported exactly that: a button that does not match
+    // what he is hearing, sometimes needing two presses. A control drawn from
+    // a flag that can desynchronise from reality is worse than one drawn from
+    // intent, because the listener cannot tell which of the two is lying.
+    //
+    // `state.isPlaying` is reconciled from the element's own play/pause events
+    // (`SYNC_MEDIA`), so it does follow the song — it just does not require a
+    // separate confirmation to say so.
+    //
+    // The hang itself is not left undescribed; it is acted on, by the stall
+    // watchdog, the escape from a dead graph, and the resume-when-hidden rule.
     renderProvider();
     act(() => api.playNow([track], 0));
-    expect(api.isPlaying).toBe(true);
-    expect(playbackState).not.toBe('playing');
 
-    const audio = document.querySelector('audio') as HTMLAudioElement;
-    act(() => fireEvent.playing(audio));
+    expect(api.isPlaying).toBe(true);
     expect(playbackState).toBe('playing');
   });
 
@@ -401,17 +417,16 @@ describe('MusicPlayerProvider — the OS is told playback started, not that it i
     expect(navigator.mediaSession.playbackState).toBe('playing');
   });
 
-  it('still reports paused when nothing at all is producing audio', () => {
-    // The other half: with the tone stopped and the track unconfirmed, there
-    // is genuinely no audio, and the OS must not be told otherwise.
+  it('reports paused when the listener has paused, tone or no tone', () => {
+    // The tone is deliberately NOT part of this any more. It exists to hold
+    // the audio session so the phone can be locked; what the button shows is
+    // about the SONG, and mixing the two made the control disagree with what
+    // was audibly happening.
     renderProvider();
     act(() => api.playNow([track], 0));
+    expect(navigator.mediaSession.playbackState).toBe('playing');
 
-    const tone = document.querySelector<HTMLAudioElement>('audio[loop]');
-    Object.defineProperty(tone!, 'paused', { value: true, configurable: true });
-    act(() => {
-      tone!.dispatchEvent(new Event('pause'));
-    });
+    act(() => api.toggle());
 
     expect(navigator.mediaSession.playbackState).toBe('paused');
   });

@@ -200,9 +200,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // BEFORE the track is even resolved. From that instant the OS has a session
   // to show and the screen can be locked; the song joins when it is ready.
   const toneRef = useRef<HTMLAudioElement | null>(null);
-  // Bumped whenever the tone starts or stops, purely so the MediaSession
-  // effect re-runs — an element's `paused` is not reactive state.
-  const [toneTick, setToneTick] = useState(0);
   const setToneSlot = useCallback((el: HTMLAudioElement | null) => {
     toneRef.current = el;
   }, []);
@@ -210,9 +207,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const startTone = useCallback(() => {
     const tone = toneRef.current;
     if (!tone) return;
-    // The element's `paused` is not reactive, so the MediaSession effect below
-    // cannot see it change on its own. Nudge it.
-    setToneTick((n) => n + 1);
     try {
       if (!tone.getAttribute('src')) {
         // NOT `silentAudioClip()`. That one is digital silence lasting 50ms —
@@ -240,7 +234,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const stopTone = useCallback(() => {
     const tone = toneRef.current;
     if (!tone) return;
-    setToneTick((n) => n + 1);
     try {
       if (!tone.paused) tone.pause();
     } catch {
@@ -1942,29 +1935,39 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // real pause, or a play attempt that has not yet been confirmed even once.
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
-    // THE TONE COUNTS AS PLAYING, and leaving it out is why no lock-screen
-    // panel appeared at all.
+    // THIS BUTTON IS ABOUT THE SONG. Nothing else.
     //
-    // `audioConfirmedPlaying` is false until the TRACK produces its first
-    // `playing` event, which is 5-10 seconds after the tap on a cold stream.
-    // Reporting 'paused' through that window is not a harmless understatement:
-    // iOS draws no now-playing panel for a paused session, so the whole point
-    // of the placeholder — being able to lock the phone immediately — was
-    // undone by the very flag meant to keep this honest.
+    // Two things were folded in here and both were wrong, in opposite
+    // directions:
     //
-    // And it is not a lie. Audio IS flowing: the tone is a real element
-    // playing real (inaudible) samples. The thing
-    // `audioConfirmedPlaying` was added to prevent was claiming 'playing'
-    // through 60-110s of TOTAL silence, when nothing whatsoever was sounding.
-    // That guarantee is unchanged — it now reads "something is actually
-    // producing audio", which is what the OS is being told.
-    const tonePlaying = Boolean(toneRef.current && !toneRef.current.paused);
+    //   - THE TONE. Counting it made the button say "playing" whenever the
+    //     placeholder was running, which is not what the listener is asking
+    //     about — they want to know about the song. It also made the control
+    //     lie in the other direction later, showing pause while audio was
+    //     clearly coming out. The tone's job is to hold the session so the
+    //     phone can be locked; that job is done by the element EXISTING and
+    //     playing, not by what this field says.
+    //   - `audioConfirmedPlaying`. It only turns true on the active element's
+    //     own `playing` event, and the mixer rotates which element that is —
+    //     so a missed or mis-targeted event left it stuck false and the button
+    //     showed pause through a song that was audibly running. A flag that
+    //     can desynchronise from reality is a bad thing to draw a control from.
+    //
+    // `state.isPlaying` is the honest answer: it is what the listener asked
+    // for, and it is reconciled from the element's OWN play/pause events
+    // (`SYNC_MEDIA`), so it follows the song rather than a side channel.
+    //
+    // What that gives up, stated plainly: the case this used to guard — a
+    // silent hang reporting 'playing' for 60-110s — is no longer covered HERE.
+    // It is covered where it belongs instead: the stall watchdog, the escape
+    // from a dead graph, and the resume-when-hidden rule all act on that
+    // failure directly, rather than merely describing it on the lock screen.
     navigator.mediaSession.playbackState = current
-      ? state.isPlaying && (audioConfirmedPlaying || tonePlaying)
+      ? state.isPlaying
         ? 'playing'
         : 'paused'
       : 'none';
-  }, [state.isPlaying, audioConfirmedPlaying, current, toneTick]);
+  }, [state.isPlaying, current]);
 
   // Publish position/duration for a freshly-loaded track immediately, using
   // the already-known length (the same `durationSeconds` seed `playImperative`
@@ -2576,14 +2579,6 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         hidden
         preload="auto"
         loop
-        // The ONLY handlers it carries, and they are not the media-state ones
-        // the mixer slots use: they exist so the MediaSession effect learns
-        // that this element started or stopped. An element's `paused` is not
-        // reactive, and the OS is told 'playing' partly on the strength of
-        // this element — so if it stops on its own (iOS taking the session,
-        // a decode failure), that has to be observable rather than assumed.
-        onPlay={() => setToneTick((n) => n + 1)}
-        onPause={() => setToneTick((n) => n + 1)}
       />
       <audio
         ref={setSlotD}
