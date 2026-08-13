@@ -819,8 +819,16 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // ONLY NOW do the neighbours go quiet. The outgoing element was left
       // playing through the rotation on purpose, so this `play()` lands before
       // anything has stopped; pausing first would open a real gap between the
-      // pause and the start. (Its role gain is already at zero, so it has been
-      // inaudible since the rotation — this is about releasing the network.)
+      // pause and the start.
+      //
+      // What the outgoing element is doing in between depends on the routing
+      // mode, and the honest version of that is worth stating: WITH routing
+      // on, its role gain went to zero at the rotation, so it has been
+      // inaudible since. WITHOUT routing there are no gain nodes at all and
+      // `setGain` is a no-op, so it is briefly still audible — but only until
+      // the call below, which runs synchronously in this same tick, a few
+      // microseconds later. Not a seam anyone can hear, and not what an
+      // earlier version of this comment claimed.
       engine.silenceNeighbours();
       if (p && typeof p.then === 'function') {
         p.then(() => {

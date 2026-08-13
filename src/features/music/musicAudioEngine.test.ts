@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMusicAudioEngine } from './musicAudioEngine';
+import { createMusicAudioEngine, graphRoutingEnabled } from './musicAudioEngine';
 
 // The contract this suite is about, in one line: THE ELEMENT THAT IS PLAYING
 // NEVER HAS ITS `src` REASSIGNED. Everything else here — role rotation, gain
@@ -555,5 +555,41 @@ describe('createMusicAudioEngine — the routing experiment switch', () => {
 
     expect(engine.setCurrentUrl(B)).toBe('promoted-next');
     expect(playing.srcAssignments.length).toBe(before);
+  });
+});
+
+describe('graphRoutingEnabled — the shipped default', () => {
+  // The gap adversarial review pointed at: every other test in this file sets
+  // the flag one way or the other, so the state that actually ships — nothing
+  // stored at all — was the one nobody exercised.
+
+  it('is OFF when nothing has ever been chosen', () => {
+    window.localStorage.removeItem('poisonflix:music.routeToGraph');
+    expect(graphRoutingEnabled()).toBe(false);
+  });
+
+  it('is ON only when explicitly stored', () => {
+    window.localStorage.setItem('poisonflix:music.routeToGraph', '1');
+    expect(graphRoutingEnabled()).toBe(true);
+    window.localStorage.setItem('poisonflix:music.routeToGraph', '0');
+    expect(graphRoutingEnabled()).toBe(false);
+  });
+
+  it('falls back to OFF when storage cannot be read at all', () => {
+    // Private mode, disabled storage, a locked-down webview. The fallback has
+    // to be the safe side: silently turning the shared graph ON because
+    // `localStorage` threw would be the worst possible way to reach it.
+    const original = window.localStorage;
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('storage disabled');
+      },
+    });
+    try {
+      expect(graphRoutingEnabled()).toBe(false);
+    } finally {
+      Object.defineProperty(window, 'localStorage', { configurable: true, value: original });
+    }
   });
 });
