@@ -132,10 +132,39 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
   // Task 2: seekbackward/seekforward are podcast controls (±10s). iOS gives
   // them priority over nexttrack/previoustrack and shows ±10s buttons on the
   // lock screen instead — exactly the bug the owner reported a screenshot of.
-  it('does NOT register seekbackward/seekforward — they displace the next/prev buttons on the lock screen', () => {
+  it('actively CLEARS seekbackward/seekforward — they displace next/prev on the lock screen', () => {
+    // Strengthened after the owner reported the lock screen offering ±10s and
+    // no way to change track. Not registering them is not the same as
+    // clearing them: `navigator.mediaSession` is global to the document and
+    // its handlers outlive any component, so anything that ever set them
+    // leaves them in place and iOS keeps drawing the skip pair. The provider
+    // now sets them to null explicitly, which is what "no handler" has to mean
+    // on a session it does not exclusively own.
     renderProvider();
-    expect(handlers.seekbackward).toBeUndefined();
-    expect(handlers.seekforward).toBeUndefined();
+    expect(handlers.seekbackward ?? null).toBeNull();
+    expect(handlers.seekforward ?? null).toBeNull();
+  });
+
+  it('re-asserts the transport handlers when the playing element rotates', () => {
+    // WebKit rebuilds the now-playing session around whichever media element
+    // is active, and the mixer rotates between three of them — so handlers
+    // attached once at mount may not belong to the session iOS is drawing from
+    // the second track onward. When it cannot see next/previous, it falls back
+    // to its own default transport: the ±10s pair the owner sees.
+    const queue: MusicTrack[] = [
+      { ...track, itemId: 'a', title: 'A' },
+      { ...track, itemId: 'b', title: 'B' },
+    ];
+    renderProvider();
+    act(() => api.playNow(queue, 0));
+    handlers.nexttrack = undefined as unknown as MediaSessionActionHandler;
+    handlers.previoustrack = undefined as unknown as MediaSessionActionHandler;
+
+    // A track change rotates the active element.
+    act(() => api.next());
+
+    expect(typeof handlers.nexttrack).toBe('function');
+    expect(typeof handlers.previoustrack).toBe('function');
   });
 
   it('never hands the OS a stop handler, because that is what let it stop us', () => {

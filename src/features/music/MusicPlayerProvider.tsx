@@ -1714,6 +1714,19 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         },
       ],
     ];
+    // CLEAR THE SEEK ACTIONS FIRST, explicitly. `navigator.mediaSession` is
+    // global to the document and its handlers outlive any component: anything
+    // that ever registered `seekbackward`/`seekforward` leaves them in place,
+    // and iOS gives those priority — it then draws ±10s buttons INSTEAD of
+    // next/previous, which is precisely what the owner sees on his lock
+    // screen. Not registering them is not the same as clearing them.
+    for (const action of ['seekbackward', 'seekforward'] as MediaSessionAction[]) {
+      try {
+        ms.setActionHandler(action, null);
+      } catch {
+        /* unsupported action */
+      }
+    }
     for (const [action, handler] of handlers) {
       // Not every action is supported on every browser — ignore rejections.
       try {
@@ -1731,7 +1744,21 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         }
       }
     };
-  }, []);
+    // RE-REGISTERED ON EVERY TRACK AND EVERY ROTATION, not once at mount.
+    //
+    // The owner reports the lock screen offering ±10s instead of next/prev.
+    // These handlers were installed a single time, but WebKit rebuilds the
+    // now-playing session around whichever media element is currently active —
+    // and the mixer deliberately rotates between three of them, so from the
+    // second track onward the session iOS is drawing may not be the one these
+    // were attached to. When it cannot see a next/previous handler it falls
+    // back to its own default transport, which is the skip pair.
+    //
+    // Re-asserting them is idempotent and costs nothing: `setActionHandler`
+    // with the same action just replaces the entry. `mediaActionsRef` already
+    // keeps the closures fresh, so this is only about WHEN they are attached,
+    // never about what they do.
+  }, [audioIdentityKey, currentItemId]);
 
   // Publish the current track's metadata (title / artist / artwork) to the OS,
   // and clear it when nothing is loaded. Keyed on the track reference so it
