@@ -740,6 +740,23 @@ describe('MusicPlayerProvider — a pause nobody asked for, with the screen off'
 });
 
 describe('MusicPlayerProvider — scrubbing to the end means next, not restart', () => {
+  /** jsdom never produces real audio, so nothing ever confirms a track is
+   *  sounding — and a seek to the end only counts as "next" when one is. Say
+   *  so, which is the state the listener is in when they drag the scrubber. */
+  async function confirmPlaying() {
+    await act(async () => {
+      // Fired on every mixer slot: which one is active is the engine's
+      // business and a rotation moves it, but the provider's handlers ignore
+      // any element that is not the active one — so exactly one of these
+      // lands, whichever it happens to be.
+      for (const el of Array.from(
+        document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'),
+      )) {
+        el.dispatchEvent(new Event('playing'));
+      }
+    });
+  }
+
   /** Which physical node is "current" is the engine's business — a rotation
    *  can move it — so the duration goes on all of them. */
   function setDurationOnAll(seconds: number) {
@@ -760,6 +777,7 @@ describe('MusicPlayerProvider — scrubbing to the end means next, not restart',
       api.playNow(tracks, 0);
     });
     setDurationOnAll(200);
+    await confirmPlaying();
     expect(api.currentIndex).toBe(0);
 
     await act(async () => {
@@ -775,6 +793,7 @@ describe('MusicPlayerProvider — scrubbing to the end means next, not restart',
       api.playNow(tracks, 0);
     });
     setDurationOnAll(200);
+    await confirmPlaying();
 
     await act(async () => {
       api.seek(90);
@@ -793,11 +812,115 @@ describe('MusicPlayerProvider — scrubbing to the end means next, not restart',
     });
     act(() => api.setRepeat('one'));
     setDurationOnAll(200);
+    await confirmPlaying();
 
     await act(async () => {
       api.seek(200);
     });
 
     expect(api.currentIndex).toBe(0);
+  });
+});
+
+describe('MusicPlayerProvider — a scrubber burst advances once, not once per position', () => {
+  /** jsdom never produces real audio, so nothing ever confirms a track is
+   *  sounding — and a seek to the end only counts as "next" when one is. Say
+   *  so, which is the state the listener is in when they drag the scrubber. */
+  async function confirmPlaying() {
+    await act(async () => {
+      // Fired on every mixer slot: which one is active is the engine's
+      // business and a rotation moves it, but the provider's handlers ignore
+      // any element that is not the active one — so exactly one of these
+      // lands, whichever it happens to be.
+      for (const el of Array.from(
+        document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'),
+      )) {
+        el.dispatchEvent(new Event('playing'));
+      }
+    });
+  }
+
+  function setDurationEverywhere(seconds: number) {
+    for (const el of Array.from(document.querySelectorAll('audio'))) {
+      Object.defineProperty(el, 'duration', { value: seconds, configurable: true });
+    }
+  }
+
+  it('skips exactly one track when the scrubber streams several end positions', async () => {
+    // A lock-screen scrubber does not send one final position: it streams them
+    // while the finger moves. Every one landing inside the end window asked
+    // for the queue to move on, so dragging to the end skipped three tracks at
+    // once. What makes the second ask wrong is that it comes from a track the
+    // queue has already left.
+    renderProvider();
+    await act(async () => {
+      api.playNow([...tracks, { itemId: 'c', title: 'C', artist: null, coverUrl: null }], 0);
+    });
+    setDurationEverywhere(200);
+    await confirmPlaying();
+    expect(api.currentIndex).toBe(0);
+
+    // Each in its OWN act: on the device these arrive as separate tasks while
+    // the finger moves. Batching them into one React cycle collapses them into
+    // a single effect run, which is precisely the thing that would make this
+    // test pass without the guard it exists to check.
+    await act(async () => {
+      api.seek(199.9);
+    });
+    await act(async () => {
+      api.seek(200);
+    });
+    await act(async () => {
+      api.seek(200);
+    });
+
+    expect(api.currentIndex).toBe(1);
+  });
+
+  it('does not let a trailing `ended` add a second skip', async () => {
+    // The outgoing element's own `ended` can land after the seek has already
+    // moved the queue on.
+    renderProvider();
+    await act(async () => {
+      api.playNow([...tracks, { itemId: 'c', title: 'C', artist: null, coverUrl: null }], 0);
+    });
+    const outgoing = audioEl();
+    setDurationEverywhere(200);
+    await confirmPlaying();
+
+    await act(async () => {
+      api.seek(200);
+    });
+    expect(api.currentIndex).toBe(1);
+
+    await act(async () => {
+      outgoing.dispatchEvent(new Event('ended'));
+    });
+
+    expect(api.currentIndex).toBe(1);
+  });
+
+  it('advances again once audio has actually played', async () => {
+    // The guard must not survive into the next track, or the queue would stop
+    // after one automatic advance per session.
+    renderProvider();
+    await act(async () => {
+      api.playNow([...tracks, { itemId: 'c', title: 'C', artist: null, coverUrl: null }], 0);
+    });
+    setDurationEverywhere(200);
+    await confirmPlaying();
+
+    await act(async () => {
+      api.seek(200);
+    });
+    expect(api.currentIndex).toBe(1);
+
+    // The new track confirms it is sounding, which re-arms the advance…
+    await confirmPlaying();
+    await act(async () => {
+      api.seek(200);
+    });
+
+    expect(api.currentIndex).toBe(2);
   });
 });

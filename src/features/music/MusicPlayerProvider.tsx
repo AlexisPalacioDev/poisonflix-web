@@ -379,6 +379,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // actually flowing. This becomes true only on the real `playing` event, and
   // false again the moment intent stops being backed by flowing audio.
   const [audioConfirmedPlaying, setAudioConfirmedPlaying] = useState(false);
+  // Read live from effects that must not re-run when it changes.
+  const audioConfirmedPlayingRef = useRef(false);
+  audioConfirmedPlayingRef.current = audioConfirmedPlaying;
   // Bumped exactly when a rotation repoints `audioRef.current` at a
   // different physical element — see `useLockDiagnostics`'s docstring for why
   // this (and not an ordinary track change) is what should make it
@@ -1691,7 +1694,14 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       Number.isFinite(duration) &&
       duration > 0 &&
       state.position >= duration - SEEK_TO_END_EPSILON_SECONDS;
-    if (seekingToEnd && state.isPlaying) {
+    // …but only from a track that is actually playing. A scrubber streams
+    // positions while the finger moves, and the ones still in flight when the
+    // queue moves on describe the track it just LEFT — dragging to the end
+    // skipped three tracks at once because each of those was read as a fresh
+    // request against whatever had become current. A track that has not
+    // produced audio yet cannot be one the listener is scrubbing to the end
+    // of, so those land harmlessly as an ordinary seek.
+    if (seekingToEnd && state.isPlaying && audioConfirmedPlayingRef.current) {
       advanceFromMediaEventRef.current();
       return;
     }
