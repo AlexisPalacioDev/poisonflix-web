@@ -252,6 +252,30 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const consecutiveErrorsRef = useRef(0);
   // Unrequested hidden pauses answered since the last confirmed `playing`.
   const hiddenResumesRef = useRef(0);
+  // Set immediately before any pause THIS FILE asks for, and consumed by the
+  // resulting `pause` event.
+  //
+  // Without it, pressing pause on the lock screen produced an endless
+  // pause/play flutter: the resume-when-hidden rule cannot tell a pause the
+  // listener asked for from one the OS imposed, and while the screen is off
+  // BOTH arrive as the same event with the same state — `stateRef` still says
+  // playing, because the dispatch that says otherwise has not been applied
+  // yet. So it answered the user's own pause by resuming, which produced
+  // another pause, and around it went.
+  //
+  // Same shape as `probeRef` above and for the same reason: intent is not
+  // recoverable from a media event, so it has to be recorded at the call site.
+  const intentionalPauseRef = useRef(false);
+  /** Pause `el` and mark it as ours, so `handlePause` does not fight it. */
+  const pauseIntentionally = useCallback((el: HTMLAudioElement | null) => {
+    if (!el || el.paused) return;
+    intentionalPauseRef.current = true;
+    try {
+      el.pause();
+    } catch {
+      intentionalPauseRef.current = false;
+    }
+  }, []);
   const [autoplay, setAutoplayState] = useState(getAutoplayPreference);
   const { session } = useAuth();
 
@@ -887,7 +911,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // `play()` runs on the previous track's buffer: the listener hears the
       // song they just heard while the UI shows a different one.
       if (!url) {
-        if (!audio.paused) audio.pause();
+        pauseIntentionally(audio);
         return;
       }
       armStallWatchdog(target?.itemId ?? null);
@@ -961,6 +985,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       recoverFromRejectedRotation,
       noteRejection,
       startTone,
+      pauseIntentionally,
     ],
   );
 
@@ -1334,13 +1359,13 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       const idx = currentIndexOf(stateRef.current);
       playImperativeRef.current(idx >= 0 ? (stateRef.current.queue[idx] ?? null) : null);
     } else {
-      audio.pause();
+      pauseIntentionally(audio);
     }
     // `playImperative` is reached through a ref so this effect keeps firing on
     // exactly the two values that describe "what should be playing" — adding
     // it as a dependency would re-run everything on every render that rebuilt
     // the callback, re-arming the stall watchdog each time.
-  }, [state.isPlaying, currentItemId]);
+  }, [state.isPlaying, currentItemId, pauseIntentionally]);
 
   // Keep the stall watchdog's lifecycle tied to the SAME ground truth as the
   // effect above (`state.isPlaying` + `currentItemId`), not just to
@@ -1779,8 +1804,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // backgrounded tab may not run one — the same reason auto-advance was
       // moved out of an effect. A pause the OS asked for that does not stop the
       // sound is worse than a missing button.
-      const audio = audioRef.current;
-      if (audio && !audio.paused) audio.pause();
+      pauseIntentionally(audioRef.current);
       if (stateRef.current.isPlaying) dispatch({ type: 'SET_PLAYING', value: false });
     },
     next: () => runGesture({ type: 'NEXT' }),
@@ -2301,6 +2325,13 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // the one context a backgrounded tab still gets to act in — an effect
     // scheduled here may never run at all.
     const el = e.currentTarget;
+    // A pause we asked for is never fought. Consumed here, from the event's
+    // own task, exactly like the probe window above.
+    if (intentionalPauseRef.current) {
+      intentionalPauseRef.current = false;
+      dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
+      return;
+    }
     if (
       stateRef.current.isPlaying &&
       !probeRef.current &&

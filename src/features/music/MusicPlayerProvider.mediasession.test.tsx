@@ -416,3 +416,49 @@ describe('MusicPlayerProvider — the OS is told playback started, not that it i
     expect(navigator.mediaSession.playbackState).toBe('paused');
   });
 });
+
+describe('MusicPlayerProvider — the lock-screen pause button is not fought', () => {
+  function setHidden(hidden: boolean) {
+    Object.defineProperty(document, 'visibilityState', {
+      value: hidden ? 'hidden' : 'visible',
+      configurable: true,
+    });
+  }
+  afterEach(() => setHidden(false));
+
+  it('stays paused instead of flapping between pause and play', () => {
+    // The flutter this is for: pressing pause on the lock screen produced an
+    // endless pause/play loop. There is a rule that answers a pause nobody
+    // asked for while the screen is off — iOS stopping playback on its own —
+    // and it could not tell that pause from the listener's own, because at the
+    // instant the event arrives `stateRef` still says "playing": the dispatch
+    // that says otherwise has not been applied yet. So it resumed, which
+    // produced another pause, and around it went.
+    //
+    // The fix records intent at the call site, which is why this test drives
+    // the REAL handler rather than the reducer: the ordering only exists on
+    // this path.
+    renderProvider();
+    act(() => api.playNow([track], 0));
+    const audio = document.querySelector<HTMLAudioElement>('audio:not([loop])')!;
+    // jsdom's mocked pause() never flips `paused`, so say it is sounding —
+    // otherwise the intentional pause is a no-op and the race cannot happen.
+    Object.defineProperty(audio, 'paused', { value: false, configurable: true });
+    setHidden(true);
+    // This suite stubs play() on the prototype without keeping a handle, so
+    // spy on the element itself for the one thing this test measures.
+    const playSpy = vi.spyOn(audio, 'play').mockResolvedValue(undefined);
+
+    act(() => {
+      // The registered handler takes a details object it does not read.
+      handlers.pause({} as MediaSessionActionDetails);
+      // Same tick, before React applies the state — which is the whole
+      // difficulty. Splitting these apart lets the state settle first and the
+      // bug disappears, which is how a green test could have hidden it.
+      audio.dispatchEvent(new Event('pause'));
+    });
+
+    expect(playSpy).not.toHaveBeenCalled();
+    expect(api.isPlaying).toBe(false);
+  });
+});
