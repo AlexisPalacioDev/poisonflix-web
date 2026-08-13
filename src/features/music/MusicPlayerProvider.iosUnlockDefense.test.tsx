@@ -9,7 +9,6 @@ import { clearSession, setSession } from '../../lib/session/store';
 import { clearRecordedFailures, recordedFailures } from '../../lib/obs/report';
 
 type PlayMock = MockInstance<(...args: never[]) => Promise<void>>;
-type PauseMock = MockInstance<(...args: never[]) => void>;
 
 // Double buffering's unresolved risk (see MusicPlayerProvider.tsx, the
 // comment above the belt-and-suspenders unlock effect and above
@@ -71,7 +70,6 @@ const LIBRARY_A: MusicTrack = { itemId: 'lib-a', title: 'Library A', artist: 'A'
 const LIBRARY_B: MusicTrack = { itemId: 'lib-b', title: 'Library B', artist: 'B', coverUrl: null };
 
 let playSpy: PlayMock;
-let pauseSpy: PauseMock;
 
 let api: MusicPlayerContextValue;
 function Capture() {
@@ -123,7 +121,7 @@ function trackSrcAssignments(audio: HTMLAudioElement): { srcSets: string[] } {
 
 beforeEach(() => {
   playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined) as PlayMock;
-  pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {}) as PauseMock;
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
   clearRecordedFailures();
 });
@@ -165,34 +163,65 @@ describe('MusicPlayerProvider — PREVENTION: only the active element is ever pr
     expect(playSpy.mock.contexts).toContain(active);
   });
 
-  it('NEVER calls play() on the preload element — it would steal the audio route', () => {
+  it('NEVER calls play() on another element while audio is actually sounding', () => {
+    // THE INVARIANT THAT MATTERS, and it is not quite the one this test used
+    // to assert. The original rule was absolute — never play the preload
+    // element, full stop — and it came from a real incident (92b215f): a probe
+    // played a second element AFTER the real one, WebKit handed the single
+    // audio route to whoever asked most recently, and the owner's iPhone
+    // reported "it says it is playing but there is no sound".
+    //
+    // The mechanism there is the ROUTE being taken from a sounding element. If
+    // nothing is sounding, there is no route to take, which is why the mixer's
+    // slots are now unlocked in that case (see the unlock effect, and the
+    // device evidence quoted there: iOS refuses a rotated slot that never got
+    // a gesture, and the track sits fully buffered at t=0, never started).
+    //
+    // So the guarantee is stated as what actually prevents the incident: while
+    // audio is playing, nothing else is ever asked to play.
     renderProvider();
     act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
-    act(() => api.toggle());
+    expect(api.isPlaying).toBe(true);
 
-    const [, preload] = audios();
+    const [active, ...others] = audios();
+    Object.defineProperty(active, 'paused', { value: false, configurable: true });
     playSpy.mockClear();
 
     act(() => fireEvent.pointerDown(document));
 
-    expect(playSpy.mock.contexts).not.toContain(preload);
+    // The escape element is the one deliberate exception, unchanged from
+    // before the mixer: it plays 50ms of EMBEDDED silence that ends on its
+    // own, and it runs on `pointerdown` — ahead of the `click` that starts any
+    // song — so it can never be the most recent caller when a track begins.
+    // That behaviour has been in production without regressing 92b215f.
+    const mixerSlots = others.filter((el) => el.preload !== 'none');
+    expect(mixerSlots.length).toBeGreaterThan(0);
+    for (const el of mixerSlots) {
+      expect(playSpy.mock.contexts).not.toContain(el);
+    }
   });
 
-  it('leaves the preload element untouched: not muted, not played, not paused', () => {
+  it('unlocks the mixer slots when nothing is sounding, so a rotation is not refused', () => {
+    // The other half. Measured on the owner's device on the previous build:
+    // `music.player.rotationPlayRejected` fired, and the traces show the
+    // rotated slot fully buffered (`ready: 4`) and paused at `t: 0` — audio
+    // that was never allowed to begin, not audio that stopped. Leaving two of
+    // three rotating slots without a gesture of their own is what produces
+    // that, so with the player quiet they each get 50ms of embedded silence.
     renderProvider();
     act(() => api.playNow([LIBRARY_A, LIBRARY_B], 0));
-    act(() => api.toggle());
+    act(() => api.toggle()); // pause; nothing is sounding now
+    expect(api.isPlaying).toBe(false);
 
-    const [, preload] = audios();
-    const mutedBefore = preload.muted;
+    const all = audios();
     playSpy.mockClear();
-    pauseSpy.mockClear();
 
     act(() => fireEvent.pointerDown(document));
 
-    expect(preload.muted).toBe(mutedBefore);
-    expect(playSpy.mock.contexts).not.toContain(preload);
-    expect(pauseSpy.mock.contexts).not.toContain(preload);
+    // Every element got its gesture-backed play, so no slot is left refusable.
+    for (const el of all) {
+      expect(playSpy.mock.contexts).toContain(el);
+    }
   });
 });
 

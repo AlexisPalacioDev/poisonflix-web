@@ -83,6 +83,12 @@ const STALL_RETRY_GRACE_MS = 15_000;
 // report. Enough to show the run-up (routed -> running -> interrupted ->
 // lost); not so many that a long session ships a wall of noise.
 const KEEPALIVE_EVENT_LOG_MAX = 24;
+// How many times one URL may fail to preload before it is left alone until it
+// stops being adjacent. Two, because the failures measured on the owner's
+// device were not transient — 94 attempts at the same track all failed with
+// the same `MEDIA_ERR_SRC_NOT_SUPPORTED`. One retry covers a genuine blip; a
+// third would only be more noise on a connection that playback needs.
+const MAX_PRELOAD_FAILURES = 2;
 
 export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -282,6 +288,19 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // preload would silently never get a second attempt until the queue
   // itself moved on.
   const [preloadRetryTick, setPreloadRetryTick] = useState(0);
+  // How many times each URL has been allowed to fail a preload. MEASURED
+  // NECESSITY, not defensive coding: the owner's phone logged 94 consecutive
+  // `preloadError`s for ONE videoId, 1.2 seconds apart, for as long as the
+  // track kept playing. `handleError` cleared the slot and bumped the retry
+  // tick, the effect re-ran, the load failed again, and around it went — a
+  // closed loop hammering the worker and eating the phone's connection, which
+  // is the one resource this entire feature depends on. It is very likely why
+  // playback went silent: the preload was starving it.
+  //
+  // Keyed by URL rather than by slot, because the slot rotates and the URL is
+  // what actually failed. Cleared when a URL stops being adjacent, so a track
+  // that failed an hour ago is retried freely when it comes round again.
+  const preloadFailuresRef = useRef<Map<string, number>>(new Map());
 
   const currentIndex = currentIndexOf(state);
   const current = currentIndex >= 0 ? (state.queue[currentIndex] ?? null) : null;
@@ -1119,7 +1138,18 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // load, and this is speculative work for a track that hasn't been
   // requested yet.
   useEffect(() => {
-    engineRef.current?.setNeighbourUrls({ next: nextSrc, prev: prevSrc });
+    // Forget the tally for anything that is no longer adjacent, so the budget
+    // is per-approach rather than per-session.
+    const live = new Set([nextSrc, prevSrc].filter((u): u is string => Boolean(u)));
+    for (const url of preloadFailuresRef.current.keys()) {
+      if (!live.has(url)) preloadFailuresRef.current.delete(url);
+    }
+    const affordable = (url: string | null) =>
+      url && (preloadFailuresRef.current.get(url) ?? 0) < MAX_PRELOAD_FAILURES ? url : null;
+    engineRef.current?.setNeighbourUrls({
+      next: affordable(nextSrc),
+      prev: affordable(prevSrc),
+    });
   }, [nextSrc, prevSrc, preloadRetryTick]);
 
 
@@ -1266,54 +1296,59 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // is per-document instead, this is harmless dead weight. Nobody has
       // been able to determine which — so this is written to be safe under
       // both readings rather than correct under one.
-      // ONLY the escape element is unlocked here, exactly as before. Extending
-      // this to the mixer's three slots was tried and reverted, and the reason
-      // is worth keeping:
+      // UNLOCK EVERY SLOT — and this reverses a call made earlier in this same
+      // rewrite, because the device data came back and settled it.
       //
-      // THE RISK IT WOULD HAVE COVERED: with three rotating peers, each slot
-      // becomes the playing element in turn. If iOS's autoplay unlock is
-      // per-element, a rotation onto a slot that never received a gesture is
-      // refused — and unlike the old design there is no gesture-backed element
-      // to fall back to, because they are all peers.
+      // The reasoning for NOT doing it was that these plays could land after a
+      // real one and take the audio route (92b215f: "it says it is playing but
+      // there is no sound"). That risk is real, so it is fenced rather than
+      // accepted: this only runs when NOTHING is sounding. With the active
+      // element paused there is no route to steal, and the probe below — which
+      // targets the active element and runs last — still asks most recently.
       //
-      // WHY IT WAS REVERTED ANYWAY: the safety argument was that these plays
-      // run on `pointerdown`, before the `click` that starts the song, so they
-      // can never take the audio route from it. That holds for a session that
-      // starts silent, but this is the first gesture of the DOCUMENT, and a
-      // queue can already be running before the user touches it. Then they
-      // land AFTER the real play(), and WebKit gives the route to whoever
-      // asked most recently — which is `92b215f` exactly: "it says it is
-      // playing but there is no sound", the symptom the owner reported from
-      // his own phone. The existing test forbidding it encodes that incident.
-      //
-      // Trading a certainty (that symptom, if the ordering argument is wrong)
-      // for a possibility (a refused rotation) is the wrong way round, and
-      // neither can be measured without the owner's device.
-      //
-      // WHAT COVERS THE RISK INSTEAD: slot A gets a real gesture from the
-      // active-element probe just below, so the first track is safe. Slots B
-      // and C are only virgin until the first time each is rotated into, and a
-      // refusal there is caught by `recoverFromRejectedRotation`, which
-      // reports it and replays on the next touch. Worst case is "the first
-      // track change of a session may need a tap", not silence.
-      const escape = escapeAudioRef.current;
+      // What changed is the other side of the trade, which is no longer a
+      // guess. From the owner's phone, on the previous build:
+      //   - `music.player.rotationPlayRejected` fired: iOS refused the rotated
+      //     slot's play(). The per-element unlock theory is no longer a theory.
+      //   - The traces show the element sitting at `t: 0`, `ready: 4`,
+      //     `paused: true` — fully buffered and never started. Not audio that
+      //     stopped: audio that was never allowed to begin.
+      // That is the reported silence, and leaving two of three rotating slots
+      // without a gesture is what causes it. A fenced risk beats a measured
+      // failure.
       const clip = silentAudioClip();
-      if (escape && clip && !escapeUnlockAttemptedRef.current) {
+      if (clip && !escapeUnlockAttemptedRef.current) {
         escapeUnlockAttemptedRef.current = true;
-        try {
-          escape.src = clip;
-          const ep = escape.play();
-          if (ep && typeof ep.then === 'function') {
-            ep.then(() => {
-              escapeUnlockPlayedRef.current = true;
-            }).catch(() => {
-              // Refused. The escape can still try again from its own
-              // rejection path; nothing here is worth reporting on its own.
-            });
+        const escape = escapeAudioRef.current;
+        const active = audioRef.current;
+        // "Nothing is sounding" checked against the ELEMENT, not just intent:
+        // `isPlaying` records what we asked for, and this whole bug is about
+        // those two disagreeing.
+        const quiet = !stateRef.current.isPlaying && (!active || active.paused);
+        const targets = quiet ? [escape, ...engineSlotsRef.current] : [escape];
+        for (const el of targets) {
+          if (!el) continue;
+          // Never clobber a slot that is holding something — the silent clip
+          // would overwrite a buffered (or sounding) track with 50ms of
+          // nothing. The active element is skipped for the same reason and one
+          // more: it has its own probe below, with a suppression window so its
+          // play/pause events are not mistaken for the user's.
+          if (el === active) continue;
+          if (el !== escape && (el.currentSrc || el.getAttribute('src'))) continue;
+          try {
+            el.src = clip;
+            const ep = el.play();
+            if (ep && typeof ep.then === 'function') {
+              ep.then(() => {
+                if (el === escape) escapeUnlockPlayedRef.current = true;
+              }).catch(() => {
+                // Refused. Each element can still try again from its own
+                // rejection path; nothing here is worth reporting alone.
+              });
+            }
+          } catch {
+            // Never let unlocking break the gesture about to start the music.
           }
-        } catch {
-          // Never let the escape's preparation break the gesture that is
-          // about to start the music.
         }
       }
       const audio = audioRef.current;
@@ -1509,9 +1544,35 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   });
   mediaActionsRef.current = {
     play: () => {
-      if (!stateRef.current.isPlaying) runGesture({ type: 'TOGGLE' });
+      if (!stateRef.current.isPlaying) {
+        runGesture({ type: 'TOGGLE' });
+        return;
+      }
+      // ALREADY "playing" AS FAR AS STATE IS CONCERNED — and this branch is the
+      // whole reason the lock-screen buttons stopped working.
+      //
+      // Measured on the owner's phone: the queue rotates to a track, iOS
+      // refuses the new slot's play() (see `rotationPlayRejected`), and the
+      // element sits paused at t=0 with the track fully buffered. `isPlaying`
+      // stays true because it records INTENT, so the old body — "only act when
+      // not playing" — did nothing at all. Pressing play on the lock screen
+      // was a no-op, forever, which is exactly what the owner reported.
+      //
+      // So when intent says playing and audio is not actually flowing, drive
+      // the element again from this handler. A MediaSession action IS a user
+      // gesture as far as WebKit is concerned, which makes it the one moment a
+      // refused element can be un-refused.
+      const idx = currentIndexOf(stateRef.current);
+      playImperativeRef.current(idx >= 0 ? (stateRef.current.queue[idx] ?? null) : null);
     },
     pause: () => {
+      // Pause the ELEMENT here rather than only dispatching. The play/pause
+      // effect normally does it, but it runs through React's scheduler, and a
+      // backgrounded tab may not run one — the same reason auto-advance was
+      // moved out of an effect. A pause the OS asked for that does not stop the
+      // sound is worse than a missing button.
+      const audio = audioRef.current;
+      if (audio && !audio.paused) audio.pause();
       if (stateRef.current.isPlaying) dispatch({ type: 'SET_PLAYING', value: false });
     },
     next: () => runGesture({ type: 'NEXT' }),
@@ -1912,6 +1973,34 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SYNC_MEDIA', playing: true, buffering: false });
   };
 
+  // The graph can stop carrying sound without anything noticing.
+  //
+  // MEASURED on the owner's phone, and this is the number that matters: across
+  // 118 diagnostic samples the AudioContext was `interrupted` 11 times and
+  // `graphEscaped` was false in EVERY SINGLE ONE. The escape never fired once.
+  //
+  // Why: the keepalive notices an outage by arming a 1.5s `setTimeout`, and a
+  // backgrounded iOS tab does not run timers — the file said so itself, as a
+  // known limitation, and the traces now show it is not theoretical. Meanwhile
+  // the song keeps its `routing: 'graph'`, so it is being fed into a context
+  // that cannot make a sound: playback "running", nothing audible. That is the
+  // owner's exact report.
+  //
+  // Media events, on the other hand, DO arrive while hidden — 19 of those
+  // traces are `pause-while-hidden`. So the check rides on them instead of on
+  // a timer. Only escapes when the listener actually wants sound: a deliberate
+  // pause leaves `isPlaying` false and is none of this function's business.
+  const escapeIfGraphIsDead = useCallback(() => {
+    if (graphEscapedRef.current) return;
+    if (!stateRef.current.isPlaying) return;
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (engine.getRouting(audioRef.current) !== 'graph') return;
+    const state = engine.getState();
+    if (state === null || state === 'running') return;
+    escapeFromAudioGraphRef.current(`context-${state}-observed-from-media-event`);
+  }, []);
+
   const handlePause = (e: SyntheticEvent<HTMLAudioElement>) => {
     if (e.currentTarget !== audioRef.current) return;
     if (probeRef.current) {
@@ -1932,6 +2021,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     clearStallWatchdog();
     setAudioConfirmedPlaying(false);
     publishFrozenPosition(); // a real pause — stop the lock screen's clock now
+    // Before reconciling: if this pause arrived while the graph was already
+    // unable to carry sound, this event is the only notice we will get.
+    escapeIfGraphIsDead();
     dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
   };
 
@@ -1952,6 +2044,11 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // after two `stalled` events — buffering, not incognito. Removed
     // again for good. The cost is a lock-screen scrubber that creeps
     // for a second while buffering, which is worth paying.
+    //
+    // A stall is also a plausible moment for the graph to have gone quiet
+    // underneath us, and it is one of the few events that still arrives while
+    // the tab is hidden.
+    escapeIfGraphIsDead();
     armBufferingTimer();
   };
 
@@ -2003,6 +2100,22 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // Adversarial review found this; nothing in the engine can observe a
       // load failure on its own.
       engineRef.current?.invalidateElement(el);
+      // Charge the failure against this URL. Past the budget the effect above
+      // simply stops handing it out, which ends the loop — the track still
+      // plays, it just starts cold instead of from a buffer that was never
+      // going to arrive.
+      const failedUrl = el.getAttribute('src');
+      if (failedUrl) {
+        const seen = (preloadFailuresRef.current.get(failedUrl) ?? 0) + 1;
+        preloadFailuresRef.current.set(failedUrl, seen);
+        if (seen >= MAX_PRELOAD_FAILURES) {
+          reportFailure(
+            'music.player.preloadGaveUp',
+            'preload failed too many times; leaving this track cold',
+            { videoId: nextTrack?.videoId ?? null, attempts: seen },
+          );
+        }
+      }
       setPreloadRetryTick((tick) => tick + 1);
       return;
     }
