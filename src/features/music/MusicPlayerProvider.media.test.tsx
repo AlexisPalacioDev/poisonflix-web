@@ -510,6 +510,13 @@ describe('MusicPlayerProvider — auto-advance drives the element from the media
   function errorRaw(el: HTMLAudioElement) {
     el.dispatchEvent(new Event('error'));
   }
+  /** play() calls on the MIXER elements. The tone (`audio[loop]`) is started
+   *  from these same handlers on purpose — it covers the gap until the next
+   *  track sounds — so a global count no longer measures the queue driving
+   *  the element, which is what these tests are about. */
+  function mixerPlays() {
+    return playSpy.mock.contexts.filter((el) => !(el as HTMLAudioElement).hasAttribute('loop'));
+  }
 
   it('calls play() inside the `ended` handler, before any effect can run', async () => {
     renderProvider();
@@ -519,7 +526,7 @@ describe('MusicPlayerProvider — auto-advance drives the element from the media
     playSpy.mockClear();
 
     endedRaw(audioEl());
-    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(mixerPlays()).toHaveLength(1);
 
     await act(async () => {});
     expect(api.currentIndex).toBe(1);
@@ -534,7 +541,7 @@ describe('MusicPlayerProvider — auto-advance drives the element from the media
     playSpy.mockClear();
 
     errorRaw(audioEl());
-    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(mixerPlays()).toHaveLength(1);
 
     await act(async () => {});
     expect(api.currentIndex).toBe(1);

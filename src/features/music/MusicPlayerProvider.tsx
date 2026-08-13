@@ -179,6 +179,57 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   const setSlotD = useCallback((el: HTMLAudioElement | null) => {
     escapeAudioRef.current = el;
   }, []);
+  // THE TONE, as an actual <audio> element — the owner's original design,
+  // implemented the way he described it rather than the way it was inherited.
+  //
+  // It was a Web Audio graph (AudioContext -> gain 0 -> looping buffer), and
+  // that is NOT an HTMLMediaElement, so iOS never treats it as a now-playing
+  // session. Which is exactly the complaint: after tapping a song there are
+  // 5-10 seconds where the phone cannot be locked, because as far as the OS is
+  // concerned this page is not playing anything until the real track's bytes
+  // arrive and it starts. His intent was the opposite — "que esto empiece a
+  // sonar incluso antes de que se carguen los datos de la canción solicitada"
+  // — and only a media element can do that.
+  //
+  // So: a real element, looping embedded silence, started inside the gesture
+  // BEFORE the track is even resolved. From that instant the OS has a session
+  // to show and the screen can be locked; the song joins when it is ready.
+  const toneRef = useRef<HTMLAudioElement | null>(null);
+  const setToneSlot = useCallback((el: HTMLAudioElement | null) => {
+    toneRef.current = el;
+  }, []);
+  /** Start the placeholder. Safe to call repeatedly; never throws. */
+  const startTone = useCallback(() => {
+    const tone = toneRef.current;
+    if (!tone) return;
+    try {
+      if (!tone.getAttribute('src')) {
+        const clip = silentAudioClip();
+        if (!clip) return;
+        tone.src = clip;
+        tone.loop = true;
+      }
+      if (tone.paused) {
+        const p = tone.play();
+        if (p && typeof p.then === 'function') p.catch(() => {});
+      }
+    } catch {
+      // The tone is a cushion, never a dependency: if it cannot run, real
+      // playback must be completely unaffected.
+    }
+  }, []);
+  /** Stop it once real audio is confirmed flowing — two elements sounding at
+   *  once is how `92b215f` lost the audio route, and the tone has no business
+   *  competing with the track it exists to cover for. */
+  const stopTone = useCallback(() => {
+    const tone = toneRef.current;
+    if (!tone) return;
+    try {
+      if (!tone.paused) tone.pause();
+    } catch {
+      /* nothing to do */
+    }
+  }, []);
   const lastTickRef = useRef(0);
   // Consecutive <audio> failures. Reset by a successful load; see onError below.
   const consecutiveErrorsRef = useRef(0);
@@ -753,6 +804,11 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // same call stack as the click/touch, before React flushes any effect.
   const playImperative = useCallback(
     (target: MusicTrack | null) => {
+      // FIRST THING IN THE GESTURE, before the URL is even resolved. This is
+      // what buys the ability to lock the screen immediately: the OS gets a
+      // playing media element now, instead of 5-10 seconds from now when the
+      // track's bytes finally arrive.
+      startTone();
       const engine = engineRef.current;
       if (!engine || !audioRef.current) return;
       const url = trackSrc(target);
@@ -884,6 +940,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       applyOutputSettings,
       recoverFromRejectedRotation,
       noteRejection,
+      startTone,
     ],
   );
 
@@ -2065,6 +2122,10 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     if (e.currentTarget !== audioRef.current) return;
     clearStallWatchdog();
     setAudioConfirmedPlaying(false);
+    // The gap between this track ending and the next one sounding is the whole
+    // reason the tone exists. Cover it from here, inside the media event's own
+    // task, so the OS never sees the page fall silent in between.
+    if (stateRef.current.isPlaying) startTone();
     reportDurationMismatch('ended');
     advanceFromMediaEvent();
   };
@@ -2092,6 +2153,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // `MAX_CONSECUTIVE_AUDIO_ERRORS`. Only a confirmed `playing` proves the
     // chain is actually healthy, not just reachable.
     consecutiveErrorsRef.current = 0;
+    // The track is genuinely sounding now, so the placeholder steps aside.
+    // Leaving both running is how `92b215f` lost the audio route.
+    stopTone();
     // Real audio is flowing again, so the hidden-pause budget is spent on the
     // NEXT outage rather than being exhausted once per session.
     hiddenResumesRef.current = 0;
@@ -2395,6 +2459,18 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           wants), and, if the graph is ever lost, the song itself for the rest
           of the page load. `preload="none"` because until that day comes it
           must cost nothing at all. */}
+      {/* THE TONE — the owner's "pista falsa": a real media element looping
+          embedded silence, started inside the gesture before the track is even
+          resolved. That is what lets the phone be locked immediately instead
+          of after the 5-10s the real track takes to arrive: iOS only treats a
+          page as playing when a MEDIA ELEMENT is, and the Web Audio graph this
+          replaces never qualified.
+
+          No handlers: it must never be mistaken for the active element, never
+          drive state, and never advance the queue. It steps aside the moment
+          the real track is confirmed sounding (`handlePlaying`) and comes back
+          to cover the gap at `ended`. */}
+      <audio ref={setToneSlot} hidden preload="auto" loop />
       <audio
         ref={setSlotD}
         hidden

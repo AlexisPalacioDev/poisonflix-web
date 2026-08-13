@@ -59,7 +59,7 @@ function renderProvider() {
 /** The `<audio>` element currently carrying `urlFragment`. With three rotating
  *  mixer slots, the element playing a given track is not a fixed DOM node. */
 function activeElementFor(urlFragment: string): HTMLAudioElement | undefined {
-  return Array.from(document.querySelectorAll('audio')).find((el) =>
+  return Array.from(document.querySelectorAll<HTMLAudioElement>('audio:not([loop])')).find((el) =>
     el.getAttribute('src')?.includes(urlFragment),
   );
 }
@@ -124,7 +124,13 @@ describe('MusicPlayerProvider — gesture-synchronous playback (iOS regression)'
     let syncPlayCount = -1;
     act(() => {
       api.toggle();
-      syncPlayCount = playSpy.mock.calls.length;
+      // Counted on the MIXER elements only. The tone (`audio[loop]`) also gets
+      // a play() from the same gesture, on purpose and first — it is the
+      // placeholder that lets the phone be locked before the track is ready —
+      // so a global count no longer measures what this test is about.
+      syncPlayCount = playSpy.mock.contexts.filter(
+        (el) => !(el as HTMLAudioElement).hasAttribute('loop'),
+      ).length;
     });
 
     expect(syncPlayCount).toBe(1);
@@ -212,5 +218,70 @@ describe('MusicPlayerProvider — gesture-synchronous playback (iOS regression)'
 
     expect(api.isPlaying).toBe(true);
     expect(api.currentIndex).toBe(1);
+  });
+});
+
+describe('MusicPlayerProvider — the tone covers the wait before a track sounds', () => {
+  /** The placeholder element: looping embedded silence, no handlers. */
+  function toneEl(): HTMLAudioElement | null {
+    return document.querySelector('audio[loop]');
+  }
+
+  it('starts the tone inside the gesture, before the track URL is even resolved', () => {
+    // THE OWNER'S ACTUAL COMPLAINT: after tapping a song there were 5-10
+    // seconds in which the phone could not be locked, because nothing was
+    // playing yet. iOS only treats a page as playing when a MEDIA ELEMENT is,
+    // and the placeholder used to be a Web Audio graph — which never qualifies.
+    // His design ("que esto empiece a sonar incluso antes de que se carguen
+    // los datos de la canción") needs a real element, started first.
+    renderProvider();
+    const tone = toneEl();
+    expect(tone).not.toBeNull();
+
+    let toneStartedInGesture = false;
+    act(() => {
+      api.playNow(tracks, 0);
+      toneStartedInGesture = playSpy.mock.contexts.includes(tone!);
+    });
+
+    expect(toneStartedInGesture).toBe(true);
+    // …and it loops, so the session it holds does not end after 50ms.
+    expect(tone!.loop).toBe(true);
+  });
+
+  it('starts the tone BEFORE the track element is asked to play', () => {
+    // Order matters both ways: the tone has to be first so the session exists
+    // during the load, and the track has to be LAST so WebKit hands it the
+    // audio route (it goes to whoever asked most recently).
+    renderProvider();
+    const tone = toneEl();
+
+    act(() => api.playNow(tracks, 0));
+
+    const contexts = playSpy.mock.contexts;
+    const toneAt = contexts.indexOf(tone!);
+    const trackAt = contexts.findIndex((el) => !(el as HTMLAudioElement).hasAttribute('loop'));
+    expect(toneAt).toBeGreaterThan(-1);
+    expect(trackAt).toBeGreaterThan(toneAt);
+  });
+
+  it('steps aside once the real track is confirmed sounding', () => {
+    // Two elements sounding at once is how 92b215f lost the audio route. The
+    // tone exists to cover a gap, not to compete with the track.
+    renderProvider();
+    act(() => api.playNow(tracks, 0));
+    const tone = toneEl()!;
+    // jsdom never actually starts playback, so `paused` would stay true and
+    // the "only pause what is sounding" guard would skip. Say it is sounding,
+    // which is the state this test is about.
+    Object.defineProperty(tone, 'paused', { value: false, configurable: true });
+    const pauseSpy = vi.spyOn(tone, 'pause');
+
+    act(() => {
+      const track = activeElementFor('Audio/a/stream.m4a');
+      track?.dispatchEvent(new Event('playing'));
+    });
+
+    expect(pauseSpy).toHaveBeenCalled();
   });
 });

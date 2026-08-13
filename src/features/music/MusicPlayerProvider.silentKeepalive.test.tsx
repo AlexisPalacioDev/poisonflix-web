@@ -123,7 +123,12 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
     this: HTMLMediaElement,
   ) {
-    callOrder.push('audio.play');
+    // The tone (`audio[loop]`) is recorded separately. It is started FIRST on
+    // purpose — before the track URL is even resolved — so that iOS has a
+    // playing media element immediately and the screen can be locked without
+    // waiting for the song. Folding it in as `audio.play` would make the
+    // ordering assertions below measure the placeholder instead of the track.
+    callOrder.push(this.hasAttribute('loop') ? 'tone.play' : 'audio.play');
     return Promise.resolve();
   });
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
@@ -183,7 +188,14 @@ describe('MusicPlayerProvider — silent keepalive lifecycle', () => {
     const firstPlay = callOrder.indexOf('audio.play');
     const ctorIndex = callOrder.indexOf('AudioContext.constructor');
     const resumeIndex = callOrder.indexOf('ctx.resume');
-    expect(ctorIndex).toBe(0);
+    // The TONE element goes first of all, ahead of the context — deliberately,
+    // because it is the only thing that gives iOS a playing media element
+    // before the track has resolved, which is what lets the screen be locked
+    // straight away. So the context is no longer the very first event; what
+    // still has to hold is that it is up and running before the SONG asks for
+    // the audio route, since WebKit gives that route to whoever asked last.
+    expect(callOrder.indexOf('tone.play')).toBe(0);
+    expect(ctorIndex).toBeGreaterThan(-1);
     expect(resumeIndex).toBeGreaterThan(ctorIndex);
     expect(firstPlay).toBeGreaterThan(resumeIndex);
   });

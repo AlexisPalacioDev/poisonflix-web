@@ -87,7 +87,11 @@ function renderProvider() {
 /** Both physical <audio> elements, in DOM (JSX) order — this order never
  *  changes even after a promotion swaps which one is logically "active". */
 function audios(): HTMLAudioElement[] {
-  return Array.from(document.querySelectorAll('audio'));
+// The tone element (`audio[loop]`) is deliberately excluded: it is the
+// placeholder that covers the gap before a track sounds, it carries no
+// handlers, and it never takes part in the queue. Counting it here would make
+// every positional assertion in this file off by one.
+  return Array.from(document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'));
 }
 
 function endedRaw(el: HTMLAudioElement) {

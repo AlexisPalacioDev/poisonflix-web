@@ -95,7 +95,11 @@ function renderProvider() {
 
 /** Both physical <audio> elements, in DOM (JSX) order. */
 function audios(): HTMLAudioElement[] {
-  return Array.from(document.querySelectorAll('audio'));
+// The tone element (`audio[loop]`) is deliberately excluded: it is the
+// placeholder that covers the gap before a track sounds, it carries no
+// handlers, and it never takes part in the queue. Counting it here would make
+// every positional assertion in this file off by one.
+  return Array.from(document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'));
 }
 
 function endedRaw(el: HTMLAudioElement) {
@@ -252,9 +256,19 @@ describe('MusicPlayerProvider — MITIGATION: when a rotated slot refuses to pla
     // Spied locally: this file mocks play/pause globally but not load, and
     // "the buffered slot was not reloaded" is half of what this test asserts.
     const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
-    playSpy.mockImplementationOnce(() =>
-      Promise.reject(new DOMException('not allowed', 'NotAllowedError')),
-    );
+    // Refuse the next play on a MIXER element specifically. `mockImplementationOnce`
+    // used to be enough, but the tone (`audio[loop]`) now takes the first
+    // play() of every gesture — it is the placeholder that lets the phone be
+    // locked before the track is ready — so a once-mock would land on it and
+    // the rotation this test is about would succeed.
+    let refused = false;
+    playSpy.mockImplementation(function (this: HTMLAudioElement) {
+      if (!refused && !this.hasAttribute('loop')) {
+        refused = true;
+        return Promise.reject(new DOMException('not allowed', 'NotAllowedError'));
+      }
+      return Promise.resolve();
+    });
 
     await act(async () => {
       endedRaw(first);
@@ -283,9 +297,19 @@ describe('MusicPlayerProvider — MITIGATION: when a rotated slot refuses to pla
       api.playNow([PREVIEW_A, PREVIEW_B], 0);
     });
     const [first] = audios();
-    playSpy.mockImplementationOnce(() =>
-      Promise.reject(new DOMException('not allowed', 'NotAllowedError')),
-    );
+    // Refuse the next play on a MIXER element specifically. `mockImplementationOnce`
+    // used to be enough, but the tone (`audio[loop]`) now takes the first
+    // play() of every gesture — it is the placeholder that lets the phone be
+    // locked before the track is ready — so a once-mock would land on it and
+    // the rotation this test is about would succeed.
+    let refused = false;
+    playSpy.mockImplementation(function (this: HTMLAudioElement) {
+      if (!refused && !this.hasAttribute('loop')) {
+        refused = true;
+        return Promise.reject(new DOMException('not allowed', 'NotAllowedError'));
+      }
+      return Promise.resolve();
+    });
 
     await act(async () => {
       endedRaw(first);

@@ -138,7 +138,11 @@ function renderProvider() {
  *  the escape. This order is fixed for the lifetime of the document — what
  *  moves is only which slot the engine treats as current/next/prev. */
 function audios(): HTMLAudioElement[] {
-  return Array.from(document.querySelectorAll('audio'));
+// The tone element (`audio[loop]`) is deliberately excluded: it is the
+// placeholder that covers the gap before a track sounds, it carries no
+// handlers, and it never takes part in the queue. Counting it here would make
+// every positional assertion in this file off by one.
+  return Array.from(document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'));
 }
 
 /** The three mixer slots — the ones routed into the AudioContext. */
