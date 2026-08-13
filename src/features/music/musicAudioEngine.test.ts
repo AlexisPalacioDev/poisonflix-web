@@ -130,6 +130,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // The routing switch persists in localStorage by design; a leaked value
+  // would silently change what every later test is exercising.
+  window.localStorage.removeItem('poisonflix:music.routeToGraph');
 });
 
 describe('createMusicAudioEngine — the no-reassignment rule', () => {
@@ -506,5 +509,44 @@ describe('createMusicAudioEngine — the defects adversarial review found', () =
     const ctx = FakeAudioContext.instances[0];
     expect(ctx.suspend).not.toHaveBeenCalled();
     expect(ctx.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('createMusicAudioEngine — the routing experiment switch', () => {
+  it('binds nothing to the graph when routing is switched off', () => {
+    // The switch exists because the traces could not answer whether feeding
+    // the song into the AudioContext is CAUSING the locked-screen silence or
+    // merely present during it. With it off, every element must play out of
+    // its own output — nothing captive, nothing to escape from.
+    window.localStorage.setItem('poisonflix:music.routeToGraph', '0');
+    const { engine, els } = makeEngine();
+
+    engine.setCurrentUrl(A);
+    engine.resume();
+    engine.setNeighbourUrls({ next: B, prev: C });
+
+    const ctx = FakeAudioContext.instances[0];
+    expect(ctx.mediaSources).toHaveLength(0);
+    for (const el of els) {
+      expect(engine.getRouting(el as unknown as HTMLAudioElement)).toBe('direct');
+    }
+    // The tone still runs: that half of the design is not what is being tested.
+    expect(ctx.resume).toHaveBeenCalled();
+  });
+
+  it('still rotates roles normally with routing off', () => {
+    // Turning the experiment on must not cost the fix that is already proven —
+    // the playing element still never gets a new src.
+    window.localStorage.setItem('poisonflix:music.routeToGraph', '0');
+    const { engine } = makeEngine();
+    engine.setCurrentUrl(A);
+    engine.resume();
+    engine.setNeighbourUrls({ next: B, prev: null });
+
+    const playing = engine.getCurrent() as unknown as FakeAudioElement;
+    const before = playing.srcAssignments.length;
+
+    expect(engine.setCurrentUrl(B)).toBe('promoted-next');
+    expect(playing.srcAssignments.length).toBe(before);
   });
 });

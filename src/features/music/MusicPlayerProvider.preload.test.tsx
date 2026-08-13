@@ -317,3 +317,37 @@ describe('MusicPlayerProvider — double buffering: preloading the next track', 
     expect(pauseSpy.mock.instances).toContain(first);
   });
 });
+
+describe('MusicPlayerProvider — a preload that keeps failing is left alone', () => {
+  it('stops retrying one URL after a couple of failures', async () => {
+    // MEASURED, not hypothetical. The owner's phone logged 94 consecutive
+    // `preloadError`s for ONE videoId, 1.2 seconds apart, for as long as the
+    // track kept playing: the failure cleared the slot, the retry tick bumped,
+    // the effect re-ran, the load failed again, round and round. That loop
+    // hammered the worker and ate the phone's connection — the single resource
+    // the actual playback depends on — and is very likely why the music went
+    // silent.
+    renderProvider();
+    await act(async () => {
+      api.playNow([PREVIEW_A, PREVIEW_B], 0);
+    });
+
+    const preload = audios().find((el) => el.getAttribute('src')?.includes('vid-b'));
+    expect(preload).toBeDefined();
+
+    // Fail it repeatedly, the way the device did.
+    for (let i = 0; i < 6; i += 1) {
+      const holder = audios().find((el) => el.getAttribute('src')?.includes('vid-b'));
+      if (!holder) break;
+      await act(async () => {
+        holder.dispatchEvent(new Event('error'));
+      });
+    }
+
+    // The loop is over: nothing is still holding that URL, so nothing is still
+    // fetching it. Playback is untouched — the current track keeps its source.
+    expect(audios().some((el) => el.getAttribute('src')?.includes('vid-b'))).toBe(false);
+    expect(audios().some((el) => el.getAttribute('src')?.includes('vid-a'))).toBe(true);
+    expect(api.isPlaying).toBe(true);
+  });
+});

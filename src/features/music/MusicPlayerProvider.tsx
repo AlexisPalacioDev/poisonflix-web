@@ -14,7 +14,7 @@ import { streamUrlSource } from '../../lib/domain/musicTrack';
 import { buildAudioStreamUrl } from '../../lib/domain/streamResolver';
 import { useLockDiagnostics } from './useLockDiagnostics';
 import { type AudioRouting, type KeepaliveContextState } from './silentKeepalive';
-import { createMusicAudioEngine } from './musicAudioEngine';
+import { createMusicAudioEngine, graphRoutingEnabled } from './musicAudioEngine';
 import { silentAudioClip } from './silentAudioClip';
 import { jamDestination } from '../jam/destination';
 import { addTracksToJam } from '../../api/jam';
@@ -226,6 +226,17 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // to the escape report. Without it, the report says the graph died but not
   // what it did on the way there.
   const keepaliveEventsRef = useRef<Array<Record<string, unknown>>>([]);
+  // Filled in by `useLockDiagnostics` with its own ring-buffer push, so the
+  // things only this file can see — above all WHY a play() was refused — land
+  // in the trace IN ORDER, next to the media events around them. A separate
+  // `reportFailure` line cannot be correlated with them after the fact; the
+  // last diagnosis round lost a deploy cycle to exactly that.
+  const noteRef = useRef<((what: string, extra?: Record<string, unknown>) => void) | null>(null);
+  /** Record a refused play() with the reason the browser gave. */
+  const noteRejection = useCallback((where: string, err: unknown) => {
+    const name = err instanceof DOMException ? err.name : typeof err === 'object' && err && 'name' in err ? String((err as { name: unknown }).name) : 'unknown';
+    noteRef.current?.(`playRejected:${where}`, { error: name });
+  }, []);
 
   // The silent Web Audio keepalive (see silentKeepalive.ts) — one graph for
   // the whole session, lazily built. Building the handle itself has no side
@@ -256,13 +267,17 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   keepaliveStateRef.current = () => engineRef.current?.getState() ?? null;
   // Whether the ACTIVE element's audio currently leaves through the graph, and
   // whether the escape has already happened. Same live-read pattern.
-  const routingRef = useRef<() => { routing: AudioRouting; escaped: boolean }>(() => ({
-    routing: 'direct',
-    escaped: false,
-  }));
+  const routingRef = useRef<() => { routing: AudioRouting; escaped: boolean; mode: boolean }>(
+    () => ({ routing: 'direct', escaped: false, mode: true }),
+  );
   routingRef.current = () => ({
     routing: engineRef.current?.getRouting(audioRef.current) ?? 'direct',
     escaped: graphEscapedRef.current,
+    // Which side of the experiment this sample belongs to. Without it, a
+    // 'direct' reading is ambiguous — it could mean the switch is off, or that
+    // a bind failed — and the whole point of the switch is comparing two
+    // nights of traces against each other.
+    mode: graphRoutingEnabled(),
   });
 
   // Whether the element has produced a confirmed `playing` event for the
@@ -804,6 +819,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
           // stepping on it. A genuine autoplay rejection (NotAllowedError,
           // etc.) is never reported as AbortError, so nothing real is lost by
           // skipping it here.
+          noteRejection(rotated ? 'rotation' : 'same-slot', err);
           const isAbort = err instanceof DOMException && err.name === 'AbortError';
           if (!isAbort && rotated) {
             recoverFromRejectedRotation(target, audio);
@@ -834,6 +850,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       syncActiveElement,
       applyOutputSettings,
       recoverFromRejectedRotation,
+      noteRejection,
     ],
   );
 
@@ -908,7 +925,8 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         armStallWatchdog(currentItemIdRef.current);
         const p = audio.play();
         if (p && typeof p.then === 'function') {
-          p.catch(() => {
+          p.catch((err: unknown) => {
+            noteRejection('repeat-one', err);
             // Same rules as every other rejection path here: only correct the
             // UI before the first successful play, and give a refused element
             // a gesture to come back on rather than letting the watchdog spend
@@ -923,7 +941,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     runGesture(action);
-  }, [runGesture, armStallWatchdog, clearStallWatchdog, armGestureRetry]);
+  }, [runGesture, armStallWatchdog, clearStallWatchdog, armGestureRetry, noteRejection]);
 
   // The watchdog's actual check, run from the timers `armStallWatchdog` sets
   // up. Reassigned every render (not a useCallback) purely so it always
@@ -1508,7 +1526,8 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
         // every loop (the reducer bumps `seekNonce`), so the one path made
         // synchronous to survive a locked screen was also the one whose
         // rejection turned the player off.
-        p.catch(() => {
+        p.catch((err: unknown) => {
+          noteRejection('seek', err);
           if (!unlockedRef.current) dispatch({ type: 'SET_PLAYING', value: false });
         });
       }
@@ -1735,6 +1754,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     audioIdentityKey,
     keepaliveStateRef,
     routingRef,
+    noteRef,
   );
 
   const publishFrozenPosition = useCallback(() => {
@@ -2099,12 +2119,16 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // later call — permanent silence with the bookkeeping all green.
       // Adversarial review found this; nothing in the engine can observe a
       // load failure on its own.
+      // READ THE URL FIRST: `invalidateElement` releases the element, which
+      // clears the very attribute this needs. Reading after it always yielded
+      // null, so the failure was never charged and the budget never bit — the
+      // loop this whole change exists to stop would have survived it.
+      const failedUrl = el.getAttribute('src');
       engineRef.current?.invalidateElement(el);
       // Charge the failure against this URL. Past the budget the effect above
       // simply stops handing it out, which ends the loop — the track still
       // plays, it just starts cold instead of from a buffer that was never
       // going to arrive.
-      const failedUrl = el.getAttribute('src');
       if (failedUrl) {
         const seen = (preloadFailuresRef.current.get(failedUrl) ?? 0) + 1;
         preloadFailuresRef.current.set(failedUrl, seen);

@@ -194,6 +194,48 @@ export interface MusicAudioEngineHandle {
   isEscaped(): boolean;
 }
 
+/**
+ * Whether the song's own output is fed INTO the keepalive's AudioContext (the
+ * owner's "one output" design) or left to leave the element directly.
+ *
+ * THIS IS A MEASUREMENT SWITCH, not a preference, and it exists because the
+ * question behind it cannot be answered by reading code. The owner's device
+ * traces show the AudioContext being `interrupted` while hidden and the song
+ * still carrying `routing: 'graph'` — i.e. audio fed into a pipe that is no
+ * longer connected. Whether routing is CAUSING the locked-screen silence or
+ * merely present during it is exactly the kind of thing this codebase has
+ * guessed wrong before, so it gets an experiment instead of an opinion.
+ *
+ * Flip it from the phone, with no rebuild and no deploy:
+ *
+ *     https://…/musica?audioroute=off     → songs leave the element directly
+ *     https://…/musica?audioroute=on      → back to one shared output
+ *
+ * The choice persists in localStorage, so one visit sets it for the session
+ * that follows. Every diagnostic sample records which mode it was taken in
+ * (`routeMode`), so two nights of traces can be compared directly rather than
+ * remembered.
+ *
+ * Defaults to ON — the shipped design stays the default until data says
+ * otherwise.
+ */
+const ROUTE_MODE_KEY = 'poisonflix:music.routeToGraph';
+
+export function graphRoutingEnabled(): boolean {
+  try {
+    if (typeof window === 'undefined') return true;
+    const param = new URLSearchParams(window.location.search).get('audioroute');
+    if (param === 'off' || param === 'on') {
+      window.localStorage.setItem(ROUTE_MODE_KEY, param === 'on' ? '1' : '0');
+    }
+    return window.localStorage.getItem(ROUTE_MODE_KEY) !== '0';
+  } catch {
+    // Private mode, disabled storage, anything — fall back to the shipped
+    // behaviour rather than silently changing how audio leaves the page.
+    return true;
+  }
+}
+
 /** Role gain values. Binary by design — see `setElementGain`'s docstring in
  *  silentKeepalive.ts for why a role gain does not double-apply the user's
  *  volume the way an arbitrary one would. */
@@ -347,6 +389,10 @@ export function createMusicAudioEngine(
    */
   const routeSlots = () => {
     if (escaped) return;
+    // The experiment switch. When off, no element is ever bound: each one
+    // plays out of its own output, the tone keeps running on its own context,
+    // and the escape hatch becomes unnecessary because nothing is captive.
+    if (!graphRoutingEnabled()) return;
     for (const el of slots()) {
       if (routed.has(el)) continue;
       const role: SlotRole = el === currentEl ? 'current' : el === nextEl ? 'next' : 'prev';
@@ -539,7 +585,20 @@ export function createMusicAudioEngine(
       if (!el) return;
       const had = urlOf(el);
       if (had === null) return;
+      // RELEASE it, do not merely forget it. Forgetting alone left the element
+      // still holding the failed source — and therefore still holding its
+      // connection — while the engine believed the slot was empty, so
+      // `loadInto(el, null)` would early-return and never actually clear it.
+      // A test written for the preload-retry loop caught this: the URL was
+      // still on the element after the engine had given up on it.
       urls.delete(el);
+      try {
+        if (!el.paused) el.pause();
+        el.removeAttribute('src');
+        el.load();
+      } catch {
+        // Best effort — the bookkeeping is already correct either way.
+      }
       emit('slotInvalidated', { role: el === currentEl ? 'current' : el === nextEl ? 'next' : el === prevEl ? 'prev' : 'unknown' });
     },
     close: () => keepalive.close(),

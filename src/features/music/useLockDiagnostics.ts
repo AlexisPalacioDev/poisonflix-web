@@ -76,7 +76,17 @@ export function useLockDiagnostics(
   // advancing track cannot distinguish a dead audio graph from every other
   // cause of silence, which is exactly the ambiguity that let one such report
   // be diagnosed twice from code alone.
-  routingRef?: { current: () => { routing: AudioRouting; escaped: boolean } },
+  routingRef?: { current: () => { routing: AudioRouting; escaped: boolean; mode: boolean } },
+  // Filled in BY this hook with its own `push`, so the provider can record
+  // things only it can see — above all, WHY a play() was refused.
+  //
+  // The last round of traces could say the element ended up paused at t=0 with
+  // the track fully buffered, but not whether iOS had refused the play() or
+  // whether one was ever made. Those are different bugs with different fixes,
+  // and telling them apart cost a whole deploy cycle. The rejection reason
+  // belongs in the ring buffer, in order, next to the events around it —
+  // `reportFailure` on its own lands in a separate log line with no context.
+  notePushRef?: { current: ((what: string, extra?: Record<string, unknown>) => void) | null },
 ): void {
   // Lives OUTSIDE the effect below, in a ref that survives a resubscribe —
   // caught by adversarial review: an earlier version declared this as a
@@ -91,13 +101,20 @@ export function useLockDiagnostics(
   // to the newly-active element while the accumulated samples ride along
   // unchanged.
   const traceRef = useRef<Array<Record<string, unknown>>>([]);
+  // When the element last reported real, flowing audio (`playing`), and where
+  // its clock was at the previous sample. Both answer the question the last
+  // traces could not: is this silence a stopped element, or an element that
+  // still believes it is advancing? They live in refs so they survive the
+  // resubscribe that a rotation forces.
+  const lastPlayingAtRef = useRef<number | null>(null);
+  const lastTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || typeof document === 'undefined') return;
 
     const trace = traceRef.current;
-    const push = (what: string) => {
+    const push = (what: string, extra?: Record<string, unknown>) => {
       trace.push({
         at: Date.now(),
         what,
@@ -145,7 +162,26 @@ export function useLockDiagnostics(
         // was handed to a never-routed element (see `escapeFromAudioGraph`).
         routing: routingRef ? routingRef.current().routing : undefined,
         graphEscaped: routingRef ? routingRef.current().escaped : undefined,
+        // Which side of the routing experiment this sample belongs to — see
+        // `graphRoutingEnabled`. A 'direct' reading is otherwise ambiguous.
+        routeMode: routingRef ? (routingRef.current().mode ? 'graph' : 'off') : undefined,
+        // Seconds since the element last said audio was actually flowing. A
+        // stall traced 90s after the last `playing` is a different animal from
+        // one traced 2s after it, and no previous trace could tell them apart.
+        sincePlaying:
+          lastPlayingAtRef.current === null
+            ? null
+            : Number(((Date.now() - lastPlayingAtRef.current) / 1000).toFixed(1)),
+        // Whether the clock moved since the previous sample. This is what
+        // separates "the element stopped" from "the element is advancing
+        // through silence" — the second is the signature of audio being fed
+        // into a graph that can no longer carry it.
+        advanced:
+          lastTimeRef.current === null ? null : audio.currentTime > lastTimeRef.current + 0.01,
+        ...extra,
       });
+      lastTimeRef.current = audio.currentTime;
+      if (what === 'playing') lastPlayingAtRef.current = Date.now();
       if (trace.length > TRACE_MAX) trace.splice(0, trace.length - TRACE_MAX);
     };
 
@@ -176,9 +212,13 @@ export function useLockDiagnostics(
 
     for (const type of MEDIA_EVENTS) audio.addEventListener(type, onMedia);
     document.addEventListener('visibilitychange', onVisibility);
+    if (notePushRef) notePushRef.current = push;
     return () => {
       for (const type of MEDIA_EVENTS) audio.removeEventListener(type, onMedia);
       document.removeEventListener('visibilitychange', onVisibility);
+      // Dropped on teardown so a note can never be pushed into the buffer of
+      // an element this hook is no longer watching.
+      if (notePushRef) notePushRef.current = null;
     };
     // `trackRef` is a ref object (stable identity, read live inside `push`)
     // and is deliberately NOT a dependency — see `audioIdentityKey`'s
