@@ -1408,7 +1408,28 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
             const ep = el.play();
             if (ep && typeof ep.then === 'function') {
               ep.then(() => {
-                if (el === escape) escapeUnlockPlayedRef.current = true;
+                if (el === escape) {
+                  escapeUnlockPlayedRef.current = true;
+                  return;
+                }
+                // HAND THE SLOT BACK. The clip has done its only job — this
+                // element has now played from a user gesture — and leaving it
+                // loaded makes the slot look occupied to everything that
+                // inspects it, including a human reading the DOM while
+                // debugging. Released here rather than before `play()`
+                // resolves, because clearing the source mid-play cancels the
+                // very unlock this is for.
+                //
+                // The escape element is exempt: it deliberately keeps the clip
+                // as its resting state until the day it has to take over.
+                try {
+                  el.pause();
+                  el.removeAttribute('src');
+                  el.load();
+                } catch {
+                  // A slot that could not be cleared is still unlocked, which
+                  // was the point; the engine overwrites the source anyway.
+                }
               }).catch(() => {
                 // Refused. Each element can still try again from its own
                 // rejection path; nothing here is worth reporting alone.

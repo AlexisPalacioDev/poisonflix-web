@@ -420,3 +420,30 @@ describe('MusicPlayerProvider — MITIGATION: when a rotated slot refuses to pla
     expect(api.currentIndex).toBe(indexAfterNext);
   });
 });
+
+describe('MusicPlayerProvider — the unlock must not get in the way of the music', () => {
+  it('still plays the track when the unlock ran first, in the same gesture', async () => {
+    // THE REAL SEQUENCE, which no other test covered: the user's finger fires
+    // `pointerdown` (which unlocks the slots) and then the `click` that starts
+    // the song. Every other test in this file calls the API directly, so the
+    // unlock had never run BEFORE playback in a test — and a regression that
+    // left the silent clip sitting on the slots, with the track never loading
+    // at all, reached production because of that gap.
+    renderProvider();
+
+    act(() => fireEvent.pointerDown(document));
+    await act(async () => {
+      api.playNow([PREVIEW_A, PREVIEW_B], 0);
+    });
+
+    // Some element is actually holding the requested track.
+    const holder = audios().find((el) => el.getAttribute('src')?.includes('vid-a'));
+    expect(holder).toBeDefined();
+    expect(playSpy.mock.contexts).toContain(holder);
+    // And no mixer slot is left with the unlock clip standing in for a track.
+    const stuck = audios()
+      .filter((el) => el.preload !== 'none')
+      .filter((el) => el.getAttribute('src')?.startsWith('data:'));
+    expect(stuck).toHaveLength(0);
+  });
+});

@@ -634,3 +634,45 @@ describe('createSilentKeepalive — losing the graph while it carries the song',
     expect(() => ctx.emitState('closed')).not.toThrow();
   });
 });
+
+describe('createSilentKeepalive — the tone survives an interruption with nothing routed', () => {
+  it('resumes an interrupted context even when no element was ever routed', async () => {
+    // Once routing became opt-in, `anyRouted` stays false for the whole
+    // session in the default mode — and an early return keyed on it left the
+    // `statechange` handler inert. A phone call or a backgrounding would
+    // interrupt the context and NOTHING would bring it back: the tone would
+    // stop silently for the rest of the session, while the comment above the
+    // switch claimed "the tone still runs". Caught by adversarial review as an
+    // assumption the code did not implement.
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+    keepalive.start();
+    const ctx = FakeAudioContext.instances[0];
+    await flushMicrotasks();
+    expect(ctx.state).toBe('running');
+    ctx.resumeMock.mockClear();
+
+    // iOS interrupts it, exactly as it does when the page goes hidden.
+    ctx.emitState('interrupted');
+
+    expect(ctx.resumeMock).toHaveBeenCalled();
+    // And it is NOT reported as a routing failure: there is nothing captive to
+    // rescue, so declaring loss would burn the caller's one-way escape for
+    // nothing.
+    expect(keepalive.isRoutingLost()).toBe(false);
+  });
+
+  it('does not chase the context back up once the caller stopped asking for sound', async () => {
+    vi.stubGlobal('AudioContext', FakeAudioContext);
+    const keepalive = createSilentKeepalive();
+    keepalive.start();
+    const ctx = FakeAudioContext.instances[0];
+    await flushMicrotasks();
+    keepalive.setPlaybackIntent(false);
+    ctx.resumeMock.mockClear();
+
+    ctx.emitState('interrupted');
+
+    expect(ctx.resumeMock).not.toHaveBeenCalled();
+  });
+});

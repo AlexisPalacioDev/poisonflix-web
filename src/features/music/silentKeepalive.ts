@@ -423,9 +423,31 @@ export function createSilentKeepalive(
   // because neither alone is sufficient: `statechange` can deliver
   // 'interrupted' with no follow-up event ever arriving, and a timer alone
   // would miss a context that recovers and re-fails inside one window.
-  const evaluateHealth = () => {
+  const evaluateHealth = (fromStateChange = false) => {
     const current = ctx;
-    if (routingLost || !anyRouted || !current) return;
+    if (routingLost || !current) return;
+    // TWO DIFFERENT JOBS, and conflating them left the tone dead.
+    //
+    // Declaring routing lost only makes sense when an element is captive in
+    // this context — with nothing routed there is nothing to rescue. But
+    // RESUMING is worth doing either way: once routing became opt-in
+    // (`graphRoutingEnabled`), `anyRouted` stays false for the whole session
+    // in the default mode, and an early return here made the `statechange`
+    // handler inert. A phone call or a backgrounding would interrupt the
+    // context and nothing would ever bring it back — the tone would simply
+    // stop, silently, for the rest of the session. Caught by adversarial
+    // review, which noticed the comment claiming "the tone still runs" was an
+    // assumption rather than something the code did.
+    const st0 = current.state as AudioContextState | 'interrupted';
+    if (!anyRouted) {
+      // Only from a real transition. `start()` already resumes on its own and
+      // then calls in here, so reviving unconditionally would just issue the
+      // same control message twice on every play.
+      if (fromStateChange && wantSound && st0 !== 'running' && st0 !== 'closed') {
+        safeInvoke(() => current.resume());
+      }
+      return;
+    }
     // 'interrupted' is Safari-only and absent from the TS union.
     const st = current.state as AudioContextState | 'interrupted';
     if (st === 'running') {
@@ -516,12 +538,12 @@ export function createSilentKeepalive(
         if (typeof newCtx.addEventListener === 'function') {
           newCtx.addEventListener('statechange', () => {
             emit('contextState', { state: String(newCtx.state) });
-            evaluateHealth();
+            evaluateHealth(true);
           });
         } else {
           (newCtx as AudioContext).onstatechange = () => {
             emit('contextState', { state: String(newCtx.state) });
-            evaluateHealth();
+            evaluateHealth(true);
           };
         }
       } catch {
