@@ -216,6 +216,76 @@ describe('MusicPlayerProvider — MediaSession integration', () => {
     expect(playbackState).toBe('paused');
   });
 
+  // ── PUBLISHED FROM THE EVENT, NOT FROM A RENDER ────────────────────────
+  //
+  // These three exist because the previous round of tests could not see the
+  // defect they were supposed to cover. Everything above drives the provider
+  // through `act()`, which flushes effects — so an implementation that only
+  // ever published `playbackState` from a `useEffect` passed all of them,
+  // while on the owner's phone all 20 measured `playing` events were sampled
+  // with the control still reading 'paused'.
+  //
+  // The shape that has teeth: put React in a position where it will NOT
+  // re-render — the reducer state the effect depends on is already correct —
+  // and then check the OS was told anyway. Only a synchronous publish from the
+  // media event's own task can pass.
+
+  /** The `<audio>` currently carrying the track (mixer slots rotate; the tone
+   *  is the `loop`ing one and is never it). */
+  function activeAudio(): HTMLAudioElement {
+    const els = Array.from(document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'));
+    return els.find((el) => el.getAttribute('src')?.includes('Audio/a/')) ?? els[0];
+  }
+
+  it('re-publishes "playing" on a `playing` event even when React state never changes', () => {
+    renderProvider();
+    act(() => api.playNow([track], 0));
+    expect(api.isPlaying).toBe(true);
+
+    // The OS view drifts out of sync — exactly the traced state: the control
+    // says paused while the song is about to be confirmed sounding. React's
+    // own state is ALREADY `isPlaying: true`, so the effect's deps do not
+    // change and it will not run again. Nothing but the event can fix this.
+    playbackState = 'paused';
+
+    act(() => fireEvent.playing(activeAudio()));
+
+    expect(playbackState).toBe('playing');
+    expect(api.isPlaying).toBe(true); // and nothing about the song changed
+  });
+
+  it('re-publishes "paused" on a `pause` event even when React state never changes', () => {
+    renderProvider();
+    act(() => api.playNow([track], 0));
+    act(() => api.toggle()); // settle into paused
+    expect(api.isPlaying).toBe(false);
+
+    // Same trick in the other direction: the reducer already says paused, so
+    // the effect is inert, and only the event can correct a stale 'playing'.
+    playbackState = 'playing';
+
+    act(() => fireEvent.pause(activeAudio()));
+
+    expect(playbackState).toBe('paused');
+  });
+
+  it('publishes "playing" inside the gesture, before the track has loaded a byte', () => {
+    // The gap this covers is the one the owner feels as "debo seguir esperando
+    // a que se reproduzca": between the tap and the first byte, the placeholder
+    // holds the session, and the control has to already say playing or the
+    // lock screen shows a paused song nobody paused.
+    renderProvider();
+    playbackState = 'none';
+
+    let stateInsideGesture = '';
+    act(() => {
+      api.playNow([track], 0);
+      stateInsideGesture = playbackState; // captured before effects flush
+    });
+
+    expect(stateInsideGesture).toBe('playing');
+  });
+
   it('the lock-screen next / prev / pause handlers drive the queue', () => {
     const tracks: MusicTrack[] = [
       { ...track, itemId: 'a', title: 'A' },

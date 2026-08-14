@@ -1,8 +1,7 @@
 import type { MusicJobState, MusicSearchResult } from '../../api/schemas/music';
 import { isRowActive } from '../../lib/domain/musicTrack';
 import type { MusicTrack } from './musicPlayerCore';
-import { CoverImage } from './CoverImage';
-import { PlayButton } from './PlayButton';
+import { PlayableCover } from './PlayableCover';
 import { MusicRowMenu } from './MusicRowMenu';
 import { formatDuration } from './format';
 
@@ -22,8 +21,8 @@ export interface MusicResultRowProps {
   onEnqueuePreview: (result: MusicSearchResult) => void;
   // Instant-play a not-yet-downloaded result by streaming it (no download).
   onPreview: (result: MusicSearchResult) => void;
-  /** The player's current track, so the row that is sounding shows ⏸ and its
-   *  button pauses instead of restarting what is already playing. */
+  /** The player's current track, so the row that is sounding marks its cover
+   *  with ⏸ and pauses instead of restarting what is already playing. */
   current: MusicTrack | null;
   isPlaying: boolean;
   onToggle: () => void;
@@ -56,9 +55,18 @@ export function MusicResultRow({
 
   return (
     <li className="pf-music__row">
-      <div className="pf-music__art">
-        <CoverImage src={result.thumbnailUrl} loading="lazy" />
-      </div>
+      <PlayableCover
+        className="pf-music__art"
+        src={result.thumbnailUrl}
+        loading="lazy"
+        active={active}
+        isPlaying={isPlaying}
+        onClick={() =>
+          active ? onToggle() : playItemId ? onPlay(result, playItemId) : onPreview(result)
+        }
+        label={playItemId ? `Reproducir ${title}` : `Reproducir ${title} sin descargar`}
+        pauseLabel={`Pausar ${title}`}
+      />
       <div className="pf-music__info">
         <span className="pf-music__title">
           {title}
@@ -71,14 +79,6 @@ export function MusicResultRow({
       {result.durationSeconds != null && (
         <span className="pf-music__dur">{formatDuration(result.durationSeconds)}</span>
       )}
-      <PlayButton
-        active={active}
-        isPlaying={isPlaying}
-        onClick={() =>
-          active ? onToggle() : playItemId ? onPlay(result, playItemId) : onPreview(result)
-        }
-        label={playItemId ? `Reproducir ${title}` : `Reproducir ${title} sin descargar`}
-      />
       <MusicRowMenu
         title={title}
         videoId={result.videoId}

@@ -240,6 +240,32 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       /* nothing to do */
     }
   }, []);
+
+  /** Tell the OS what the song is doing FROM THE EVENT'S OWN TASK.
+   *
+   *  There is a `playbackState` effect further down, and it stays — it is the
+   *  reconciler, and the only thing that can say 'none'. But an effect is a
+   *  React render away, and a backgrounded tab does not reliably get there in
+   *  time.
+   *
+   *  MEASURED, on the owner's phone, build `f17f358`: across the traces every
+   *  single one of the 20 `playing` events — the moment audio actually starts
+   *  coming out — was sampled with `playbackState` still reading 'paused',
+   *  while all 17 `play` events (asked, not yet sounding) read 'playing'. The
+   *  control was reporting the previous cycle's answer, which is why it looked
+   *  inverted: pause showing while the song ran, play showing while it did not.
+   *
+   *  Media events DO arrive while hidden, so publishing from them closes that
+   *  window without depending on React getting scheduled. */
+  const publishPlaybackState = useCallback((playing: boolean) => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    } catch {
+      /* Older WebKit rejects the assignment; the effect still reconciles. */
+    }
+  }, []);
+
   const lastTickRef = useRef(0);
   // Consecutive <audio> failures. Reset by a successful load; see onError below.
   const consecutiveErrorsRef = useRef(0);
@@ -846,6 +872,10 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       // playing media element now, instead of 5-10 seconds from now when the
       // track's bytes finally arrive.
       startTone();
+      // And say so in the same breath. The listener asked for this in a
+      // gesture; the control should not spend a render describing the state
+      // they just left.
+      publishPlaybackState(true);
       const engine = engineRef.current;
       if (!engine || !audioRef.current) return;
       const url = trackSrc(target);
@@ -978,6 +1008,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       recoverFromRejectedRotation,
       noteRejection,
       startTone,
+      publishPlaybackState,
       pauseIntentionally,
     ],
   );
@@ -1933,6 +1964,29 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
   // `playbackState` instead of `setPositionState`. 'paused' otherwise (Media
   // Session has no third "buffering" value) covers only: nothing loaded, a
   // real pause, or a play attempt that has not yet been confirmed even once.
+  // THE TONE'S STOP SIDE, RECONCILED — because the events alone cannot close it.
+  //
+  // Every `stopTone()` call hangs off a `pause` or `playing` DOM event, and
+  // this file already says why that is not enough (see the keepalive teardown
+  // note): pausing an element whose `paused` was ALREADY true fires no `pause`
+  // event at all per spec, and `pauseIntentionally` returns early on exactly
+  // that case.
+  //
+  // Adversarial review found the leak that opens: last track of the queue, one
+  // stream error below the breaker limit. The skip path starts the tone, the
+  // reducer settles on `isPlaying: false` without ever producing a pause event
+  // — and the placeholder loops for the rest of the session, holding the OS
+  // audio session under a control that reads "paused". That is the same defect
+  // the error-give-up branch was just fixed for, entering through a different
+  // door.
+  //
+  // The event-driven stops STAY: they are the only thing that runs in a tab
+  // iOS has frozen. This is the reconciler for every path that never produces
+  // an event at all.
+  useEffect(() => {
+    if (!state.isPlaying) stopTone();
+  }, [state.isPlaying, stopTone]);
+
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
     // THIS BUTTON IS ABOUT THE SONG. Nothing else.
@@ -2232,6 +2286,7 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // Swallowed while the unlock probe's own play() is in flight — it
     // is not a real user play.
     if (probeRef.current) return;
+    publishPlaybackState(true);
     dispatch({ type: 'SYNC_MEDIA', playing: true });
   };
 
@@ -2253,6 +2308,9 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // The track is genuinely sounding now, so the placeholder steps aside.
     // Leaving both running is how `92b215f` lost the audio route.
     stopTone();
+    // The song is audibly running: say so NOW, not one React render from now.
+    // This is the exact event the traces caught reporting 'paused'.
+    publishPlaybackState(true);
     // Real audio is flowing again, so the hidden-pause budget is spent on the
     // NEXT outage rather than being exhausted once per session.
     hiddenResumesRef.current = 0;
@@ -2332,6 +2390,11 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // own task, exactly like the probe window above.
     if (intentionalPauseRef.current) {
       intentionalPauseRef.current = false;
+      // Settled into paused, and the placeholder has nothing left to cover:
+      // leaving it looping keeps a session alive around silence, which is how
+      // the control ends up describing the tone instead of the song.
+      stopTone();
+      publishPlaybackState(false);
       dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
       return;
     }
@@ -2361,6 +2424,8 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    stopTone();
+    publishPlaybackState(false);
     dispatch({ type: 'SYNC_MEDIA', playing: false, buffering: false });
   };
 
@@ -2477,9 +2542,21 @@ export function MusicPlayerProvider({ children }: { children: ReactNode }) {
     // radio queue because the worker is down is not. Stop and stay stopped
     // so the failure is visible instead of looking like an instant finish.
     if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_AUDIO_ERRORS) {
+      // STOP THE PLACEHOLDER TOO. Nothing did this before, and REPRODUCED live
+      // against production: a track whose stream 502s left the tone looping for
+      // as long as the page stayed open — 68 seconds in the measurement, with
+      // `readyState` 0 and not one byte of the song. The phone keeps a
+      // now-playing session, the panel keeps a button, and nothing will ever
+      // come out of it. Giving up has to mean giving up audibly.
+      stopTone();
+      publishPlaybackState(false);
       dispatch({ type: 'SET_PLAYING', value: false });
       return;
     }
+    // Skipping a dead track is a LONGER gap than a normal one, so cover it the
+    // way `onEnded` does — otherwise the session lapses mid-skip and a locked
+    // phone loses its panel on exactly the tracks that most need to be skipped.
+    if (stateRef.current.isPlaying) startTone();
     // Same reasoning as `onEnded`: skipping a dead track has to drive the
     // element from this handler, or a locked phone never resumes.
     advanceFromMediaEvent();

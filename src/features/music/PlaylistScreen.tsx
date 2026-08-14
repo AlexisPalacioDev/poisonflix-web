@@ -11,7 +11,7 @@ import { queryKeys } from '../../hooks/queryKeys';
 import { resolveCoverUrl } from '../../lib/domain/posterUrl';
 import { audioItemToTrack } from '../../lib/domain/musicTrack';
 import { CoverImage } from './CoverImage';
-import { PlayButton } from './PlayButton';
+import { PlayableCover } from './PlayableCover';
 import { MusicRowMenu } from './MusicRowMenu';
 import { useMusicPlayer } from './musicPlayerCore';
 import './music.css';
@@ -178,9 +178,18 @@ export function PlaylistScreen() {
               return (
                 <li key={item.PlaylistItemId ?? track.itemId} className="pf-music__row">
                   <span className="pf-music__track-no">{index + 1}</span>
-                  <div className="pf-music__art">
-                    <CoverImage src={track.coverUrl} loading="lazy" />
-                  </div>
+                  <PlayableCover
+                    className="pf-music__art"
+                    src={track.coverUrl}
+                    loading="lazy"
+                    active={current?.itemId === track.itemId}
+                    isPlaying={isPlaying}
+                    onClick={() =>
+                      current?.itemId === track.itemId ? toggle() : playNow(tracks, index)
+                    }
+                    label={`Reproducir ${track.title}`}
+                    pauseLabel={`Pausar ${track.title}`}
+                  />
                   <Link
                     to={`/musica/track/${track.itemId}`}
                     className="pf-music__info pf-music__track-link"
@@ -192,14 +201,6 @@ export function PlaylistScreen() {
                   {item.RunTimeTicks != null && (
                     <span className="pf-music__dur">{trackDuration(item.RunTimeTicks)}</span>
                   )}
-                  <PlayButton
-                    active={current?.itemId === track.itemId}
-                    isPlaying={isPlaying}
-                    onClick={() =>
-                      current?.itemId === track.itemId ? toggle() : playNow(tracks, index)
-                    }
-                    label={`Reproducir ${track.title}`}
-                  />
                   <MusicRowMenu
                     title={track.title}
                     itemId={track.itemId}

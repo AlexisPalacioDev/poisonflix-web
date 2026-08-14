@@ -3,8 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useMusicGenres } from '../../hooks/useMusicGenres';
 import { useGenreSongs } from '../../hooks/useGenreSongs';
 import { audioItemToTrack } from '../../lib/domain/musicTrack';
-import { CoverImage } from './CoverImage';
-import { PlayButton } from './PlayButton';
+import { PlayableCover } from './PlayableCover';
 import { MusicRowMenu } from './MusicRowMenu';
 import { useMusicPlayer } from './musicPlayerCore';
 
@@ -71,19 +70,20 @@ export function GenresPanel({ active }: { active: boolean }) {
                     key={track.itemId}
                     className={`pf-music__row${isCurrent ? ' pf-music__row--active' : ''}`}
                   >
-                    <div className="pf-music__art">
-                      <CoverImage src={track.coverUrl} loading="lazy" />
-                    </div>
-                    <div className="pf-music__info">
-                      <span className="pf-music__title">{track.title}</span>
-                      <span className="pf-music__sub">{track.artist ?? 'Desconocido'}</span>
-                    </div>
-                    <PlayButton
+                    <PlayableCover
+                      className="pf-music__art"
+                      src={track.coverUrl}
+                      loading="lazy"
                       active={isCurrent}
                       isPlaying={isPlaying}
                       onClick={() => (isCurrent ? toggle() : playNow(tracks, index))}
                       label={`Reproducir ${track.title}`}
+                      pauseLabel={`Pausar ${track.title}`}
                     />
+                    <div className="pf-music__info">
+                      <span className="pf-music__title">{track.title}</span>
+                      <span className="pf-music__sub">{track.artist ?? 'Desconocido'}</span>
+                    </div>
                     <MusicRowMenu
                       title={track.title}
                       itemId={track.itemId}

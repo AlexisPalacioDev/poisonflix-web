@@ -115,7 +115,7 @@ describe('DownloadedScreen — tu música descargada', () => {
     fireEvent.click(cover);
     // Playing flips the label to Pausar, which is only true if the click reached
     // the player rather than dying on the artwork.
-    expect(await screen.findByRole('button', { name: 'Pausar' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Pausar Song 0' })).toBeInTheDocument();
 
     // And the same surface is operable from the keyboard.
     const second = screen.getByRole('button', { name: 'Reproducir Song 1' });
@@ -138,7 +138,7 @@ describe('DownloadedScreen — tu música descargada', () => {
 
     expect(screen.getByRole('menu', { name: 'Opciones para Song 0' })).toBeInTheDocument();
     // Opening the menu must not have started the song underneath it.
-    expect(screen.queryByRole('button', { name: 'Pausar' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pausar Song 0' })).not.toBeInTheDocument();
   });
 
   it('plays the whole library from one button', async () => {
@@ -148,7 +148,7 @@ describe('DownloadedScreen — tu música descargada', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Reproducir todo' }));
 
     // The first track is the one sounding; the queue holds the rest.
-    expect(await screen.findByRole('button', { name: 'Pausar' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Pausar Song 0' })).toBeInTheDocument();
   });
 
   it('filters in place once the library is big enough to need it', async () => {
@@ -257,20 +257,49 @@ describe('DownloadedScreen — tu música descargada', () => {
     expect(mockedGetItems.mock.calls.map((call) => call[1]?.startIndex)).toEqual([0, 500]);
   }, 20_000);
 
-  // The old "Canciones" tab this grid replaced drew an always-visible green
-  // disc on every row. The cover card it borrows instead hides its disc until
-  // hover, which on the owner's phone means forever.
-  it('shows the play disc on a pointer that cannot hover', async () => {
+  // The disc that used to sit on this grid was revealed by :hover, which on the
+  // owner's phone means never. The cover replaced it: it is the artwork, so it
+  // is always there — and there is no coarse-pointer exception to forget.
+  it('makes the whole cover the control, with nothing hidden behind a hover', async () => {
     mockedGetItems.mockResolvedValue(library(2) as never);
     const { container } = renderScreen();
     await screen.findByRole('button', { name: 'Reproducir Song 0' });
 
     const css = readFileSync(resolve(__dirname, 'music.css'), 'utf8');
-    const rule = ruleInMedia(css, COARSE_POINTER, '.pf-music__rec-btn');
-    expect(rule, 'the coarse-pointer rule for the play disc is gone').not.toBeNull();
+    const at = css.indexOf('.pf-music__art-btn {');
+    expect(at, 'the cover control has no rule at all').toBeGreaterThan(-1);
+    const body = css.slice(css.indexOf('{', at) + 1, css.indexOf('}', at));
+    expect(body).not.toMatch(/opacity:\s*0/);
 
-    const btn = container.querySelector('.pf-music__rec-btn') as HTMLElement;
-    expect(btn.matches(rule?.selector ?? '')).toBe(true);
-    expect(rule?.declarations).toMatch(/opacity:\s*1\s*;/);
+    // The button covers the artwork rather than being a disc dropped on it.
+    const btn = container.querySelector('.pf-music__art-btn') as HTMLElement;
+    expect(btn.parentElement?.className).toContain('pf-music__rec-art');
+    expect(ruleInMedia(css, COARSE_POINTER, '.pf-music__art-btn')).toBeNull();
+  });
+
+  // Requirement, in the owner's words: "el boton de play y pausa solo se
+  // mostrara en la caratula de la cancion que este sonando actualmente".
+  it('marks only the cover of the song that is sounding', async () => {
+    mockedGetItems.mockResolvedValue(library(3) as never);
+    const { container } = renderScreen();
+
+    // Nothing playing: not a single glyph on the whole grid.
+    await screen.findByRole('button', { name: 'Reproducir Song 0' });
+    expect(container.querySelectorAll('.pf-music__art-state')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reproducir Song 1' }));
+    await screen.findByRole('button', { name: 'Pausar Song 1' });
+
+    const cards = container.querySelectorAll('.pf-music__lib-card');
+    expect(container.querySelectorAll('.pf-music__art-state')).toHaveLength(1);
+    expect(cards[1].querySelector('.pf-music__art-state')).not.toBeNull();
+    expect(cards[0].querySelector('.pf-music__art-state')).toBeNull();
+    expect(cards[2].querySelector('.pf-music__art-state')).toBeNull();
+
+    // A marker, not a second control: it is hidden from assistive tech and it
+    // lives inside the cover's own button.
+    const marker = cards[1].querySelector('.pf-music__art-state') as HTMLElement;
+    expect(marker.getAttribute('aria-hidden')).toBe('true');
+    expect(marker.closest('button')?.className).toContain('pf-music__art-btn');
   });
 });

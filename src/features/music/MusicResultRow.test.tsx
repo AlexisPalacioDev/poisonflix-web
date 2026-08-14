@@ -93,17 +93,48 @@ describe('MusicResultRow thumb-up', () => {
   });
 });
 
-describe('MusicResultRow play button', () => {
+describe('MusicResultRow play control', () => {
   it('offers to preview an idle row', () => {
     const props = renderRow();
     fireEvent.click(screen.getByRole('button', { name: /Reproducir Chachachá sin descargar/ }));
     expect(props.onPreview).toHaveBeenCalledWith(RESULT);
   });
 
+  it('puts the control on the cover instead of beside it', () => {
+    // The owner asked for the artwork itself to play the track ("al dar click
+    // en la caratula se dara play o pausa automaticamente"), so the row must
+    // not carry a separate play button any more.
+    renderRow();
+
+    const play = screen.getByRole('button', { name: /Reproducir Chachachá sin descargar/ });
+    expect(play.className).toContain('pf-music__art-btn');
+    expect(play.closest('.pf-music__art')).not.toBeNull();
+    expect(document.querySelector('.pf-music__play-icon')).toBeNull();
+  });
+
+  it('shows no ▶/⏸ marker on a row that is not the loaded track', () => {
+    // A glyph on every row said nothing about which one was making noise.
+    renderRow({ current: { itemId: 'vid-other', videoId: 'vid-other' } as MusicTrack });
+
+    expect(document.querySelector('.pf-music__art-state')).toBeNull();
+  });
+
+  it('marks the loaded track with a glyph that is status, not a second button', () => {
+    renderRow({ current: { itemId: 'vid-1', videoId: 'vid-1' } as MusicTrack, isPlaying: true });
+
+    const marker = document.querySelector('.pf-music__art-state') as HTMLElement;
+    expect(marker).not.toBeNull();
+    expect(marker.getAttribute('aria-hidden')).toBe('true');
+    // One control on the artwork, not two: the marker sits inside the cover's
+    // own button rather than beside it.
+    expect(marker.closest('button')?.className).toContain('pf-music__art-btn');
+    expect(document.querySelectorAll('.pf-music__art button')).toHaveLength(1);
+  });
+
   it('shows Pausar once its own track is the one playing', () => {
     renderRow({ current: { itemId: 'vid-1', videoId: 'vid-1' } as MusicTrack, isPlaying: true });
     // The bug this covers: the row kept a play glyph while the bar showed pause.
-    expect(screen.getByRole('button', { name: 'Pausar' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pausar Chachachá' })).toBeInTheDocument();
   });
 
   it('pauses instead of restarting the track it is already playing', () => {
@@ -111,7 +142,7 @@ describe('MusicResultRow play button', () => {
       current: { itemId: 'vid-1', videoId: 'vid-1' } as MusicTrack,
       isPlaying: true,
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Pausar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pausar Chachachá' }));
     expect(props.onToggle).toHaveBeenCalled();
     expect(props.onPreview).not.toHaveBeenCalled();
   });

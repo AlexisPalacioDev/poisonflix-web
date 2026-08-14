@@ -8,7 +8,7 @@ import { deleteItem } from '../../api/jellyfin';
 import { resolveCoverUrl } from '../../lib/domain/posterUrl';
 import { audioItemToTrack } from '../../lib/domain/musicTrack';
 import { CoverImage } from './CoverImage';
-import { PlayButton } from './PlayButton';
+import { PlayableCover } from './PlayableCover';
 import { AddToPlaylistButton } from './AddToPlaylistButton';
 import { MusicRowMenu } from './MusicRowMenu';
 import { useMusicPlayer } from './musicPlayerCore';
@@ -197,22 +197,14 @@ export function TrackScreen() {
                 {moreTracks.map((rowTrack, index) => {
                   return (
                     <li key={rowTrack.itemId} className="pf-music__row">
-                      <Link
-                        to={`/musica/track/${rowTrack.itemId}`}
-                        className="pf-music__row-link"
-                        aria-label={`Ver ${rowTrack.title}`}
-                      >
-                        <div className="pf-music__art">
-                          <CoverImage src={rowTrack.coverUrl} loading="lazy" />
-                        </div>
-                        <div className="pf-music__info">
-                          <span className="pf-music__title">{rowTrack.title}</span>
-                          <span className="pf-music__sub">
-                            {rowTrack.artist ?? primaryArtistName ?? 'Desconocido'}
-                          </span>
-                        </div>
-                      </Link>
-                      <PlayButton
+                      {/* The cover left the <Link>: it is the play control now,
+                          and a <button> cannot live inside an <a>. Navigation
+                          stays on the title/artist block — the same split the
+                          álbum and playlist track lists already use. */}
+                      <PlayableCover
+                        className="pf-music__art"
+                        src={rowTrack.coverUrl}
+                        loading="lazy"
                         active={current?.itemId === rowTrack.itemId}
                         isPlaying={isPlaying}
                         onClick={() =>
@@ -221,7 +213,18 @@ export function TrackScreen() {
                             : playNow(moreTracks, index)
                         }
                         label={`Reproducir ${rowTrack.title}`}
+                        pauseLabel={`Pausar ${rowTrack.title}`}
                       />
+                      <Link
+                        to={`/musica/track/${rowTrack.itemId}`}
+                        className="pf-music__info pf-music__track-link"
+                        aria-label={`Ver ${rowTrack.title}`}
+                      >
+                        <span className="pf-music__title">{rowTrack.title}</span>
+                        <span className="pf-music__sub">
+                          {rowTrack.artist ?? primaryArtistName ?? 'Desconocido'}
+                        </span>
+                      </Link>
                       <MusicRowMenu
                         title={rowTrack.title}
                         itemId={rowTrack.itemId}

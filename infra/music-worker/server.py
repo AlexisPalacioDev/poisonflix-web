@@ -1474,9 +1474,18 @@ def _prune_stream_cache():
 #
 # Same URL, same host, same second. The throttle is applied to the long-lived
 # connection, not to the file — so the fetch is issued as bounded Range chunks,
-# four at a time, and a normal track lands in about a second.
+# a couple at a time, and a normal track lands in about a second.
+#
+# WHY NOT FOUR ANY MORE: concurrency is not free here — googlevideo revokes the
+# signed URL under it. Measured against production over six runs each, with a
+# fresh resolve every time: fully sequential failed 1 of 6, four-at-a-time
+# failed 4 of 6. The retry above now recovers most of those, but the cheapest
+# failure is the one that never happens. Two is a deliberate step down the
+# measured curve rather than a measured point itself — sequential is the only
+# value proven best, and it costs ~0.13s per extra megabyte on long tracks,
+# which is why this stops at two instead of one.
 _CHUNK_BYTES = 1 << 20
-_CHUNK_PARALLEL = 4
+_CHUNK_PARALLEL = 2
 _CONTENT_RANGE_TOTAL = re.compile(r"/(\d+)\s*$")
 # ONE pool for the whole process, not one per request. ThreadingHTTPServer has
 # no connection cap, so a per-request executor would let N concurrent cold plays
@@ -1601,9 +1610,13 @@ def _fetch_upstream_to(video_id, source, dest, timing=None, chunk_pool=None):
     # ~1-2s yt-dlp subprocess, and it cannot repair a deterministic failure (an
     # oversized track, an unbounded first chunk). Those fall straight through to
     # the proxy instead of paying the resolve twice on every play.
-    for attempt in range(2):
+    # THREE attempts, not two. Measured: a revoked URL never recovers by being
+    # re-requested, and a fresh resolve recovers it 3 times out of 4 — so the
+    # residual is a second bad roll of the same dice, and one more ~2s resolve
+    # is far cheaper than failing the track outright in front of the listener.
+    for attempt in range(3):
         t_resolve = time.monotonic()
-        url = _resolve_stream_url(video_id, source, force=(attempt == 1))
+        url = _resolve_stream_url(video_id, source, force=(attempt > 0))
         if timing is not None:
             timing["resolve"] = timing.get("resolve", 0.0) + (time.monotonic() - t_resolve)
         if not url:
@@ -1612,8 +1625,8 @@ def _fetch_upstream_to(video_id, source, dest, timing=None, chunk_pool=None):
         try:
             return _download_chunked(url, dest, chunk_pool=chunk_pool)
         except urllib.error.HTTPError as exc:
-            if exc.code in (403, 410) and attempt == 0:
-                continue  # expired signed URL — re-resolve and retry
+            if exc.code in (403, 410) and attempt < 2:
+                continue  # revoked/expired signed URL — re-resolve and retry
             return False
         except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
             # http.client.HTTPException covers IncompleteRead, which a truncated
@@ -1702,6 +1715,24 @@ def _download_chunked(url, dest, chunk_pool=None):
                 start = in_flight.pop(future)
                 try:
                     body, _total = future.result()
+                except urllib.error.HTTPError:
+                    # A REVOKED SIGNED URL, AND IT MUST TRAVEL. Measured against
+                    # production: googlevideo answers the FIRST Range request
+                    # with a clean 206 and then 403s (`Server: gvs 1.0`,
+                    # `Content-Length: 0`) every chunk after it, roughly half
+                    # the time. `_fetch_upstream_to` already knows how to
+                    # handle that — it re-resolves and retries on 403/410 — but
+                    # the bare `except Exception` below used to swallow this and
+                    # return a plain False, so that retry was UNREACHABLE for
+                    # every chunk but the zeroth. The whole track then died as
+                    # a 502 the listener heard as a song that never started.
+                    #
+                    # Re-resolving recovers it 3 times out of 4 on measurement;
+                    # retrying the SAME url never recovers. So the one thing
+                    # this handler must do is let the exception out.
+                    for pending in in_flight:
+                        pending.cancel()
+                    raise
                 except Exception:
                     # A request that raises must still be a clean failure, not
                     # a partial file reported as good (see the docstring).

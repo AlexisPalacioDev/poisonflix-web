@@ -136,32 +136,23 @@ describe('RecommendationsRow — desktop scroll arrows', () => {
   });
 });
 
-// The green play disc stays — the owner never asked for it to go — but it moved
-// from the artwork's bottom-right corner to dead centre ("el boton de play
-// deberia estar en el centro"). These cover what centring must not break: the
-// button still plays, still pauses, is still reachable from the keyboard, and
-// the like sharing that cover with it still does its own job.
-describe('RecommendationsRow — the play button on the artwork', () => {
-  it('centres the play disc on the cover instead of pinning it to a corner', () => {
+// The green disc is gone: the artwork itself is the control now, and a glyph
+// appears only on the cover of the track the player has loaded ("el boton de
+// play y pausa solo se mostrara en la caratula de la cancion que este sonando
+// actualmente … el boton sera solo un marcador de estado"). These cover what
+// that must not break: the cover still plays, still pauses, is still reachable
+// from the keyboard, and the like sharing it still does its own job.
+describe('RecommendationsRow — the cover is the play control', () => {
+  it('leaves every cover unmarked while nothing on the rail is playing', () => {
     const { container } = renderRow();
 
-    const btn = container.querySelector('.pf-music__rec-btn') as HTMLElement;
-    expect(btn).not.toBeNull();
-    // The class is what carries the position; assert the contract the CSS
-    // implements rather than computed styles jsdom does not resolve.
-    const css = readFileSync(resolve(__dirname, 'music.css'), 'utf8');
-    const rule = css.slice(css.indexOf('.pf-music__rec-btn {'));
-    const body = rule.slice(0, rule.indexOf('}'));
-    expect(body).toContain('top: 50%');
-    expect(body).toContain('left: 50%');
-    expect(body).not.toContain('bottom: 8px');
-    expect(body).not.toContain('right: 8px');
-    // Centring rides inside the transform, so the hidden/shown states must keep
-    // the -50%/-50% or the disc jumps off-centre as it fades in.
-    expect(body).toContain('translate(-50%, calc(-50% + 8px))');
+    // The whole point of the change: no ▶ on covers that are not sounding.
+    expect(container.querySelectorAll('.pf-music__art-state')).toHaveLength(0);
+    // …and yet every one of them is still pressable.
+    expect(container.querySelectorAll('.pf-music__art-btn')).toHaveLength(items.length);
   });
 
-  it('plays the card from its button, keeping the same label', () => {
+  it('plays the card from its cover, keeping the same label', () => {
     const onPreview = vi.fn();
     renderRow({ onPreview });
 
@@ -205,7 +196,7 @@ describe('RecommendationsRow — the play button on the artwork', () => {
     expect(onPreview).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the sounding card visible and pauses it rather than restarting', () => {
+  it('marks only the sounding cover, and pauses it rather than restarting', () => {
     const onToggle = vi.fn();
     const onPreview = vi.fn();
     const { container } = renderRow({
@@ -215,15 +206,30 @@ describe('RecommendationsRow — the play button on the artwork', () => {
       onPreview,
     });
 
-    // A pause button you can only reach by hovering is one the user cannot find.
-    const buttons = container.querySelectorAll('.pf-music__rec-btn');
-    expect(buttons[0].className).toContain('pf-music__rec-btn--active');
-    expect(buttons[1].className).not.toContain('pf-music__rec-btn--active');
+    // Exactly one glyph on the whole rail, and it is on the card that sounds.
+    const cards = container.querySelectorAll('.pf-music__rec');
+    expect(container.querySelectorAll('.pf-music__art-state')).toHaveLength(1);
+    expect(cards[0].querySelector('.pf-music__art-state')).not.toBeNull();
+    expect(cards[1].querySelector('.pf-music__art-state')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Pausar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pausar Rec 0' }));
 
     expect(onToggle).toHaveBeenCalledTimes(1);
     expect(onPreview).not.toHaveBeenCalled();
+  });
+
+  it('is the cover that is the button, not a glyph sitting on it', () => {
+    const { container } = renderRow({
+      current: { itemId: 'v0', videoId: 'v0', title: 'Rec 0', artist: null, coverUrl: null },
+      isPlaying: true,
+    });
+
+    // The marker must not be a second control: one button per cover, and the
+    // glyph is hidden from the accessibility tree.
+    const marker = container.querySelector('.pf-music__art-state') as HTMLElement;
+    expect(marker.tagName).not.toBe('BUTTON');
+    expect(marker.getAttribute('aria-hidden')).toBe('true');
+    expect(marker.closest('button')).toBe(container.querySelector('.pf-music__art-btn'));
   });
 
   it('does not start playback when the like on the cover is pressed', async () => {
@@ -257,38 +263,44 @@ describe('RecommendationsRow — the play button on the artwork', () => {
   });
 });
 
-// Every test above presses the disc by role — and a button at `opacity: 0` with
-// `pointer-events: auto` answers `getByRole`, `focus()` and `click()` exactly
-// like a visible one. So the suite was green while the disc was invisible on
-// every phone: it is revealed by `:hover`, and a phone never hovers. These
-// tests ask the stylesheet the question the DOM cannot answer.
-describe('RecommendationsRow — the play disc on a pointer that cannot hover', () => {
+// Every test above presses the cover by role — and a button at `opacity: 0`
+// with `pointer-events: auto` answers `getByRole`, `focus()` and `click()`
+// exactly like a visible one. That is how the disc this replaced shipped
+// invisible to every phone: it was revealed by `:hover`, and a phone never
+// hovers. The cover cannot inherit that bug, and these ask the stylesheet the
+// question the DOM cannot answer.
+describe('RecommendationsRow — the cover control needs no hover', () => {
   const css = readFileSync(resolve(__dirname, 'music.css'), 'utf8');
-  const touchRule = () => ruleInMedia(css, COARSE_POINTER, '.pf-music__rec-btn');
+  const ruleBody = (selector: string) => {
+    const at = css.indexOf(`${selector} {`);
+    if (at === -1) return null;
+    const open = css.indexOf('{', at);
+    return css.slice(open + 1, css.indexOf('}', open));
+  };
 
-  it('reveals the disc without hover on coarse pointers', () => {
-    const rule = touchRule();
-    expect(
-      rule,
-      'no @media (hover: none)/(pointer: coarse) rule makes .pf-music__rec-btn visible',
-    ).not.toBeNull();
-    expect(rule?.declarations).toMatch(/opacity:\s*1\s*;/);
+  it('never hides the click surface', () => {
+    const body = ruleBody('.pf-music__art-btn');
+    expect(body, '.pf-music__art-btn has no rule at all').not.toBeNull();
+    expect(body).toContain('position: absolute');
+    expect(body).not.toMatch(/opacity:\s*0/);
   });
 
-  it('keeps the disc dead centre while revealing it', () => {
-    // The centring lives inside the transform ("el boton de play deberia estar
-    // en el centro"), so any state that writes `transform` has to restate it or
-    // the disc slides off the artwork the moment it appears.
-    expect(touchRule()?.declarations).toContain('transform: translate(-50%, -50%)');
+  it('never hides the status marker', () => {
+    const body = ruleBody('.pf-music__art-state');
+    expect(body, '.pf-music__art-state has no rule at all').not.toBeNull();
+    expect(body).not.toMatch(/opacity:\s*0/);
   });
 
-  it('matches the button the rail actually renders', () => {
-    const { container } = renderRow();
-    const btn = container.querySelector('.pf-music__rec-btn') as HTMLElement;
+  it('leaves no hover-revealed disc behind', () => {
+    // `.pf-music__rec-btn` is the class that cost this codebase the bug twice.
+    // Nothing renders it any more; nothing should style it either.
+    expect(css).not.toContain('pf-music__rec-btn');
+  });
 
-    // The selector as written in the file, not a paraphrase of it: a rule that
-    // never matches the rendered button is the same bug wearing a new coat.
-    expect(btn.matches(touchRule()?.selector ?? '')).toBe(true);
+  it('does not gate the cover behind a coarse-pointer exception', () => {
+    // The old disc needed one because it was hidden by default. A cover that is
+    // always there needs none — and one appearing again would mean it is not.
+    expect(ruleInMedia(css, COARSE_POINTER, '.pf-music__art-btn')).toBeNull();
   });
 });
 

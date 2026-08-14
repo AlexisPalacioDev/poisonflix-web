@@ -305,6 +305,93 @@ describe('MusicPlayerProvider — stall watchdog', () => {
     expect(api.isPlaying).toBe(false);
     expect(api.currentIndex).toBe(2); // stopped by the breaker, not the end of the queue
   });
+
+  it('silences the placeholder when it gives up — a dead track must not leave a session sounding', async () => {
+    // REPRODUCED against production before this was written. The worker returns
+    // 502 for a track it cannot fetch (`[stream] fetch failed ... no playable
+    // cache, failing the track`), the element takes the error, and NOTHING
+    // stopped the tone: measured 68 seconds of the placeholder looping with the
+    // song at `readyState: 0` and not one byte fetched.
+    //
+    // What the owner sees is not "a track failed". It is a phone still holding
+    // a now-playing session, a lock-screen panel with a button on it, and no
+    // sound — the exact "aparece reproduciendo pero no suena" report. Giving up
+    // has to be audible.
+    const longQueue: MusicTrack[] = [
+      { itemId: 'a', title: 'A', artist: null, coverUrl: null },
+      { itemId: 'b', title: 'B', artist: null, coverUrl: null },
+      { itemId: 'c', title: 'C', artist: null, coverUrl: null },
+      { itemId: 'd', title: 'D', artist: null, coverUrl: null },
+      { itemId: 'e', title: 'E', artist: null, coverUrl: null },
+    ];
+    renderProvider();
+    await act(async () => {
+      api.playNow(longQueue, 0);
+    });
+
+    const tone = document.querySelector('audio[loop]') as HTMLAudioElement;
+    expect(tone).not.toBeNull();
+    // jsdom never really starts playback, so `paused` would stay true and the
+    // "only pause what is sounding" guard would skip. Say it is sounding —
+    // which is the state this test is about.
+    Object.defineProperty(tone, 'paused', { value: false, configurable: true });
+    const tonePause = vi.spyOn(tone, 'pause');
+
+    // Three dead tracks in a row: the same MAX_CONSECUTIVE_AUDIO_ERRORS the
+    // breaker above uses, driven through `onError` — the path a 502 takes.
+    for (let i = 0; i < 3; i++) {
+      const active = Array.from(
+        document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'),
+      ).find((el) => el.getAttribute('src')?.includes(`Audio/${longQueue[i].itemId}/`));
+      expect(active).toBeDefined();
+      await act(async () => {
+        fireEvent.error(active as HTMLAudioElement);
+      });
+    }
+
+    expect(api.isPlaying).toBe(false);
+    expect(tonePause).toHaveBeenCalled();
+  });
+
+  it('silences the placeholder when the LAST track fails, below the breaker limit', async () => {
+    // The door the first fix left open, found by adversarial review. Nothing
+    // here trips MAX_CONSECUTIVE_AUDIO_ERRORS: it is a single error, on the
+    // last track, with repeat off.
+    //
+    //   error -> the skip path starts the tone to cover the gap
+    //         -> NEXT off the end of the queue reduces to `isPlaying: false`
+    //         -> the pause effect calls `pauseIntentionally`, which returns
+    //            early because the failed element was ALREADY paused
+    //         -> no `pause` event is ever fired
+    //         -> every `stopTone()` call site is keyed on such an event
+    //
+    // and the placeholder loops for the rest of the session, holding the OS
+    // audio session under a control that reads "paused". Exactly the state the
+    // previous test exists to prevent, reached the other way round.
+    const oneTrack: MusicTrack[] = [{ itemId: 'a', title: 'A', artist: null, coverUrl: null }];
+    renderProvider();
+    await act(async () => {
+      api.playNow(oneTrack, 0);
+    });
+
+    const tone = document.querySelector('audio[loop]') as HTMLAudioElement;
+    Object.defineProperty(tone, 'paused', { value: false, configurable: true });
+    const tonePause = vi.spyOn(tone, 'pause');
+
+    const active = Array.from(
+      document.querySelectorAll<HTMLAudioElement>('audio:not([loop])'),
+    ).find((el) => el.getAttribute('src')?.includes('Audio/a/'));
+    expect(active).toBeDefined();
+
+    await act(async () => {
+      fireEvent.error(active as HTMLAudioElement);
+    });
+
+    // Settled into stopped without ever tripping the breaker…
+    expect(api.isPlaying).toBe(false);
+    // …and the placeholder went quiet anyway.
+    expect(tonePause).toHaveBeenCalled();
+  });
 });
 
 describe('MusicPlayerProvider — stall watchdog lifecycle (armed/cleared by state, not just by playImperative)', () => {

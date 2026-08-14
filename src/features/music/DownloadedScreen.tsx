@@ -8,7 +8,7 @@ import { deleteItem } from '../../api/jellyfin';
 import { queryKeys } from '../../hooks/queryKeys';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMusicPlayer } from './musicPlayerCore';
-import { CoverImage } from './CoverImage';
+import { PlayableCover } from './PlayableCover';
 import { MusicRowMenu } from './MusicRowMenu';
 import './music.css';
 
@@ -26,26 +26,10 @@ import './music.css';
 // component owns its own chrome (its header, its back button, its gold) and
 // this section is deliberately green.
 
-function PlayGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-      <path d="M8 5v14l11-7z" fill="currentColor" />
-    </svg>
-  );
-}
-
-function PauseGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-      <path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor" />
-    </svg>
-  );
-}
-
 /** A downloaded song as a cover card: the same card the recommendation rails
- * use, down to the green play disc centred on the artwork, so one gesture works
+ * use, down to the cover being the play/pause control, so one gesture works
  * everywhere in Música. The title is a link to the track, the ⋮ opens the menu,
- * and neither is nested inside the play button. */
+ * and neither is nested inside the cover's button. */
 function LibraryCard({
   track,
   active,
@@ -65,18 +49,17 @@ function LibraryCard({
 }) {
   return (
     <div className="pf-music__rec pf-music__lib-card">
-      <div className="pf-music__rec-art">
-        <CoverImage src={track.coverUrl} loading="lazy" />
-        <button
-          type="button"
-          className={`pf-music__rec-btn${active ? ' pf-music__rec-btn--active' : ''}`}
-          onClick={() => (active ? onToggle() : onPlay())}
-          aria-pressed={active ? isPlaying : undefined}
-          aria-label={active && isPlaying ? 'Pausar' : `Reproducir ${track.title}`}
-        >
-          {active && isPlaying ? <PauseGlyph /> : <PlayGlyph />}
-        </button>
-      </div>
+      <PlayableCover
+        className="pf-music__rec-art"
+        src={track.coverUrl}
+        loading="lazy"
+        active={active}
+        isPlaying={isPlaying}
+        glyphSize={22}
+        onClick={() => (active ? onToggle() : onPlay())}
+        label={`Reproducir ${track.title}`}
+        pauseLabel={`Pausar ${track.title}`}
+      />
       <div className="pf-music__rec-foot">
         <span className="pf-music__rec-text">
           <Link
