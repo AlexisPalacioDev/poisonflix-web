@@ -26,3 +26,18 @@ export async function getGamesLibrary(): Promise<Game[]> {
 export function romUrl(id: string): string {
   return apiUrl('bff', `/games/rom?id=${encodeURIComponent(id)}`);
 }
+
+/**
+ * Where a game's box art lives, or would live.
+ *
+ * A URL for the same reason as `romUrl`: an `<img>` fetches on its own, and it
+ * gets lazy loading and the browser's image cache for free — a fetch here would
+ * buy a base64 round trip and lose both.
+ *
+ * The endpoint answers 404 for every game whose folder has no cover, which is
+ * most of them. That is a normal answer, not an error: the caller renders a
+ * placeholder on the image's `error` event (see `GameCover`).
+ */
+export function gameCoverUrl(id: string): string {
+  return apiUrl('bff', `/games/cover?id=${encodeURIComponent(id)}`);
+}

@@ -13,7 +13,6 @@
      literal rgba() repeated eight times is how an accent drifts. The gradient
      below keeps its literals: each stop carries a different alpha of its own. */
   --pf-violet-bright: #a78bfa;
-  --pf-violet-soft: rgba(138, 92, 246, 0.14);
   --pf-violet-edge: rgba(138, 92, 246, 0.55);
   --pf-violet-ring: rgba(138, 92, 246, 0.6);
 
@@ -57,10 +56,22 @@
   color: var(--pf-text-dim);
 }
 
-/* --- Filter -------------------------------------------------------------- */
+/* --- Search -------------------------------------------------------------- */
 
 .pf-games__toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-2xs);
   padding: 0 var(--pf-space-lg) var(--pf-space-md);
+}
+
+/* No `text-transform: uppercase` here, unlike the eyebrow above it: Chromium
+   exposes the TRANSFORMED text as the control's accessible name, so a shouty
+   label turns into "BUSCAR" in the accessibility tree. Cosmetics must not
+   rewrite what a screen reader reads out. */
+.pf-games__filter-label {
+  font-size: 0.8rem;
+  color: var(--pf-text-dim);
 }
 
 .pf-games__filter {
@@ -87,73 +98,153 @@
 
 .pf-games__group-title {
   margin: 0 0 var(--pf-space-sm);
-  font-size: 1.05rem;
+  font-size: var(--pf-font-section);
   color: var(--pf-text);
 }
 
 .pf-games__grid {
   display: grid;
-  /* Wide enough for a long cartridge title on one line, narrow enough that a
-     phone still gets two per row. */
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--pf-space-sm);
+  /* Sized off the artwork, not the title: a box that is three columns wide on
+     a phone and eight on a television is the same shelf either way. */
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--pf-space-md);
 }
 
 .pf-games__card {
   display: flex;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  padding: var(--pf-space-sm);
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  min-width: 0;
+  /* A ceiling, not a width. Inside the grid the column is always narrower than
+     this, so it never bites — it exists for the browser that has no grid at
+     all (unprefixed CSS Grid is Chrome 57; this app still claims Chrome 53).
+     There the rule collapses to blocks, and a full-width card times
+     `padding-top: 133%` below would make one game about two screens tall on a
+     television. Capped, the fallback degrades to a single readable column. */
+  max-width: 200px;
   color: var(--pf-text);
   text-decoration: none;
+}
+
+/* The art box. `padding-top` rather than `aspect-ratio`: the property landed
+   in Chrome 88 and this app still runs on the webOS 2018 browser, where the
+   whole rule would be dropped and every cover would collapse to zero height.
+   133% is 3:4 — a game box is taller than it is wide, which is what makes a
+   missing cover still read as a box and not as a film poster. */
+.pf-games__cover {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding-top: 133%;
+  overflow: hidden;
   background: var(--pf-surface);
-  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: var(--pf-radius-md);
-  transition: transform var(--pf-dur-fast) var(--pf-ease),
-    border-color var(--pf-dur-fast) var(--pf-ease);
+  box-shadow: var(--pf-shadow-card);
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  transition:
+    transform var(--pf-dur) var(--pf-ease),
+    box-shadow var(--pf-dur) var(--pf-ease),
+    outline-color var(--pf-dur-fast) var(--pf-ease);
+}
+
+/* The same glass-over-print treatment the film posters wear (PosterCard.css):
+   a hairline bezel, a diagonal sheen and a dark foot. Copied rather than
+   invented so the two shelves look like one product. Explicit edges instead of
+   `inset`, which Chrome 53 does not know. */
+.pf-games__cover::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(152deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.02) 26%, rgba(255, 255, 255, 0) 46%),
+    linear-gradient(to top, rgba(5, 7, 11, 0.5) 0%, rgba(5, 7, 11, 0) 30%);
+}
+
+.pf-games__cover-img,
+.pf-games__cover-fallback {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pf-games__cover-img {
+  display: block;
+  object-fit: cover;
+}
+
+/* The stand-in for a game with no art: its own name on a colour derived from
+   that name (GameCover.tsx). Not an icon — a hundred identical joystick glyphs
+   are a hundred cards nobody can tell apart while scrolling. */
+.pf-games__cover-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pf-space-sm);
+  text-align: center;
+}
+
+.pf-games__cover-name {
+  /* The long ones wrap and then stop: a forty-character ROM name would
+     otherwise overflow its own box. */
+  display: block;
+  max-height: 100%;
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  word-break: break-word;
 }
 
 /* Split from a combined `:hover, :focus-visible` list, like the rest of the
    app: Chrome 53/webOS 2018 does not know the pseudo-class and drops the WHOLE
    comma list, taking the hover state with it. */
-.pf-games__card:hover {
-  transform: translateY(-2px);
-  border-color: var(--pf-violet-edge);
+.pf-games__card:hover .pf-games__cover {
+  transform: translateY(-6px) scale(1.03);
+  box-shadow: var(--pf-shadow-card-hover), 0 14px 38px rgba(138, 92, 246, 0.28);
+  outline-color: var(--pf-violet-edge);
 }
 
+.pf-games__card:focus-visible .pf-games__cover {
+  transform: translateY(-6px) scale(1.03);
+  box-shadow: var(--pf-shadow-card-hover), 0 14px 38px rgba(138, 92, 246, 0.28);
+  outline-color: var(--pf-violet-edge);
+}
+
+/* The ring lives on the artwork, so the link itself must not draw a second one. */
 .pf-games__card:focus-visible {
-  transform: translateY(-2px);
-  border-color: var(--pf-violet-edge);
   outline: none;
-}
-
-.pf-games__card-art {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 46px;
-  flex: none;
-  color: var(--pf-violet-bright);
-  background: var(--pf-violet-soft);
-  border-radius: var(--pf-radius-sm);
-}
-
-.pf-games__card-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  box-shadow: none;
 }
 
 .pf-games__card-title {
   overflow: hidden;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: rgba(237, 239, 242, 0.62);
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color var(--pf-dur-fast) var(--pf-ease);
 }
 
-.pf-games__card-sub {
-  font-size: 0.8rem;
-  color: var(--pf-text-dim);
+.pf-games__card:hover .pf-games__card-title {
+  color: var(--pf-text);
+}
+
+.pf-games__card:focus-visible .pf-games__card-title {
+  color: var(--pf-text);
 }
 
 /* --- Empty / error ------------------------------------------------------- */
@@ -208,6 +299,22 @@
 .pf-games__empty-card code {
   color: var(--pf-violet-bright);
   font-size: 0.9em;
+}
+
+/* A search that matched nothing is not an empty library and must not look
+   like one: no ROM paths here, just the way back to the full shelf. */
+.pf-games__no-results {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--pf-space-lg);
+  text-align: center;
+}
+
+.pf-games__no-results-title {
+  margin: 0 0 var(--pf-space-xs);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--pf-text);
 }
 
 .pf-games__systems {

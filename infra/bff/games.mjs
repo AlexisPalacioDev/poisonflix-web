@@ -19,6 +19,8 @@ import { readdir, realpath, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
+import { coverFor } from './covers.mjs';
+
 // Read at import time (same convention as jam.mjs's JAM_FILE) so a test can
 // point it at a fixture directory before importing this module.
 const GAMES_DIR = process.env.GAMES_DIR || '/games';
@@ -178,6 +180,9 @@ async function describe(rel, root) {
   return {
     id: encodeId(rel),
     title: titleOf(file),
+    // The name as it is on disk, tags and extension intact. `title` is for
+    // people; matching box art needs the original (see sendCover).
+    file,
     system,
     sizeBytes: info.size,
     path: real,
@@ -318,8 +323,8 @@ function logError(scope, err, detail) {
   );
 }
 
-function sendJson(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+function sendJson(res, status, body, headers = {}) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
   res.end(JSON.stringify(body));
 }
 
@@ -388,6 +393,67 @@ async function sendRom(req, res, id) {
 }
 
 /**
+ * Box art for one ROM, or 404 so the SPA paints its placeholder.
+ *
+ * The 404 is deliberately indistinguishable from every other reason a cover is
+ * missing (see covers.mjs): the client can do nothing different about a rate
+ * limit than about a game nobody ever photographed, and telling it which would
+ * only invite retry loops against GitHub. The reason goes to the log instead.
+ */
+async function sendCover(req, res, id) {
+  const game = id ? await resolveRom(id) : null;
+  if (!game) return sendJson(res, 404, { error: 'not found' });
+
+  // `file`, NOT `title`. Both sides of the match have to go through the SAME
+  // normalization, and `titleOf` has already eaten this one's extension: for
+  // "Super Mario Bros. 3.nes" that leaves "Super Mario Bros. 3", whose LAST DOT
+  // is the one in "Bros." — so a second extension strip inside the matcher
+  // turned it into "Super Mario Bros" and handed it the box of Super Mario
+  // Bros 1. Every title with an internal dot (Bros., Dr., Mr., R.C., Vol.) was
+  // affected, and an immutable week-long cache made each wrong cover stick.
+  //
+  // Never throws by contract, but this is the ROM router: a cover is
+  // decoration, and decoration does not get to 500 the shelf.
+  const cover = await coverFor({ id: game.id, system: game.system, file: game.file }).catch(
+    (err) => {
+      logError('games.cover', err, { system: game.system });
+      return null;
+    },
+  );
+  if (!cover) {
+    // Cached, unlike the ROM 404s: a shelf of 300 games with no art would
+    // otherwise re-ask for all 300 on every single visit. An hour is short
+    // enough that a cover appearing upstream shows up the same day.
+    return sendJson(res, 404, { error: 'not found' }, { 'cache-control': 'public, max-age=3600' });
+  }
+
+  const headers = {
+    'content-type': cover.contentType,
+    // A week, immutable: the id encodes the ROM's path, and a given path's box
+    // art does not change. This is what keeps a shelf of 300 games from asking
+    // for 300 images on every single visit.
+    'cache-control': 'public, max-age=604800, immutable',
+    'content-length': String(cover.sizeBytes ?? cover.bytes.length),
+  };
+  res.writeHead(200, headers);
+  if (req.method === 'HEAD') return res.end();
+
+  // The `bytes` branch only happens when the cache directory could not be
+  // written — the image is in hand, so serve it rather than punishing the
+  // client for a disk problem.
+  if (!cover.path) return res.end(cover.bytes);
+
+  try {
+    await pipeline(createReadStream(cover.path), res);
+  } catch (err) {
+    // Same reasoning as sendRom: `.pipe()` would turn a client that navigated
+    // away mid-image into an uncaughtException and take the whole BFF with it.
+    logError('games.cover', err, { system: game.system });
+    res.destroy();
+  }
+}
+
+/**
  * `/bff/games/*`. `subPath` is the part after `/bff/games`, and the caller has
  * already been authenticated — this module never sees a session and must never
  * be mounted before `resolveUser`.
@@ -408,6 +474,11 @@ export async function handleGames(req, res, subPath, search) {
   if (subPath === '/rom') {
     const id = new URLSearchParams(search || '').get('id');
     return await sendRom(req, res, id);
+  }
+
+  if (subPath === '/cover') {
+    const id = new URLSearchParams(search || '').get('id');
+    return await sendCover(req, res, id);
   }
 
   return sendJson(res, 404, { error: 'not found' });

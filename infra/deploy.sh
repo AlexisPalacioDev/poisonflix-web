@@ -205,12 +205,19 @@ done
 # session. A 404 means the image predates the route.
 ejs=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/emulatorjs/data/loader.js || echo 000)
 gam=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/bff/games/library || echo 000)
+# Box art, probed separately from /library for the same reason /library is
+# probed separately from /radarr: the two routes ship in the same image but a
+# 401 here and a 404 there is the only signal that tells "the cover endpoint is
+# live" apart from "this image predates it and every shelf is placeholders".
+cov=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 'http://localhost:8600/bff/games/cover?id=x' || echo 000)
 echo "  /                        -> $home"
 echo "  /radarr/api/v3/queue     -> $arr"
 echo "  /emulatorjs/data/loader.js -> $ejs (expect 200)"
 echo "  /bff/games/library       -> $gam (expect 401)"
+echo "  /bff/games/cover         -> $cov (expect 401)"
 [[ "$ejs" == "200" ]] || { echo "  WARNING: EmulatorJS runtime not served — modo gamer will not load." >&2; emulatorjs_ok=0; }
 [[ "$gam" == "401" ]] || echo "  WARNING: /bff/games/library answered $gam, expected 401 — is the BFF image stale?" >&2
+[[ "$cov" == "401" ]] || echo "  WARNING: /bff/games/cover answered $cov, expected 401 — no box art in this image." >&2
 # "Ver en la tele", probed on BOTH halves, because either half can be dead while
 # the other looks perfect. Same boundary logic as /radarr and /bff/games: 401 is
 # the SUCCESS case, the smoke test holds no session, and a 404 means the BFF
