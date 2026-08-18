@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.poisonflix.app",
+      "sha256_cert_fingerprints": [
+        "E6:1B:35:B0:0E:C8:E5:98:1D:9B:26:83:5E:51:A1:1F:41:CD:1B:42:D9:A3:BD:84:A0:C4:21:16:08:DA:91:F2"
+      ]
+    }
+  }
+]

@@ -46,6 +46,33 @@
 		file_server
 	}
 
+	# EmulatorJS runtime for "modo gamer" — cores and wasm blobs fetched by
+	# infra/fetch-emulatorjs.sh into infra/www/emulatorjs (289 MB, git-ignored).
+	# It sits under the same ./www root the SPA is served from, so this block
+	# looks redundant. It is not, for two reasons, both about the fallback
+	# below. `try_files {path} /index.html` answers a MISSING file with the SPA
+	# shell and a 200, so a core that failed to download would reach the
+	# emulator as HTML that parses as garbage instead of an honest 404. And
+	# `@dynamic not path /assets/*` would tag every core `no-cache`, making the
+	# browser revalidate hundreds of megabytes on each launch. The release is
+	# version-pinned and its contents never change, so it caches like /assets.
+	handle /emulatorjs/* {
+		root * /srv
+
+		# `@present file`, NOT a bare `header`. A bare header applies to the 404
+		# too, and this route 404s for a very ordinary reason: deploy.sh treats a
+		# failed fetch-emulatorjs.sh as non-fatal, so a deploy can legitimately
+		# ship with the runtime missing. `immutable, max-age=31536000` on that
+		# 404 tells every browser that visited during the gap to keep believing
+		# the core does not exist FOR A YEAR — modo gamer would stay broken for
+		# those users long after the runtime was restored, and only a hard
+		# reload would clear it. Cache the files; never cache their absence.
+		@present file
+		header @present Cache-Control "public, max-age=31536000, immutable"
+
+		file_server
+	}
+
 	# Everything else: serve the built web app (SPA fallback to index.html).
 	handle {
 		root * /srv

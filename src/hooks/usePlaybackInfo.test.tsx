@@ -45,6 +45,67 @@ function wrapper({ children }: { children: ReactNode }) {
   );
 }
 
+// The cast route (`/cast/:id`) resolves the SAME item under a DIFFERENT
+// identity than the session one. Keyed by item alone, react-query would hand
+// each route the other's resolved stream - a disabled query still serves
+// cached data - and the page would render a source authenticated by a
+// credential it never chose.
+describe('usePlaybackInfo — a credential override must not share a cache with the session', () => {
+  afterEach(() => {
+    clearSession();
+    mockedGetPlaybackInfo.mockReset();
+    mockedGetItem.mockReset();
+  });
+
+  it('resolves the same item twice when the identity differs, instead of replaying the cache', async () => {
+    setSession({ jellyfinToken: 'phone-tok', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    // DirectPlay (no TranscodingUrl) on purpose: that is the branch where the
+    // token is baked into the URL as `api_key`, which is how the assertions
+    // below can tell the two identities' streams apart at all.
+    mockedGetPlaybackInfo.mockResolvedValue({
+      MediaSources: [{ Id: 'media-source-1', Container: 'mp4', TranscodingUrl: null, MediaStreams: [] }],
+      PlaySessionId: 'sess-1',
+    } as never);
+    mockedGetItem.mockResolvedValue({ Name: 'A Movie', Type: 'Movie', UserData: {} } as never);
+
+    // ONE client for both hooks - the whole point is that a shared cache does
+    // not let one identity's result stand in for the other's.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function sharedWrapper({ children }: { children: ReactNode }) {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>{children}</AuthProvider>
+        </QueryClientProvider>
+      );
+    }
+
+    const session = renderHook(() => usePlaybackInfo('item-1'), { wrapper: sharedWrapper });
+    await waitFor(() => expect(session.result.current.isSuccess).toBe(true));
+
+    const cast = renderHook(() => usePlaybackInfo('item-1', { userId: 'user-2', token: 'tv-tok' }), {
+      wrapper: sharedWrapper,
+    });
+    await waitFor(() => expect(cast.result.current.isSuccess).toBe(true));
+
+    expect(mockedGetPlaybackInfo).toHaveBeenCalledTimes(2);
+    expect(mockedGetPlaybackInfo).toHaveBeenNthCalledWith(
+      1,
+      'item-1',
+      expect.objectContaining({ userId: 'user-1' }),
+      { authToken: undefined },
+    );
+    expect(mockedGetPlaybackInfo).toHaveBeenNthCalledWith(
+      2,
+      'item-1',
+      expect.objectContaining({ userId: 'user-2' }),
+      { authToken: 'tv-tok' },
+    );
+    // And the stream each one carries is signed with its OWN token.
+    expect(JSON.stringify(session.result.current.data?.resolved.source)).toContain('phone-tok');
+    expect(JSON.stringify(cast.result.current.data?.resolved.source)).toContain('tv-tok');
+  });
+});
+
 describe('usePlaybackInfo — regaining window focus must not re-resolve the stream', () => {
   afterEach(() => {
     clearSession();

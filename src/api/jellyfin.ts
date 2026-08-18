@@ -8,6 +8,7 @@ import {
   ActivityLogResponseSchema,
   SessionListSchema,
   JellyfinUserListSchema,
+  JellyfinUserSchema,
   type ActivityLogResponse,
   type SessionInfo,
   type JellyfinUser,
@@ -270,14 +271,45 @@ export async function getPlayedAudioWithRuntime(
   });
 }
 
+/**
+ * Per-call transport overrides, for the callers that cannot rely on the
+ * session store.
+ *
+ * Only `/cast/:id` uses this today: a television opens that page with the
+ * token in its URL and no session anywhere. Kept as a separate trailing
+ * argument rather than folded into each endpoint's body/params, because it
+ * describes HOW the call is authenticated, not WHAT is being asked for.
+ */
+export interface JellyfinCallOptions {
+  /** Overrides the session store's token for this one request. */
+  authToken?: string;
+}
+
+/**
+ * The user the given token belongs to (`GET /Users/Me`).
+ *
+ * The cast route needs a user id - every item/playback endpoint below is
+ * scoped to one - and it deliberately does NOT carry that id in the URL
+ * alongside the token: a token already identifies its user, and two values
+ * that must agree are two values that can disagree.
+ */
+export async function getCurrentUser(options: JellyfinCallOptions = {}): Promise<JellyfinUser> {
+  return apiFetch('jellyfin', '/Users/Me', {
+    schema: JellyfinUserSchema,
+    authToken: options.authToken,
+  });
+}
+
 export async function getItem(
   userId: string,
   itemId: string,
   fields = 'ProviderIds,MediaStreams',
+  options: JellyfinCallOptions = {},
 ): Promise<JellyfinItem> {
   const query = new URLSearchParams({ Fields: fields });
   return apiFetch('jellyfin', `/Users/${userId}/Items/${itemId}?${query.toString()}`, {
     schema: JellyfinItemSchema,
+    authToken: options.authToken,
   });
 }
 
@@ -311,10 +343,12 @@ export interface GetPlaybackInfoBody {
 export async function getPlaybackInfo(
   itemId: string,
   body: GetPlaybackInfoBody,
+  options: JellyfinCallOptions = {},
 ): Promise<JellyfinPlaybackInfoResponse> {
   return apiFetch('jellyfin', `/Items/${itemId}/PlaybackInfo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    authToken: options.authToken,
     body: JSON.stringify({
       UserId: body.userId,
       DeviceProfile: body.deviceProfile ?? null,

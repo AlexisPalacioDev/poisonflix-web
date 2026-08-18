@@ -61,6 +61,93 @@ cp -r dist infra/www
 
 echo "==> (re)building BFF + reloading proxy"
 cd infra
+
+# MUST come after the infra/www swap above, and before Caddy is recreated. The
+# EmulatorJS runtime lives INSIDE infra/www, so `mv infra/www infra/www.bak`
+# just carried it off with the previous bundle — without this line every deploy
+# would leave /emulatorjs/* 404 and "modo gamer" dead, while both smoke tests
+# below (they only probe / and /radarr) still printed "deploy OK". The script
+# keeps its own cache outside infra/www, so this is a hardlink copy on every
+# run after the first, not a 289 MB download.
+#
+# Non-fatal on purpose: a failed third-party download must not abort a deploy
+# of the whole site. It is reported loudly in the summary instead, because a
+# silent "games just don't work" is exactly the failure mode this file keeps
+# collecting comments about.
+emulatorjs_ok=1
+./fetch-emulatorjs.sh || emulatorjs_ok=0
+
+# Create the ROM library deliberately, and SAY SO, rather than letting Docker's
+# create_host_path conjure it on first mount. Both end with the same empty
+# directory; the difference is that this one leaves a line saying where it is,
+# so "the shelf is empty" and "the mount points somewhere nobody has put ROMs"
+# stop looking identical. The BFF logs the same distinction at runtime.
+#
+# The host path comes from `docker compose config`, not from reading .env here.
+# This script never sources that file — compose does — so `$DATA_DIR` is unset
+# in this shell on a perfectly healthy host, and scraping it with awk got both
+# halves wrong:
+#
+#   no .env at all  -> awk exits non-zero, and under `set -o pipefail` the whole
+#                      deploy died on this line with NO output whatsoever. The
+#                      exact state of a host where nobody has copied env.example
+#                      yet, i.e. the first deploy.
+#   inline comment  -> `DATA_DIR=/data # the big disk` parsed as the literal
+#                      `/data # the big disk`, and the mkdir below would then
+#                      cheerfully create a directory with the comment in its name.
+#
+# `docker compose config` is the only thing that reads that file with the real
+# rules, and it resolves the mount for us, so the path below is the one Docker
+# will actually bind rather than our guess at it. `|| true` for the same reason
+# as everywhere else in this script: an optional feature must not abort a deploy.
+games_mount="$(docker compose config --format json 2>/dev/null \
+  | python3 -c 'import json,sys
+try:
+    cfg = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for volume in cfg.get("services", {}).get("bff", {}).get("volumes", []) or []:
+    if volume.get("target") == "/games":
+        print(volume.get("source", ""))
+        break' 2>/dev/null || true)"
+
+if [[ -n "$games_mount" && ! -d "$games_mount" ]]; then
+  mkdir -p "$games_mount"
+  echo "==> created the ROM library at $games_mount (empty — one folder per system inside)"
+elif [[ -z "$games_mount" ]]; then
+  echo "==> could not resolve the ROM library mount from docker compose config; skipping (games will report an unreadable library at runtime)"
+fi
+
+# Same reasoning as the ROM library above, but with teeth. The webOS pairing
+# store is a RELATIVE bind (`./cast-bridge/data` in docker-compose.yml) and is
+# not in git, so nothing creates it until someone deploys. Left to Docker's
+# create_host_path it lands root:root on first `up`, the container runs as
+# `USER node` (uid 1000 in node:22-alpine), and storeKey() then fails with
+# EACCES on EVERY pairing. The visible symptom is not an error: it is the LG
+# putting its permission dialog on screen at every single cast, forever, which
+# reads as normal television behaviour. Creating it here means it belongs to
+# whoever deploys instead of to root.
+#
+# Not derived from DATA_DIR on purpose: this path is relative to the compose
+# file, and the working directory is already infra/ by this point.
+if [[ ! -d cast-bridge/data ]]; then
+  mkdir -p cast-bridge/data
+  echo "==> created the cast pairing store at infra/cast-bridge/data (webOS client-keys)"
+fi
+# Owning it is not enough — it has to be owned by the uid INSIDE the container.
+# A host that deploys as some other uid reproduces the same EACCES wearing a
+# different hat, so check instead of assuming. Best-effort and never fatal:
+# chown needs privileges this script may not have, and casting is optional.
+chmod 700 cast-bridge/data 2>/dev/null || true
+cast_dir_uid="$(stat -c '%u' cast-bridge/data 2>/dev/null || echo '')"
+if [[ -n "$cast_dir_uid" && "$cast_dir_uid" != "1000" ]]; then
+  if ! chown 1000:1000 cast-bridge/data 2>/dev/null; then
+    echo "  WARNING: infra/cast-bridge/data is owned by uid $cast_dir_uid, but the bridge runs as uid 1000." >&2
+    echo "  Pairing keys will not persist and the TV will ask for permission on every cast. Fix with:" >&2
+    echo "    sudo chown -R 1000:1000 infra/cast-bridge/data" >&2
+  fi
+fi
+
 # Caddy MUST be force-recreated: `mv infra/www infra/www.bak && cp -r dist
 # infra/www` above replaces the bind-mounted directory with a NEW inode, but a
 # still-running container keeps serving the OLD inode (now www.bak). Without
@@ -73,7 +160,17 @@ cd infra
 # only probe / and /radarr. The BFF would go on allowlisting a route the running,
 # stale worker still answered 404 for, which is the real mechanism behind "the
 # endpoint exists but the front-end gets a 404".
-docker compose up -d --build bff music-worker
+#
+# cast-bridge is here for the SAME reason, and it had the SAME bug: this line
+# listed only bff and music-worker, so "ver en la tele" shipped a service that
+# was never started on any deploy. The BFF still got its CAST_BRIDGE_URL, dialed
+# the gateway, found nobody listening, and — by the deliberate design in
+# bff/cast.mjs — answered `{ devices: [] }` with HTTP 200. The player screen then
+# said "No encontramos ningún dispositivo" forever while this script printed
+# "deploy OK". Graceful degradation upstream is exactly what makes leaving this
+# service out of the build line invisible, which is why the smoke test below
+# probes the bridge's own /healthz and not just the BFF route.
+docker compose up -d --build bff music-worker cast-bridge
 docker compose up -d --force-recreate caddy
 
 # Force-recreating Caddy gives it a NEW container. The Tailscale Funnel sidecar
@@ -99,8 +196,68 @@ for i in $(seq 1 10); do
   [[ "$arr" == "401" ]] && break
   sleep 1
 done
-echo "  /                    -> $home"
-echo "  /radarr/api/v3/queue -> $arr"
+# Modo gamer, probed for real. The two checks above only cover / and /radarr,
+# which is exactly how editing music-worker used to produce a silent no-op that
+# still printed "deploy OK" (see the comment on the build line above). The
+# EmulatorJS loader proves the runtime survived the infra/www swap; the BFF
+# route proves the games handler is in the running image — 401 is the SUCCESS
+# case here, same boundary logic as /radarr, since the smoke test holds no
+# session. A 404 means the image predates the route.
+ejs=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/emulatorjs/data/loader.js || echo 000)
+gam=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/bff/games/library || echo 000)
+echo "  /                        -> $home"
+echo "  /radarr/api/v3/queue     -> $arr"
+echo "  /emulatorjs/data/loader.js -> $ejs (expect 200)"
+echo "  /bff/games/library       -> $gam (expect 401)"
+[[ "$ejs" == "200" ]] || { echo "  WARNING: EmulatorJS runtime not served — modo gamer will not load." >&2; emulatorjs_ok=0; }
+[[ "$gam" == "401" ]] || echo "  WARNING: /bff/games/library answered $gam, expected 401 — is the BFF image stale?" >&2
+# "Ver en la tele", probed on BOTH halves, because either half can be dead while
+# the other looks perfect. Same boundary logic as /radarr and /bff/games: 401 is
+# the SUCCESS case, the smoke test holds no session, and a 404 means the BFF
+# image predates the cast route.
+#
+# The second check is the one that matters here, and it is not redundant. The
+# BFF answers `{ devices: [] }` with HTTP 200 when the bridge is missing,
+# unreachable or still booting — that is a deliberate contract (bff/cast.mjs),
+# not a bug — so /bff/cast/devices reports 401-then-200 just as happily with NO
+# cast-bridge running at all. That is precisely how this service shipped for a
+# whole feature without ever being started. /healthz is answered by the bridge
+# process itself and depends on no television being powered on, so it separates
+# "the bridge is down" (000/connection refused) from "the bridge is up and the
+# TVs are off" (200, empty list) — the distinction the front-end cannot make.
+#
+# The address is read back from `docker compose config`, NOT parsed out of .env
+# by hand. Hand-parsing was tried and is wrong: an inline comment
+# (`CAST_GATEWAY_IP=172.19.0.1 # media-automation`), surrounding quotes, a
+# trailing space or a CRLF line ending all survive a naive `awk -F=` and none of
+# them survive compose's own parser. The bridge would bind correctly while this
+# check built `http://172.19.0.1 # media-automation:8791/healthz`, got 000, and
+# reported a perfectly healthy service as down — a FALSE alarm on a good deploy,
+# which is how a check stops being believed. Asking compose deletes the second
+# parser entirely: this is literally the string the container binds to.
+#
+# `|| true` is load-bearing under `set -o pipefail`: a missing infra/.env makes
+# compose exit non-zero (DATA_DIR is `:?`-required), and without it errexit
+# would kill the whole deploy right here with no message at all.
+cast_gw="$(docker compose config 2>/dev/null | awk '/CAST_BRIDGE_BIND:/ { print $2; exit }' | tr -d "\"'" || true)"
+# Falls back to the same ${CAST_GATEWAY_IP:-172.19.0.1} default docker-compose.yml
+# uses, for the case where compose itself could not be read.
+cast_gw="${cast_gw:-172.19.0.1}"
+cast_ok=1
+cast_route=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8600/bff/cast/devices || echo 000)
+cast_health=000
+# Retried for the same reason as /radarr above: a freshly (re)built bridge may
+# still be binding its socket, and a one-shot check would report a healthy
+# service as dead on every deploy that actually rebuilt it.
+for i in $(seq 1 10); do
+  cast_health=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${cast_gw}:8791/healthz" || echo 000)
+  [[ "$cast_health" == "200" ]] && break
+  sleep 1
+done
+echo "  /bff/cast/devices        -> $cast_route (expect 401)"
+echo "  cast-bridge /healthz     -> $cast_health (expect 200, at $cast_gw:8791)"
+[[ "$cast_route" == "401" ]] || echo "  WARNING: /bff/cast/devices answered $cast_route, expected 401 — is the BFF image stale?" >&2
+[[ "$cast_health" == "200" ]] || cast_ok=0
 [[ "$home" == "200" && "$arr" == "401" ]] || { echo "SMOKE TEST FAILED — consider ./infra/deploy.sh --rollback" >&2; ok=0; }
 
 # PUBLIC Funnel smoke test. The checks above only prove the LOCAL proxy serves;
@@ -167,11 +324,39 @@ else
   pub=skipped
 fi
 
+if [[ "$cast_ok" != "1" ]]; then
+  echo "  WARNING: cast-bridge is not answering on $cast_gw:8791 — 'ver en la tele' will show" >&2
+  echo "  \"No encontramos ningún dispositivo\" no matter how many TVs are on, because the BFF" >&2
+  echo "  degrades to an empty list when the bridge is unreachable. Everything else deployed" >&2
+  echo "  normally. Look at it with:" >&2
+  echo "    docker compose logs --tail=50 cast-bridge" >&2
+  echo "  A wrong gateway address is the usual cause — check CAST_GATEWAY_IP in infra/.env" >&2
+  echo "  against: docker network inspect infra_media-automation" >&2
+fi
+
+if [[ "$emulatorjs_ok" != "1" ]]; then
+  echo "  WARNING: the EmulatorJS runtime is missing or incomplete — /emulatorjs/* will 404" >&2
+  echo "  and 'modo gamer' will not load. Everything else deployed normally. Retry with:" >&2
+  echo "    ./infra/fetch-emulatorjs.sh --force" >&2
+fi
+
+# Appended to whichever summary line prints below, so a dead bridge lands on the
+# LAST line of the deploy — the one anybody actually reads — and not only in a
+# warning that scrolled past twenty lines of Funnel output. Casting is optional
+# by design (no depends_on, the BFF degrades to an empty list), so this is NOT
+# exit 1. But a warning on stderr followed by a flat "deploy OK" on stdout is
+# precisely the shape of the lie this file keeps collecting comments about, and
+# the summary must not be green while the feature is dead.
+cast_note=''
+if [[ "$cast_ok" != "1" ]]; then
+  cast_note=' — CASTING IS DOWN (see above)'
+fi
+
 if [[ "$ok" != "1" ]]; then
   exit 1
 elif [[ "$pub" == "skipped" ]]; then
   # Never claim the public path is up when nothing proved it.
-  echo "==> deploy OK locally — PUBLIC PATH UNVERIFIED (see above)"
+  echo "==> deploy OK locally — PUBLIC PATH UNVERIFIED (see above)$cast_note"
 else
-  echo "==> deploy OK (local + public)"
+  echo "==> deploy OK (local + public)$cast_note"
 fi

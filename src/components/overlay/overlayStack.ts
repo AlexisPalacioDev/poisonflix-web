@@ -42,6 +42,21 @@ export function popOverlay(id: OverlayId): void {
   stack = stack.filter((entry) => entry.id !== id);
 }
 
+/**
+ * Whether ANY overlay is currently open.
+ *
+ * For surfaces that own keyboard shortcuts and must go quiet while something
+ * is layered over them - the player, whose Space/arrow handler would otherwise
+ * pause the movie while the viewer is typing or arrowing inside a sheet
+ * rendered on top of it. `VideoSurface` already tracks its OWN menus; this
+ * covers the overlays it does not know about, without every one of them
+ * having to stop event propagation (which also stops the native event, and
+ * with it the app's document-level D-pad navigation).
+ */
+export function hasOpenOverlay(): boolean {
+  return stack.length > 0;
+}
+
 export function isTopOverlay(id: OverlayId): boolean {
   if (stack.length === 0) return false;
   const top = stack.reduce((max, entry) => (entry.sequence > max.sequence ? entry : max));

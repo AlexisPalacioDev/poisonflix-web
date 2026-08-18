@@ -31,11 +31,17 @@ const KEY_TO_DIR: Record<string, Dir> = {
 };
 
 /** Text fields consume left/right (caret) and the player owns all four. */
-function ownsArrowKeys(el: Element | null): boolean {
+export function ownsArrowKeys(el: Element | null): boolean {
   if (!el) return false;
   const tag = el.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if (tag === 'VIDEO') return true;
+  // An open dialog is its own world, even when it is portalled INSIDE the
+  // player's surface - which every player overlay is, because real Fullscreen
+  // paints nothing outside `fullscreenElement`. Without this, a remote inside
+  // a track/device sheet handed its arrows to the video underneath and could
+  // not move between the options it was looking at.
+  if (el.closest('[role="dialog"]')) return false;
   return Boolean(el.closest('.pf-player-surface'));
 }
 
@@ -46,8 +52,54 @@ function isVisible(el: HTMLElement): boolean {
   return style.visibility !== 'hidden' && style.display !== 'none';
 }
 
-function candidates(): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(isVisible);
+/** A dialog that renders the rest of the page unreachable while it is open. */
+const MODAL_DIALOG = '[role="dialog"][aria-modal="true"]';
+
+/**
+ * The subtree the arrows are allowed to move within.
+ *
+ * `ownsArrowKeys` hands the arrows to this navigator whenever focus is inside
+ * a dialog - without that, a remote inside a track/device sheet could not move
+ * between the options it was looking at, because the player surface underneath
+ * kept all four keys. But a modal dialog is a CLOSED world: everything behind
+ * it is unreachable to a mouse and to Tab, so it has to be unreachable to the
+ * D-pad too. `candidates()` queries the whole document and `bestCandidate`
+ * scores by geometry alone, which knows nothing about modality - so a single
+ * ArrowDown inside the sheet walked focus straight out to the player's back
+ * button painted behind it. `OverlayShell`'s focus trap does not cover this:
+ * it traps Tab, and the arrows never reach it.
+ *
+ * Scoped to `aria-modal="true"` rather than every `[role="dialog"]` on
+ * purpose. A non-modal popup (the Jam notifications panel) does NOT make the
+ * page behind it inert, and confining the arrows there would strand a remote
+ * inside a panel the rest of the app is still supposed to be reachable from.
+ */
+function navigationRoot(from: Element | null): ParentNode {
+  const enclosing = from?.closest(MODAL_DIALOG);
+  if (enclosing) return enclosing;
+  // Focus can also sit on <body> while a modal is open - a fresh mount, or a
+  // dismissed child overlay that returned focus nowhere. Adopting the first
+  // candidate in the document would then land BEHIND the dialog, which is the
+  // one outcome that must not happen.
+  //
+  // With more than one modal open this picks the last in DOM order, and that is
+  // a HEURISTIC, not the truth: `OverlayShell` portals into a caller-supplied
+  // container (the player surface lives inside `#root`, everything else lands
+  // on `document.body` after it), and `overlayStack` documents that mount order
+  // is the wrong order too - it keeps its own render-time sequence for exactly
+  // that reason. It cannot be reused here: that stack is keyed by symbols and
+  // knows no DOM nodes.
+  //
+  // So the guarantee is only the one that matters: focus lands INSIDE some open
+  // modal rather than on the page behind them. Landing in the wrong one of two
+  // simultaneous modals is recoverable by pressing an arrow; landing behind
+  // them all is the leak this whole function exists to close.
+  const open = document.querySelectorAll<HTMLElement>(MODAL_DIALOG);
+  return open.length > 0 ? open[open.length - 1] : document;
+}
+
+function candidates(root: ParentNode = document): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(isVisible);
 }
 
 interface Point {
@@ -66,12 +118,12 @@ function centerOf(el: HTMLElement): Point {
  * card at a time instead of jumping diagonally to whatever happens to be
  * closest in raw pixels.
  */
-function bestCandidate(from: HTMLElement, dir: Dir): HTMLElement | null {
+function bestCandidate(from: HTMLElement, dir: Dir, root: ParentNode = document): HTMLElement | null {
   const origin = centerOf(from);
   let best: HTMLElement | null = null;
   let bestScore = Infinity;
 
-  for (const el of candidates()) {
+  for (const el of candidates(root)) {
     if (el === from) continue;
     const c = centerOf(el);
     const dx = c.x - origin.x;
@@ -109,7 +161,8 @@ export function installSpatialNavigation(target: Document = document): () => voi
     const active = target.activeElement as HTMLElement | null;
     if (ownsArrowKeys(active)) return;
 
-    const all = candidates();
+    const root = navigationRoot(active);
+    const all = candidates(root);
     if (all.length === 0) return;
 
     // Nothing focused yet (fresh page load, or focus fell to <body> after a
@@ -121,7 +174,7 @@ export function installSpatialNavigation(target: Document = document): () => voi
       return;
     }
 
-    const next = bestCandidate(active, dir);
+    const next = bestCandidate(active, dir, root);
     if (!next) return;
 
     next.focus();

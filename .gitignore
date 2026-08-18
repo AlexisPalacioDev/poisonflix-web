@@ -23,6 +23,14 @@ infra/www/
 # Rollback backup of the previous bundle, recreated on every deploy (see infra/deploy.sh).
 infra/www.bak/
 
+# EmulatorJS runtime for "modo gamer" — 289 MB of third-party cores and wasm,
+# fetched by infra/fetch-emulatorjs.sh. `infra/www/` above already covers the
+# served copy; it is spelled out because that rule exists for build output and
+# someone narrowing it must not accidentally start committing a third of a
+# gigabyte. `.emulatorjs/` is the download cache that survives deploy swaps.
+infra/www/emulatorjs/
+infra/.emulatorjs/
+
 # Infra secrets (the *arr API keys the BFF holds). Never commit.
 infra/.env
 
@@ -46,6 +54,8 @@ infra/updates/*.apk
 infra/docker-compose.override.yml
 infra/music-worker/data/
 infra/bff/data/
+# webOS pairing keys — a credential the TV hands out once. Never commit these.
+infra/cast-bridge/data/
 
 # Python bytecode from the music worker (regenerated on every run)
 __pycache__/

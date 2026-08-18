@@ -46,9 +46,53 @@ services:
     # here rather than in .env; the override merges the secret env on top.
     environment:
       MUSIC_WORKER_URL: http://music-worker:8790
-    # Persists invite codes for self-service registration (see bff/invites.mjs).
+      # "Modo gamer" reads the ROM library straight off the mount below — there
+      # is no games-worker, because listing a directory and streaming a file
+      # does not need its own container (see bff/games.mjs).
+      GAMES_DIR: /games
+      # "Ver en la tele". Unlike MUSIC_WORKER_URL this is NOT a fixed internal
+      # address, and it cannot be one: cast-bridge runs on host networking and
+      # therefore has no service name to resolve (see that service below). It is
+      # reached at the docker GATEWAY — the host's own address on the bridge —
+      # which differs per host and per network. Measured with
+      # `docker network inspect media-automation`:
+      #
+      #   mendezserver (deploy target)  media-automation -> 172.19.0.1
+      #   dev laptop                    media-automation -> 172.21.0.1
+      #
+      # Hence a variable rather than a constant. It is the SAME variable the
+      # bridge binds to below, deliberately: two settings that must agree, kept
+      # as one, because if they ever drift the symptom is an empty device list —
+      # which is also what a LAN with no TVs looks like.
+      #
+      # Do not put CAST_BRIDGE_URL in .env expecting it to be read: compose's
+      # `environment:` wins over `env_file:`, so it would look right and do
+      # nothing (same trap env.example documents for GAMES_DIR). Set
+      # CAST_GATEWAY_IP instead.
+      CAST_BRIDGE_URL: http://${CAST_GATEWAY_IP:-172.19.0.1}:8791
     volumes:
+      # Persists invite codes for self-service registration (see bff/invites.mjs).
       - ./bff/data:/data
+      # The ROM library, read-only: the BFF only ever lists and streams it.
+      # One subdirectory per system, named exactly as EmulatorJS names its
+      # cores — nes, snes, psx, segaMD… — and anything else is ignored.
+      #
+      # `${DATA_DIR:?}` only catches an UNSET variable, and that is not the
+      # failure that happens here: env.example ships DATA_DIR with a value, so
+      # the realistic case is `$DATA_DIR/games` not existing yet — which Docker
+      # then creates, empty and root-owned, leaving an empty shelf and every
+      # health check green.
+      #
+      # `create_host_path: false` was tried here and REVERTED on purpose: it
+      # works (the container refuses to start and names the path), but it makes
+      # the whole BFF — auth, música, jam, and all three *arr proxies — refuse
+      # to boot because an OPTIONAL feature's folder is missing. This service
+      # already has a scar about a routine failure escalating into a
+      # full-service outage (see the pipeline comment in server.mjs). The
+      # silence is fixed where it belongs instead: games.mjs logs an
+      # unreadable library, deploy.sh creates this directory deliberately, and
+      # the deploy smoke test probes /bff/games/library.
+      - ${DATA_DIR:?set DATA_DIR in infra/.env — host path whose games/ holds the ROM library}/games:/games:ro
     # media-automation: reaches jellyseerr/radarr/sonarr/prowlarr by name.
     # jellyfin-server_default: reaches jellyfin-ts:8096 (jellyfin's net namespace)
     # by name for user creation/reset — robust against host LAN IP changes.
@@ -91,6 +135,73 @@ services:
     networks:
       - media-automation
       - jellyfin-server_default
+
+  # LAN casting for "ver en la tele" — SSDP/mDNS discovery plus the SSAP, DIAL,
+  # DLNA and Cast adapters. The BFF proxies to it at /bff/cast/* (see
+  # bff/cast.mjs); nothing else in this file talks to it.
+  cast-bridge:
+    build: ./cast-bridge
+    container_name: poisonflix-cast-bridge
+    restart: unless-stopped
+    # THE reason this service exists as a separate container.
+    #
+    # Discovery is multicast: an SSDP M-SEARCH to 239.255.255.250:1900 and an
+    # mDNS query to 224.0.0.251:5353. From a bridge network those datagrams
+    # never leave the namespace, and a TV that did hear one would have nowhere
+    # to send its unicast reply back to. Measured, not assumed: 0 devices from a
+    # bridge network, the TV from host networking. No `ports:` mapping fixes it,
+    # because the problem is not inbound ports — it is that the container is not
+    # on the LAN at all. So the discovery moves to a container that is, and the
+    # BFF (which must stay on the *arr networks) proxies to it.
+    #
+    # `network_mode: host` is MUTUALLY EXCLUSIVE with `networks:` — compose
+    # refuses the file outright if both appear. That is why there is no
+    # `networks:` key here, why cast-bridge has no name on media-automation, and
+    # why the BFF above dials a gateway IP instead of `http://cast-bridge:8791`.
+    # Adding this container to a network to "tidy that up" does not tidy
+    # anything: it breaks discovery, which is the entire feature.
+    network_mode: host
+    # Every other service in this file publishes no ports at all, because only
+    # Caddy is supposed to reach them. This one is the exception, and host
+    # networking gives it no choice: a host-networked process listens on the
+    # host's stack directly.
+    #
+    # The mitigation is the bind address. CAST_BRIDGE_BIND is the docker gateway
+    # — the host's address on the bridge network — and NOT 0.0.0.0. On 0.0.0.0
+    # this service would be answering on the LAN interface and the tailnet, in
+    # front of no Caddy and no session check, letting anyone who can reach the
+    # host enumerate the owner's devices and start playback on their television.
+    #
+    # Measured, so the claim stays honest rather than flattering: bound to the
+    # gateway, the LAN address and the tailnet address both REFUSE the
+    # connection — that is the part that matters and it holds. What it does NOT
+    # narrow the surface to is "only the BFF": every container on every bridge
+    # of this host can route to a gateway address, so radarr, sonarr, prowlarr,
+    # jellyseerr, qbittorrent and flaresolverr can all reach it too. That is the
+    # same trust boundary those services already share, but it is a boundary,
+    # not a wall — and it is why the BFF must not follow redirects from this
+    # port either (see bff/cast.mjs).
+    #
+    # Same variable as CAST_BRIDGE_URL above, on purpose: the address the bridge
+    # listens on and the address the BFF dials are one setting, not two.
+    environment:
+      CAST_BRIDGE_BIND: ${CAST_GATEWAY_IP:-172.19.0.1}
+      CAST_BRIDGE_PORT: 8791
+      CAST_DATA_DIR: /data
+    volumes:
+      # The webOS pairing keys. An LG TV hands out a client-key ONCE, on the
+      # first connection, while showing a confirmation dialog on screen; losing
+      # this directory means every restart puts that dialog back in front of
+      # whoever is trying to watch something. Persistence here is the difference
+      # between pairing once and pairing forever.
+      - ./cast-bridge/data:/data
+    # No `depends_on` in either direction, and the BFF does not wait for this.
+    # Casting is optional: bff/cast.mjs answers `{ devices: [] }` with a 200 when
+    # the bridge is missing, unreachable or still booting, precisely so an
+    # optional feature can never keep the player screen — or the whole BFF —
+    # from working. This service already has the scar where an optional
+    # feature's missing folder refused to boot auth, música, jam and all three
+    # *arr proxies (see the games mount above).
 
   # Public entry point over Tailscale Funnel. Userspace mode (no NET_ADMIN, no
   # kernel iptables) reverse-proxies the tailnet HTTPS domain to the Caddy proxy.

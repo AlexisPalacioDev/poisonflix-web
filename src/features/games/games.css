@@ -1,0 +1,295 @@
+/* Juegos — the third section's surface. Cine is gold, Música is Spotify green,
+   so this one is violet: at a glance the header tint alone says which product
+   you are in. Same construction as music.css (accent variables scoped to the
+   feature root, an ambient wash painted rather than blurred, native
+   <button>/<a>/<input> everywhere so a D-pad can reach it). Flex `gap` is used
+   freely — postcss-flex-gap-fallback.mjs emits the margin fallbacks the old
+   webOS browser needs. */
+
+.pf-games {
+  /* Scoped to the Juegos feature so the app's gold palette (theme.css) and
+     Música's green are left untouched elsewhere. The alpha variants are their
+     own tokens because Chrome 53 has no color-mix() to derive them, and a
+     literal rgba() repeated eight times is how an accent drifts. The gradient
+     below keeps its literals: each stop carries a different alpha of its own. */
+  --pf-violet-bright: #a78bfa;
+  --pf-violet-soft: rgba(138, 92, 246, 0.14);
+  --pf-violet-edge: rgba(138, 92, 246, 0.55);
+  --pf-violet-ring: rgba(138, 92, 246, 0.6);
+
+  min-height: 100vh;
+  /* No allowance for the now-playing bar: it gates itself on
+     `sectionOf(pathname) === 'musica'` (NowPlayingBar.tsx), so it never renders
+     over Juegos. Reserving its height here would just be dead space under the
+     last row. Only the iOS home-indicator inset is real, and env() is 0 where
+     there is none. */
+  padding-bottom: calc(var(--pf-space-xl) + env(safe-area-inset-bottom, 0px));
+  background:
+    radial-gradient(120% 62% at 50% 0%, rgba(138, 92, 246, 0.22) 0%, rgba(138, 92, 246, 0) 62%),
+    radial-gradient(70% 40% at 0% 62%, rgba(64, 130, 255, 0.06) 0%, rgba(64, 130, 255, 0) 68%),
+    linear-gradient(to bottom, rgba(32, 26, 48, 0.55) 0%, rgba(32, 26, 48, 0) 46%),
+    var(--pf-bg);
+}
+
+/* --- Hero ---------------------------------------------------------------- */
+
+.pf-games__hero {
+  padding: calc(var(--pf-header-h) + var(--pf-space-lg)) var(--pf-space-lg) var(--pf-space-md);
+}
+
+.pf-games__eyebrow {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pf-violet-bright);
+}
+
+.pf-games__title {
+  margin: var(--pf-space-2xs) 0 0;
+  font-size: 2rem;
+  line-height: 1.1;
+  color: var(--pf-text);
+}
+
+.pf-games__count {
+  margin: var(--pf-space-xs) 0 0;
+  color: var(--pf-text-dim);
+}
+
+/* --- Filter -------------------------------------------------------------- */
+
+.pf-games__toolbar {
+  padding: 0 var(--pf-space-lg) var(--pf-space-md);
+}
+
+.pf-games__filter {
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 14px;
+  font: inherit;
+  color: var(--pf-text);
+  background: var(--pf-surface-2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--pf-radius-pill);
+}
+
+.pf-games__filter:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--pf-violet-ring);
+}
+
+/* --- Groups + cards ------------------------------------------------------ */
+
+.pf-games__group {
+  padding: 0 var(--pf-space-lg) var(--pf-space-lg);
+}
+
+.pf-games__group-title {
+  margin: 0 0 var(--pf-space-sm);
+  font-size: 1.05rem;
+  color: var(--pf-text);
+}
+
+.pf-games__grid {
+  display: grid;
+  /* Wide enough for a long cartridge title on one line, narrow enough that a
+     phone still gets two per row. */
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--pf-space-sm);
+}
+
+.pf-games__card {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm);
+  color: var(--pf-text);
+  text-decoration: none;
+  background: var(--pf-surface);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--pf-radius-md);
+  transition: transform var(--pf-dur-fast) var(--pf-ease),
+    border-color var(--pf-dur-fast) var(--pf-ease);
+}
+
+/* Split from a combined `:hover, :focus-visible` list, like the rest of the
+   app: Chrome 53/webOS 2018 does not know the pseudo-class and drops the WHOLE
+   comma list, taking the hover state with it. */
+.pf-games__card:hover {
+  transform: translateY(-2px);
+  border-color: var(--pf-violet-edge);
+}
+
+.pf-games__card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--pf-violet-edge);
+  outline: none;
+}
+
+.pf-games__card-art {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  flex: none;
+  color: var(--pf-violet-bright);
+  background: var(--pf-violet-soft);
+  border-radius: var(--pf-radius-sm);
+}
+
+.pf-games__card-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pf-games__card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-games__card-sub {
+  font-size: 0.8rem;
+  color: var(--pf-text-dim);
+}
+
+/* --- Empty / error ------------------------------------------------------- */
+
+.pf-games__empty {
+  padding: var(--pf-space-lg);
+  color: var(--pf-text-dim);
+  text-align: center;
+}
+
+.pf-games__retry,
+.pf-games__inline-link {
+  color: var(--pf-violet-bright);
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* The empty state is a real card, not a grey sentence: it is the only place
+   that explains where ROMs go, and it is what everyone sees on day one. */
+.pf-games__empty-card {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--pf-space-lg);
+  background: var(--pf-surface);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--pf-radius-lg);
+}
+
+.pf-games__empty-title {
+  margin: 0 0 var(--pf-space-xs);
+  font-size: 1.15rem;
+  color: var(--pf-text);
+}
+
+.pf-games__empty-text {
+  margin: 0 0 var(--pf-space-sm);
+  color: var(--pf-text-dim);
+  line-height: 1.5;
+}
+
+.pf-games__path {
+  margin: 0 0 var(--pf-space-md);
+  padding: var(--pf-space-sm);
+  overflow-x: auto;
+  background: var(--pf-bg);
+  border-radius: var(--pf-radius-sm);
+}
+
+.pf-games__empty-card code {
+  color: var(--pf-violet-bright);
+  font-size: 0.9em;
+}
+
+.pf-games__systems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pf-games__system-chip {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  color: var(--pf-text-dim);
+  background: var(--pf-surface-2);
+  border-radius: var(--pf-radius-pill);
+}
+
+/* --- Player -------------------------------------------------------------- */
+
+.pf-games__player {
+  display: flex;
+  flex-direction: column;
+  /* The console fills the screen: no header, no now-playing bar to clear. */
+  height: 100vh;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.pf-games__player-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  padding-top: calc(var(--pf-space-xs) + env(safe-area-inset-top, 0px));
+  background: rgba(10, 12, 16, 0.9);
+}
+
+.pf-games__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* 44px tall: this is the one control on a screen full of game, and it is
+     pressed with a thumb. */
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--pf-text);
+  text-decoration: none;
+  background: var(--pf-surface-2);
+  border-radius: var(--pf-radius-pill);
+}
+
+.pf-games__back:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--pf-violet-ring);
+}
+
+.pf-games__player-title {
+  /* `min-width: 0` or the ellipsis never fires: a flex item's default minimum
+     is its content, so a long title pushes the console name off the bar
+     instead of truncating. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pf-text);
+}
+
+.pf-games__player-system {
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--pf-violet-bright);
+}
+
+/* EmulatorJS replaces this node's contents and sizes its canvas to it, so it
+   has to be a real box with a real height rather than a wrapper that collapses
+   before the emulator has loaded. */
+.pf-games__canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000;
+}

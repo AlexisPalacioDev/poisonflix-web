@@ -1,0 +1,223 @@
+/* "Enviar a la TV" trigger + device sheet.
+   Same dark/gold language as the player's own track menus (theme.css tokens),
+   so the sheet reads as part of the player rather than a bolted-on panel.
+
+   Legacy note (design.md D2 / scripts/check-legacy-css.mjs): the 2018 webOS
+   browser drops a whole declaration it cannot parse, so every `min()` below is
+   preceded by a static fallback, and `:hover`/`:focus-visible` are written as
+   separate rules instead of one comma list. */
+
+.pf-cast {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+/* Deliberately shaped like `.pf-player-surface__icon-btn` (its neighbours in
+   the player's top bar) without reusing that class - this component knows
+   nothing about the player's stylesheet and must survive being placed
+   somewhere else. */
+.pf-cast__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(10, 12, 16, 0.5);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pf-cast__trigger:hover {
+  background: rgba(242, 193, 78, 0.18);
+  color: var(--pf-gold, #f2c14e);
+}
+
+.pf-cast__trigger:focus-visible {
+  outline: 2px solid var(--pf-gold, #f2c14e);
+  outline-offset: 2px;
+}
+
+/* Backdrop. `position: fixed` because OverlayShell portals this out of the
+   React tree - into the player's fullscreen element when there is one - so it
+   can never anchor to an ancestor. z-index matches the app's dialog tier
+   (TrackMenu / Confirm / FullPlayer are all 100). */
+.pf-cast-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.75);
+}
+
+.pf-cast-menu__sheet {
+  width: 420px;
+  width: min(90vw, 420px);
+  max-height: 520px;
+  max-height: min(80vh, 520px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  border-radius: var(--pf-radius-lg, 16px);
+  background: var(--pf-surface, #12151c);
+  border: 1px solid var(--pf-glass-border, rgba(255, 255, 255, 0.08));
+}
+
+.pf-cast-menu__title {
+  margin: 0 0 4px;
+  color: var(--pf-text, #f4f6fb);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.pf-cast-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pf-cast-menu__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pf-cast-menu__device {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: var(--pf-radius-md, 10px);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pf-text, #f4f6fb);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.pf-cast-menu__device:hover {
+  background: rgba(242, 193, 78, 0.16);
+  outline: 2px solid var(--pf-gold, #f2c14e);
+  outline-offset: -2px;
+}
+
+.pf-cast-menu__device:focus-visible {
+  background: rgba(242, 193, 78, 0.16);
+  outline: 2px solid var(--pf-gold, #f2c14e);
+  outline-offset: -2px;
+}
+
+.pf-cast-menu__device--active {
+  background: var(--pf-gold, #f2c14e);
+  color: #0a0c10;
+}
+
+/* A device the bridge reported as unusable. Dimmed but still focusable and
+   still readable - it is listed on purpose (see CastButton.tsx), so it must
+   not look like a decoration. `cursor: default` and no hover highlight are
+   what tell a sighted user it does nothing; `aria-disabled` tells everyone
+   else. */
+.pf-cast-menu__device--blocked {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pf-cast-menu__device--blocked:hover {
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.pf-cast-menu__device-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.pf-cast-menu__device-meta {
+  color: var(--pf-text-dim, rgba(244, 246, 251, 0.65));
+  font-size: 0.78rem;
+}
+
+/* The reason a device cannot be used. Outside the button so it never becomes
+   part of its accessible name (it is referenced by `aria-describedby`
+   instead), and full-width so a long explanation wraps instead of truncating -
+   a half-shown reason explains nothing. */
+.pf-cast-menu__device-reason {
+  margin: 0;
+  padding: 0 16px 4px;
+  color: var(--pf-text-dim, rgba(244, 246, 251, 0.65));
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.pf-cast-menu__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pf-cast-menu__note {
+  margin: 0;
+  padding: 8px 4px;
+  color: var(--pf-text-dim, rgba(244, 246, 251, 0.65));
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.pf-cast-menu__note--error {
+  color: var(--pf-danger, #ff6b6b);
+}
+
+.pf-cast-menu__note--success {
+  color: var(--pf-gold, #f2c14e);
+}
+
+/* Pairing is a step, not a failure - it gets the neutral emphasis colour,
+   never the error one. */
+.pf-cast-menu__note--pairing {
+  color: var(--pf-text, #f4f6fb);
+}
+
+.pf-cast-menu__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pf-cast-menu__secondary {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--pf-radius-md, 10px);
+  background: transparent;
+  color: var(--pf-text, #f4f6fb);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.pf-cast-menu__secondary:hover {
+  background: rgba(242, 193, 78, 0.16);
+}
+
+.pf-cast-menu__secondary:focus-visible {
+  outline: 2px solid var(--pf-gold, #f2c14e);
+  outline-offset: -2px;
+}
+
+.pf-cast-menu__secondary[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}

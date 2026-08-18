@@ -39,3 +39,22 @@
   background: rgba(242, 193, 78, 0.14);
   transform: translateY(-1px);
 }
+
+/* `:focus`, not `:focus-visible`, and stated here rather than left to
+   global.css - for two reasons that both only bite on a television.
+
+   1. The 2018 webOS browser is Chromium ~53, which does not know
+      `:focus-visible` and DROPS the rule that carries it. global.css's ring is
+      therefore invisible on the one device this card is designed for.
+   2. Even on a current browser, the cast screen's retry button is focused
+      PROGRAMMATICALLY on mount with no interaction before it, and Chromium
+      does not count that as focus-visible. The button would be selected with
+      nothing on screen saying so - and "which one is selected?" is a question
+      nobody can answer from three metres away with a remote.
+
+   Its own rule rather than a `:hover, :focus` list: this file's neighbours are
+   split the same way, and `scripts/check-legacy-css.mjs` enforces it. */
+.pf-player-screen__status button:focus {
+  background: rgba(242, 193, 78, 0.14);
+  box-shadow: var(--pf-ring);
+}

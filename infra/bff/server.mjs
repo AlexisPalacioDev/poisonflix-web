@@ -27,6 +27,8 @@ import {
   deleteUser,
   importToJellyseerr,
 } from './identity.mjs';
+import { handleGames } from './games.mjs';
+import { handleCast } from './cast.mjs';
 import {
   attach as jamAttach,
   currentSnapshot as jamSnapshot,
@@ -1278,6 +1280,24 @@ const server = createServer(async (req, res) => {
 
     if (path.startsWith('/bff/music/')) {
       return await handleMusic(req, res, path.slice('/bff/music'.length), url.search, user);
+    }
+
+    // Modo gamer: the ROM shelf. No worker to proxy — the library is a
+    // read-only mount on this container, so the handler itself lives in
+    // bff/games.mjs (which explains why it is there and not here).
+    if (path.startsWith('/bff/games/')) {
+      return await handleGames(req, res, path.slice('/bff/games'.length), url.search);
+    }
+
+    // "Ver en la tele": a proxy to the cast-bridge container, which does the
+    // actual SSDP/mDNS discovery from `network_mode: host` because a container
+    // on a bridge network finds nothing. Below the 401 like everything else —
+    // the bridge has no auth of its own and can drive the owner's TV, so this
+    // session gate is the ONLY thing in front of it. Mutations are covered by
+    // the Origin check above, which runs before any dispatch. The handler is in
+    // bff/cast.mjs (which explains why it is there and not here).
+    if (path.startsWith('/bff/cast/')) {
+      return await handleCast(req, res, path.slice('/bff/cast'.length));
     }
 
     if (path === '/bff/jam' || path.startsWith('/bff/jam/')) {

@@ -100,11 +100,15 @@
   justify-content: center;
 }
 
-/* Subtle music accent on the brand while inside the /musica section, so it's
-   clear at a glance you're in "music mode" (the film-strip button is the way
-   back to Netflix mode). */
-.pf-header--music .pf-header__title {
+/* Section tint on the brand: at a glance the colour says which product you are
+   in, and the row of section controls beside it is the way to any other one.
+   Cinema needs no rule - the gold title is already the default. */
+.pf-header--musica .pf-header__title {
   color: #1ed760;
+}
+
+.pf-header--juegos .pf-header__title {
+  color: #a78bfa;
 }
 
 /* Mobile hamburger menu. Below 899px (the now-playing bar's breakpoint) the

@@ -342,40 +342,91 @@ describe('Header mobile hamburger menu (< 899px)', () => {
   });
 });
 
-describe('Header context-aware Música / "back to Netflix mode" button', () => {
+// The section selector. This used to be a flip-flop ("in Música? then the
+// button goes back to films"), which is only expressible while there are two
+// sections. With three there is no "the other one": what the header owes the
+// user is a way into every section they are NOT in, and no way into the one
+// they already are.
+describe('Header section selector (cine / Música / Juegos)', () => {
   afterEach(() => {
     setCompactViewport(false);
   });
 
-  it('outside the music section shows the "Música" link to /musica', () => {
+  it('from cinema, offers the two other sections and not cinema itself', () => {
     renderHeaderAt('/');
 
-    const musica = screen.getByRole('link', { name: 'Música' });
-    expect(musica).toHaveAttribute('href', '/musica');
-    expect(screen.queryByRole('button', { name: 'Volver a películas y series' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Música' })).toHaveAttribute('href', '/musica');
+    expect(screen.getByRole('link', { name: 'Juegos' })).toHaveAttribute('href', '/juegos');
+    expect(screen.queryByRole('link', { name: 'Películas y series' })).not.toBeInTheDocument();
   });
 
-  it('inside the music section swaps to a "Volver a películas y series" button that returns home', async () => {
+  it('from Música, offers cinema and Juegos and not Música itself', () => {
+    renderHeaderAt('/musica');
+
+    expect(screen.getByRole('link', { name: 'Películas y series' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: 'Juegos' })).toHaveAttribute('href', '/juegos');
+    expect(screen.queryByRole('link', { name: 'Música' })).not.toBeInTheDocument();
+  });
+
+  it('from Juegos, offers cinema and Música and not Juegos itself', () => {
+    renderHeaderAt('/juegos');
+
+    expect(screen.getByRole('link', { name: 'Películas y series' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: 'Música' })).toHaveAttribute('href', '/musica');
+    expect(screen.queryByRole('link', { name: 'Juegos' })).not.toBeInTheDocument();
+  });
+
+  // /jam belongs to the Música world (it is listening together), so it must be
+  // treated as Música here - not as a fourth section, and not as cinema.
+  it('treats /jam as Música', () => {
+    renderHeaderAt('/jam');
+
+    expect(screen.queryByRole('link', { name: 'Música' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Películas y series' })).toBeInTheDocument();
+  });
+
+  it('picking a section actually navigates there', async () => {
     const user = userEvent.setup();
     renderHeaderAt('/musica');
 
-    expect(screen.queryByRole('link', { name: 'Música' })).not.toBeInTheDocument();
-    const back = screen.getByRole('button', { name: 'Volver a películas y series' });
-
-    await user.click(back);
+    await user.click(screen.getByRole('link', { name: 'Películas y series' }));
 
     expect(screen.getByTestId('pathname')).toHaveTextContent(/^\/$/);
   });
 
-  it('the context toggle also appears inside the mobile hamburger menu', async () => {
+  it('the selector also appears inside the mobile hamburger menu', async () => {
     setCompactViewport(true);
     const user = userEvent.setup();
     renderHeaderAt('/musica/album/1');
 
     await user.click(screen.getByRole('button', { name: 'Abrir menú' }));
 
-    expect(screen.getByRole('button', { name: 'Volver a películas y series' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Películas y series' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Juegos' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Música' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Header brand (per-section identity)', () => {
+  it('wears PoisonFlix in cinema', () => {
+    renderHeaderAt('/');
+    expect(screen.getByRole('link', { name: 'PoisonFlix - Inicio' })).toHaveAttribute('href', '/');
+  });
+
+  it('wears PoisonFy in Música, and its home is Música', () => {
+    renderHeaderAt('/musica/album/1');
+    expect(screen.getByRole('link', { name: 'PoisonFy - Inicio' })).toHaveAttribute(
+      'href',
+      '/musica',
+    );
+  });
+
+  it('wears PoisonPlay in Juegos, and its home is Juegos', () => {
+    renderHeaderAt('/juegos/play/zelda');
+    expect(screen.getByRole('link', { name: 'PoisonPlay - Inicio' })).toHaveAttribute(
+      'href',
+      '/juegos',
+    );
   });
 });
 

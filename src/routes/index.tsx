@@ -23,6 +23,9 @@ import { ArtistScreen } from '../features/music/ArtistScreen';
 import { TrackScreen } from '../features/music/TrackScreen';
 import { PlaylistScreen } from '../features/music/PlaylistScreen';
 import { JamScreen } from '../features/jam/JamScreen';
+import { GamesScreen } from '../features/games/GamesScreen';
+import { GamePlayerScreen } from '../features/games/GamePlayerScreen';
+import { CastScreen } from '../features/cast/CastScreen';
 
 // Route tree per design.md §7. `:id` is the TMDB id for /detail and the
 // Jellyfin item id for /player.
@@ -55,6 +58,19 @@ export const routes: RouteObject[] = [
         <ForgotPasswordScreen />
       </PublicOnlyRoute>
     ),
+  },
+  {
+    // `/cast/:id` - the one route with NEITHER guard, and the only one outside
+    // `AppLayout`. A television opening a cast URL has no session (ours lives
+    // in the phone's localStorage), so `RouteGuard` would bounce it to the
+    // login screen while the app reported "Reproduciendo en LG del living".
+    // It carries its own credential in the query string instead - see
+    // `features/cast/CastScreen.tsx` for the trade-off, and for why that
+    // screen is a bare playback surface with no way to reach anything else.
+    // Outside `AppLayout` on purpose too: that layout pins the music bar and
+    // the section-resume redirect, both of which are app navigation.
+    path: '/cast/:id',
+    element: <CastScreen />,
   },
   {
     // Pathless layout route: every authed screen renders inside AppLayout, which
@@ -228,6 +244,25 @@ export const routes: RouteObject[] = [
     element: (
       <RouteGuard>
         <PlaylistScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // Juegos: the ROM library the server exposes, grouped by console.
+    path: '/juegos',
+    element: (
+      <RouteGuard>
+        <GamesScreen />
+      </RouteGuard>
+    ),
+  },
+  {
+    // The emulator itself, full screen. `:id` is the ROM id from the library —
+    // the console it needs is looked up there, not carried in the URL.
+    path: '/juegos/play/:id',
+    element: (
+      <RouteGuard>
+        <GamePlayerScreen />
       </RouteGuard>
     ),
   },

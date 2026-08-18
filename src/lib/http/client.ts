@@ -26,12 +26,38 @@ const BASE_URLS: Record<Backend, string> = {
   bff: import.meta.env.VITE_BFF_BASE ?? '/bff',
 };
 
+/**
+ * The same-origin URL a backend call resolves to, without making it.
+ *
+ * For the rare consumer that has to hand a URL to something that fetches on
+ * its own — an `<img>`, an `<audio>`, or the emulator streaming a ROM. Those
+ * callers must not hardcode `/bff/...`: the prefixes are env-overridable
+ * (`VITE_BFF_BASE` and friends), and a literal silently ignores the override.
+ */
+export function apiUrl(backend: Backend, path: string): string {
+  return `${BASE_URLS[backend]}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 export interface ApiFetchOptions<T> extends Omit<RequestInit, 'body'> {
   body?: BodyInit | null;
   /** When provided, the parsed JSON body is validated against this schema;
    * a parse failure becomes a typed ApiError instead of silently returning
    * malformed data. */
   schema?: ZodType<T>;
+  /**
+   * Jellyfin token for THIS call only, instead of the one in the session store.
+   *
+   * The public cast route (`/cast/:id`) runs on a television that has no
+   * session at all: its token arrives in the URL. Without this seam the only
+   * way to make those calls authenticate would be to write the URL's token
+   * into the session store — which would hand a one-video link the run of the
+   * whole app.
+   *
+   * It also changes the 401 policy on purpose (see below): a token that came
+   * from a URL is not the user's session, so its rejection must never clear
+   * the session of whoever happens to be logged in on this browser.
+   */
+  authToken?: string;
 }
 
 export async function apiFetch<T = void>(
@@ -39,12 +65,18 @@ export async function apiFetch<T = void>(
   path: string,
   options: ApiFetchOptions<T> = {},
 ): Promise<T> {
-  const { schema, headers, ...init } = options;
-  const base = BASE_URLS[backend];
-  const url = `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  const { schema, headers, authToken, ...init } = options;
+  const url = apiUrl(backend, path);
 
   const finalHeaders = new Headers(headers);
   const requestInit: RequestInit = { ...init, headers: finalHeaders };
+
+  // SUPPLIED, not "non-empty". A caller that meant to pass a token and passed
+  // `''` (a missing query-string param, say) must NOT silently fall through to
+  // the session store: the cast route would then work only on the one machine
+  // that is already logged in, which is precisely the bug this seam exists to
+  // fix, wearing a disguise. Omitting the option entirely is the session path.
+  const suppliedToken = typeof authToken === 'string';
 
   if (backend === 'jellyfin') {
     // Jellyfin auth: inject X-Emby-Token from the session store on every
@@ -52,8 +84,9 @@ export async function apiFetch<T = void>(
     // carries its own X-Emby-Authorization header via `init.headers` before
     // any session exists, so this is a no-op for that call.
     const session = getSession();
-    if (session?.jellyfinToken) {
-      finalHeaders.set('X-Emby-Token', session.jellyfinToken);
+    const token = suppliedToken ? authToken.trim() : session?.jellyfinToken;
+    if (token) {
+      finalHeaders.set('X-Emby-Token', token);
     }
   } else if (backend === 'jellyseerr' || backend === 'prowlarr' || backend === 'radarr' || backend === 'sonarr' || backend === 'bff') {
     // Jellyseerr auth: same-origin `connect.sid` cookie replays
@@ -85,6 +118,12 @@ export async function apiFetch<T = void>(
     // here would log the user out app-wide every time that happens, so those
     // 401s surface as a plain ApiError the caller can swallow instead (e.g.
     // useDownloadProgress degrades to an empty map).
+    if (backend === 'jellyfin' && suppliedToken) {
+      // A token handed in per call (the public cast route's URL token) is NOT
+      // this browser's session. Clearing on its behalf would log the real user
+      // out because a link they were sent had gone stale.
+      throw new ApiError(401, 'Unauthorized - the token supplied for this call was rejected');
+    }
     if (backend === 'jellyfin' || backend === 'jellyseerr') {
       clearSession();
       throw new ApiError(401, 'Unauthorized - session cleared');

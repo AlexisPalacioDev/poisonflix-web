@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { buildLabel } from '../lib/obs/build';
-import { SECTION_HOME } from '../lib/domain/lastSection';
+import {
+  SECTION_HOME,
+  SECTION_ORDER,
+  sectionLabel,
+  sectionOf,
+  type AppSection,
+} from '../lib/domain/lastSection';
 import { JamPlaybackHost } from '../features/jam/JamPlaybackHost';
 import { JamNotifications } from '../features/jam/JamNotifications';
 import { AdultPinOverlay } from './AdultPinOverlay';
 import { OverlayShell } from './overlay/OverlayShell';
-import { PoisonMark } from '../features/onboarding/PoisonMark';
+import { PoisonMark, type PoisonMarkVariant } from '../features/onboarding/PoisonMark';
 import { useAdultUnlocked } from '../hooks/useAdultUnlocked';
 import { useAuth } from '../hooks/useAuth';
 import { useLanguage } from '../hooks/useLanguage';
@@ -32,6 +38,71 @@ import './Header.css';
 // `language` param (trending/search/detail - see `api/jellyseerr.ts`) so
 // they refetch under the new language. `genreRow`/`library`/adult queries are
 // deliberately left alone - they don't send `language` (ADR-4).
+
+// How each section presents itself up here: the brand it wears, the mark it
+// swaps in, and the glyph on the control that switches INTO it.
+//
+// Tables, not ternaries. With two sections "the other one" was a boolean, and
+// every `inMusic ? a : b` in this file quietly encoded that there could only
+// ever be two answers - `!inMusic` stops meaning "cinema" the moment a third
+// arrives. Adding a fourth section is one entry in each table below plus one in
+// `lib/domain/lastSection.ts`, and nothing else in here changes.
+const SECTION_BRAND: Record<AppSection, { title: string; mark: PoisonMarkVariant }> = {
+  cine: { title: 'PoisonFlix', mark: 'default' },
+  musica: { title: 'PoisonFy', mark: 'music' },
+  juegos: { title: 'PoisonPlay', mark: 'games' },
+};
+
+const SECTION_ICON: Record<AppSection, ReactNode> = {
+  cine: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M7 4v16M17 4v16M3 9h4M17 9h4M3 15h4M17 15h4"
+      />
+    </svg>
+  ),
+  musica: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 18V5l12-2v13"
+      />
+      <circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+      <circle cx="18" cy="16" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  ),
+  juegos: (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M7 8h10a4 4 0 0 1 3.9 3.1l1 4.4A2.6 2.6 0 0 1 16.8 17L15 15H9l-1.8 2a2.6 2.6 0 0 1-5.1-1.5l1-4.4A4 4 0 0 1 7 8Z"
+      />
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        d="M7 11v3M5.5 12.5h3"
+      />
+      <circle cx="16" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="18" cy="14" r="1.2" fill="currentColor" />
+    </svg>
+  ),
+};
+
 export function Header() {
   const [scrolled, setScrolled] = useState(false);
   const language = useLanguage();
@@ -41,17 +112,16 @@ export function Header() {
   const { session, logout } = useAuth();
   const isAdmin = session?.isAdmin === true;
 
-  // Whether we're inside the music section. When true the "Música" control
-  // flips into a "back to movies/series" (Netflix mode) affordance so the user
-  // always has a way out of /musica* - the button they were missing.
-  // /jam belongs to the Música world: it is listening together, it borrows
-  // that feature's green, and a screen that switches the logo back to the gold
-  // PoisonFlix mark announces itself as somewhere else entirely.
-  const inMusic =
-    location.pathname === '/musica' ||
-    location.pathname.startsWith('/musica/') ||
-    location.pathname === '/jam' ||
-    location.pathname.startsWith('/jam/');
+  // Which section this page belongs to, asked of the one place that knows -
+  // this used to be a hand-rolled second implementation of `sectionOf`, four
+  // string comparisons that had to be kept in step with it by hand.
+  //
+  // Shared furniture (search, downloads, admin) belongs to no section, and
+  // reads as cinema here: that is the app's front door, and it is what the
+  // brand link used to point at from those pages anyway.
+  const section = sectionOf(location.pathname) ?? 'cine';
+  const inMusic = section === 'musica';
+  const brand = SECTION_BRAND[section];
 
   // Below the now-playing bar's breakpoint (899px) the row of nav controls no
   // longer fits, so they collapse behind a hamburger menu. Reuses the shared
@@ -197,47 +267,22 @@ export function Header() {
         <span className="pf-header__search-label">+18</span>
       </button>
 
-      {inMusic ? (
-        // In the music section: flip to a "back to movies/series" (Netflix mode)
-        // affordance - a film-strip glyph that returns to the main home route.
-        <button
-          type="button"
+      {/* The way into every OTHER section - one entry each, never "the other
+          one". This was a flip-flop: in Música it showed a button back to
+          films, elsewhere a link to Música. That shape only works while there
+          are exactly two products under this roof, and there are three. */}
+      {SECTION_ORDER.filter((target) => target !== section).map((target) => (
+        <Link
+          key={target}
+          to={SECTION_HOME[target]}
           className="pf-header__search"
-          aria-label="Volver a películas y series"
-          onClick={() => {
-            navigate('/');
-            onSelect?.();
-          }}
+          aria-label={sectionLabel(target)}
+          onClick={onSelect}
         >
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
-            <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
-            <path
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              d="M7 4v16M17 4v16M3 9h4M17 9h4M3 15h4M17 15h4"
-            />
-          </svg>
-          <span className="pf-header__search-label">Películas y series</span>
-        </button>
-      ) : (
-        <Link to="/musica" className="pf-header__search" aria-label="Música" onClick={onSelect}>
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
-            <path
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M9 18V5l12-2v13"
-            />
-            <circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
-            <circle cx="18" cy="16" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
-          </svg>
-          <span className="pf-header__search-label">Música</span>
+          {SECTION_ICON[target]}
+          <span className="pf-header__search-label">{sectionLabel(target)}</span>
         </Link>
-      )}
+      ))}
 
       {/* Only inside Música. Outside it, "Mi música" would sit next to
           "Descargas" (films and series) and the two would read as the same
@@ -351,18 +396,18 @@ export function Header() {
 
   return (
     <header
-      className={`pf-header${scrolled ? ' pf-header--scrolled' : ''}${inMusic ? ' pf-header--music' : ''}`}
+      className={`pf-header${scrolled ? ' pf-header--scrolled' : ''} pf-header--${section}`}
     >
       {/* Home of the section you are IN, not always cinema. Someone who uses
           this as a music player was being thrown out of Música by the one
           control everyone presses to get back to the top. */}
       <Link
-        to={inMusic ? SECTION_HOME.musica : SECTION_HOME.cine}
+        to={SECTION_HOME[section]}
         className="pf-header__brand"
-        aria-label={inMusic ? 'PoisonFy - Inicio' : 'PoisonFlix - Inicio'}
+        aria-label={`${brand.title} - Inicio`}
       >
-        <PoisonMark className="pf-header__mark" variant={inMusic ? 'music' : 'default'} />
-        <span className="pf-header__title">{inMusic ? 'PoisonFy' : 'PoisonFlix'}</span>
+        <PoisonMark className="pf-header__mark" variant={brand.mark} />
+        <span className="pf-header__title">{brand.title}</span>
       </Link>
 
       {isMobile ? (

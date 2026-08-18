@@ -45,6 +45,47 @@ describe('apiFetch', () => {
     expect(headers.has('X-Emby-Token')).toBe(false);
   });
 
+  // The seam the public cast route (`/cast/:id`) hangs off: a television has
+  // no session, and its token arrives in the URL.
+  it('prefers an explicit authToken over the session store on jellyfin calls', async () => {
+    setSession({ jellyfinToken: 'session-tok', jellyfinUserId: 'user-1', jellyseerrCookiePresent: false });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiFetch('jellyfin', '/Users/Me', { authToken: 'url-tok' });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Headers).get('X-Emby-Token')).toBe('url-tok');
+  });
+
+  // A blank `?token=` must not quietly fall back to the session: the cast route
+  // would then work only on the machine that is already logged in - the bug it
+  // exists to fix, wearing a disguise.
+  it.each(['', '   '])('does not fall back to the session when authToken is %o', async (authToken) => {
+    setSession({ jellyfinToken: 'session-tok', jellyfinUserId: 'user-1', jellyseerrCookiePresent: false });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiFetch('jellyfin', '/Users/Me', { authToken });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init.headers as Headers).has('X-Emby-Token')).toBe(false);
+  });
+
+  // A stale cast link must not log out whoever is using this browser: the
+  // rejected credential was never their session.
+  it('does NOT clear the session when a 401 rejects an explicitly-supplied token', async () => {
+    setSession({ jellyfinToken: 'session-tok', jellyfinUserId: 'user-1', jellyseerrCookiePresent: true });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await apiFetch('jellyfin', '/Users/Me', { authToken: 'stale-url-tok' }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(401);
+    expect(getSession()).not.toBeNull();
+  });
+
   it('sends credentials: include on jellyseerr calls so connect.sid replays automatically', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);

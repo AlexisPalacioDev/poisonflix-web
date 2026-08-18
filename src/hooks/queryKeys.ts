@@ -114,6 +114,18 @@ export const queryKeys = {
   // both are already scoped to the caller by the BFF's own session cookie.
   jamList: () => ['jam', 'list'] as const,
   jamDirectory: () => ['jam', 'directory'] as const,
+  // Juegos: the ROM library the BFF finds on disk. Not scoped by userId —
+  // like `jamList`, the call is already scoped to the caller by the BFF's own
+  // session cookie, and the ROMs on the server are the same ones for everyone.
+  // Under the `games` prefix so one `invalidateQueries(['games'])` refreshes
+  // whatever the section ends up caching.
+  gamesLibrary: () => ['games', 'library'] as const,
+  // Cast: the devices `cast-bridge` can see on the LAN right now. Not scoped
+  // by userId — like `jamList`, the call is already scoped to the caller by
+  // the BFF's own session cookie, and the televisions on the network are the
+  // same ones for everyone. Under the `cast` prefix so one
+  // `invalidateQueries(['cast'])` refreshes whatever else the feature caches.
+  castDevices: () => ['cast', 'devices'] as const,
   // Player episode prev/next/jump navigation (owner request): a series' full
   // playable episode list, keyed by series id so paging between siblings
   // reuses the same cache entry instead of refetching per episode.

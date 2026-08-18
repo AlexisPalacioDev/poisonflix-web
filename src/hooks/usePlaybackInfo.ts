@@ -54,22 +54,60 @@ export interface PlaybackData {
   episodeNumber: number | null;
 }
 
-export function usePlaybackInfo(itemId: string) {
+/**
+ * Who is asking, and with what token.
+ *
+ * The seam the public cast route (`/cast/:id`) hangs off: a television has no
+ * session, so it supplies these from its URL instead. Everything downstream -
+ * the DeviceProfile, `resolvePlayback`, the resume position, the `api_key` on
+ * the stream URL - is identical either way, which is the point: the cast
+ * screen must not grow a second copy of this pipeline that can drift from
+ * this one.
+ */
+export interface PlaybackCredentials {
+  userId: string;
+  token: string;
+}
+
+export function usePlaybackInfo(itemId: string, credentials?: PlaybackCredentials) {
   const { session } = useAuth();
-  const userId = session?.jellyfinUserId ?? '';
-  const token = session?.jellyfinToken ?? '';
+  // The override is all-or-nothing on purpose: mixing a URL token with a
+  // session user id (or the reverse) would resolve a stream for one identity
+  // and authenticate it as another.
+  const userId = credentials ? credentials.userId : (session?.jellyfinUserId ?? '');
+  const token = credentials ? credentials.token : (session?.jellyfinToken ?? '');
+  // Undefined for the session path, so `apiFetch` keeps reading the store and
+  // its 401-clears-the-session behaviour is untouched for every existing caller.
+  const authToken = credentials ? credentials.token : undefined;
 
   return useQuery({
-    queryKey: queryKeys.playbackInfo(itemId),
+    // Scoped by identity whenever a credential override is in play, and only
+    // then - the session path keeps its exact existing key.
+    //
+    // `queryKeys.playbackInfo` is keyed by item alone, which was correct while
+    // one identity could ever ask. Two routes now can: navigate `/player/X` ->
+    // `/cast/X?token=…` in one tab and react-query hands the cast page the
+    // stream it resolved with the PHONE's token (a disabled query still serves
+    // cached data), or the reverse, and the player renders one frame
+    // authenticated by a URL token it never chose. Not an escalation - the
+    // server still decides, and neither token grants more than it already did -
+    // but it is a render with a credential the route did not pick, and it makes
+    // the "different key is a different query" guarantee this file's header
+    // relies on quietly untrue. The `userId` is enough to separate them: it is
+    // derived FROM the token (`GET /Users/Me`), and keeping the token itself
+    // out of the key keeps it out of devtools and cache dumps.
+    queryKey: credentials
+      ? [...queryKeys.playbackInfo(itemId), 'credentials', credentials.userId]
+      : queryKeys.playbackInfo(itemId),
     queryFn: async (): Promise<PlaybackData> => {
       const [playbackInfo, item] = await Promise.all([
         // A real DeviceProfile (not `null`) is required so Jellyfin actually
         // enforces codec support instead of assuming DirectPlay is safe -
         // see deviceProfile.ts's header for the live-confirmed root cause.
-        getPlaybackInfo(itemId, { userId, deviceProfile: createBrowserDeviceProfile() }),
+        getPlaybackInfo(itemId, { userId, deviceProfile: createBrowserDeviceProfile() }, { authToken }),
         // Explicit UserData in Fields - PlaybackPositionTicks (resume) lives
         // there and the default `getItem` fields don't request it.
-        getItem(userId, itemId, 'ProviderIds,MediaStreams,UserData'),
+        getItem(userId, itemId, 'ProviderIds,MediaStreams,UserData', { authToken }),
       ]);
 
       return {

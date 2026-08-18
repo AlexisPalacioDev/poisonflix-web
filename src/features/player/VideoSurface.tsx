@@ -1,5 +1,5 @@
 import Hls from 'hls.js';
-import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { SubtitleDeliveryMethod } from '../../api/schemas/jellyfin';
 import type { PlaybackSource } from '../../lib/domain/streamResolver';
 import { languageFamily } from '../../lib/domain/languageNames';
@@ -16,6 +16,7 @@ import {
   type SubtitleCue,
 } from './subtitleCues';
 import { fetchWordTimingsData, resolveWordTimingsForCue, type WordTimingsFile } from './wordTimingsSource';
+import { hasOpenOverlay } from '../../components/overlay/overlayStack';
 import { AudioTrackMenu, SubtitleTrackMenu } from './TrackMenu';
 import { EpisodeMenu } from './EpisodeMenu';
 import { nextEpisode, previousEpisode, type EpisodeNavItem } from './episodeNavigation';
@@ -374,7 +375,15 @@ export interface VideoSurfaceProps {
   /** Resume position in seconds; `0` means "no seek" (player spec). */
   resumeSeconds: number;
   title: string;
-  onBack: () => void;
+  /** Omitted on a surface with nowhere to go back TO - the public cast route
+   *  (`features/cast/`), which is one video on a television and not the app.
+   *  The button is then not rendered at all, rather than rendered dead. */
+  onBack?: () => void;
+  /** Extra control(s) for the right end of the top bar (currently the cast
+   *  button). Rendered here rather than floated over the video by the screen
+   *  above: the title next to it is an ellipsised flex child that grows to
+   *  fill the row, so anything overlaying that corner would sit on top of it. */
+  headerActions?: ReactNode;
   onPlay: () => void;
   onPause: () => void;
   onEnded: () => void;
@@ -416,6 +425,17 @@ export interface VideoSurfaceProps {
    * position, mirroring `onAudioSwitchUnavailable`. */
   onSubtitleSwitchUnavailable: (track: MediaStreamTrack | null) => void;
   buildSubtitleUrl: (track: MediaStreamTrack) => string;
+  /** Whether the track menus may be opened at all. Defaults to `true`; the
+   *  public cast route passes `false`.
+   *
+   *  Not merely `subtitleTracks.length > 0`: the subtitle button is the ONLY
+   *  door to those menus (nothing else calls `setActiveMenu`), and on a surface
+   *  where every apply handler is a no-op it opens a dialog that cannot do
+   *  anything. The audio and episode buttons already disappear on their own
+   *  (empty `audioTracks`, `isEpisode` false); this is the same absence, made
+   *  explicit for the one menu that renders unconditionally because it always
+   *  has "Ninguno" and the word-highlight toggle to offer. */
+  showTrackMenus?: boolean;
   /** True only for `Episode` items - gates the prev/next/jump episode
    * controls entirely (player spec: never shown for a movie). */
   isEpisode: boolean;
@@ -573,6 +593,7 @@ export function VideoSurface({
   resumeSeconds,
   title,
   onBack,
+  headerActions,
   onPlay,
   onPause,
   onEnded,
@@ -590,6 +611,7 @@ export function VideoSurface({
   subtitleDeliveryMethods,
   onSubtitleSwitchUnavailable,
   buildSubtitleUrl,
+  showTrackMenus = true,
   isEpisode,
   episodes,
   currentEpisodeId,
@@ -1419,6 +1441,13 @@ export function VideoSurface({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (activeMenu != null) return; // menu owns keyboard input while open
+    // Same rule for an overlay this component does not own (the cast sheet
+    // lives in `headerActions`, so its key events bubble through here on the
+    // React tree). Checked centrally instead of having each overlay call
+    // `stopPropagation`: React's synthetic stop also stops the NATIVE event,
+    // which would take the app's document-level D-pad navigation down with it
+    // and leave a TV remote unable to move inside the sheet.
+    if (hasOpenOverlay()) return;
     revealControls();
     switch (event.key) {
       case ' ':
@@ -1493,6 +1522,13 @@ export function VideoSurface({
     <div
       ref={containerRef}
       className={`pf-player-surface${pseudoFullscreen ? ' pf-player-surface--pseudo-fullscreen' : ''}`}
+      // Portal target for overlays rendered by children that have no access to
+      // `containerRef` (the cast sheet, via `headerActions`). It must be THIS
+      // element for the same two reasons the track menus are portalled here
+      // explicitly: real Fullscreen only paints descendants of
+      // `fullscreenElement`, and the pseudo-fullscreen surface's z-index:9999
+      // would otherwise cover anything left on `document.body`.
+      data-overlay-host=""
       onMouseMove={revealControls}
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -1585,10 +1621,13 @@ export function VideoSurface({
         }}
       >
         <div className="pf-player-surface__top">
-          <button type="button" className="pf-player-surface__icon-btn pf-player-surface__back" onClick={onBack} aria-label="Volver">
-            <IconBack />
-          </button>
+          {onBack ? (
+            <button type="button" className="pf-player-surface__icon-btn pf-player-surface__back" onClick={onBack} aria-label="Volver">
+              <IconBack />
+            </button>
+          ) : null}
           <span className="pf-player-surface__title">{title}</span>
+          {headerActions ? <div className="pf-player-surface__actions">{headerActions}</div> : null}
         </div>
 
         <button
@@ -1687,17 +1726,19 @@ export function VideoSurface({
 
             <div className="pf-player-surface__spacer" />
 
-            <button
-              type="button"
-              className="pf-player-surface__icon-btn"
-              onClick={() => setActiveMenu('subtitle')}
-              aria-label="Subtítulos"
-              aria-haspopup="dialog"
-            >
-              <IconSubtitles />
-            </button>
+            {showTrackMenus ? (
+              <button
+                type="button"
+                className="pf-player-surface__icon-btn"
+                onClick={() => setActiveMenu('subtitle')}
+                aria-label="Subtítulos"
+                aria-haspopup="dialog"
+              >
+                <IconSubtitles />
+              </button>
+            ) : null}
 
-            {audios.length > 0 ? (
+            {showTrackMenus && audios.length > 0 ? (
               <button
                 type="button"
                 className="pf-player-surface__icon-btn"

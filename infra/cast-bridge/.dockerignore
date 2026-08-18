@@ -1,0 +1,5 @@
+# The image runs `node server.mjs` and nothing else. Tests, docs and whatever
+# the bind mount leaves behind are not runtime surface and do not belong in it.
+*.test.mjs
+README.md
+data/

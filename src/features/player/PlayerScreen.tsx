@@ -22,6 +22,8 @@ import {
 import { resolvePlayback, secondsToTicks, type PlaybackSource } from '../../lib/domain/streamResolver';
 import { audioTracksOf, buildSubtitleDeliveryUrl, subtitleTracksOf, useItemMediaStreams, type MediaStreamTrack } from './mediaStreamTracks';
 import { useSeriesEpisodeList } from './episodeNavigation';
+import { CastButton } from '../cast/CastButton';
+import { streamUrlOf } from '../cast/castUrls';
 import { VideoSurface } from './VideoSurface';
 import './player.css';
 
@@ -417,6 +419,14 @@ export function PlayerScreen() {
         resumeSeconds={effectiveResumeSeconds}
         title={data.title}
         onBack={handleBack}
+        // Cast (see `features/cast/`). It is handed the source that is LIVE
+        // right now, not `data.resolved`: after an audio/subtitle switch the
+        // override carries a different stream URL, and sending the stale one
+        // would put a different track on the television than the one on
+        // screen.
+        headerActions={
+          <CastButton itemId={itemId} title={data.title} streamUrl={streamUrlOf(effectiveSource)} />
+        }
         onPlay={heartbeat.onPlay}
         onPause={heartbeat.onPause}
         onEnded={heartbeat.onEnded}

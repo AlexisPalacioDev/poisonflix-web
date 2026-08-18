@@ -130,6 +130,18 @@
   min-width: 0;
 }
 
+/* Right end of the top bar (the cast button). `margin-left: auto` pins it to
+   the far edge whether or not the title grows to fill the row, and `flex: none`
+   keeps it at its natural size so a long title ellipsises instead of squashing
+   the control. */
+.pf-player-surface__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .pf-player-surface__back {
   background: rgba(10, 12, 16, 0.5);
   backdrop-filter: blur(6px);

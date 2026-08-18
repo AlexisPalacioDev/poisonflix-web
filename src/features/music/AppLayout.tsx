@@ -12,20 +12,26 @@ import { useMusicScrobble } from './useMusicScrobble';
 export function AppLayout() {
   const location = useLocation();
 
-  // Remember which half of the app the user is in, so the next launch opens
-  // where they left off. PoisonFlix is two products under one roof, and
-  // someone who uses it as a music player was paying a navigation tax on every
-  // single open.
+  // Remember which section of the app the user is in, so the next launch opens
+  // where they left off. PoisonFlix is several products under one roof, and
+  // someone who uses it as a music player — or as a console — was paying a
+  // navigation tax on every single open.
   const section = sectionOf(location.pathname);
   useEffect(() => {
     if (section) rememberSection(section);
   }, [section]);
 
   // Applied once per page load, not on every visit to `/`. Otherwise cinema's
-  // own home would be unreachable for anyone whose last section was music —
-  // the redirect would bounce them straight back out of it.
+  // own home would be unreachable for anyone whose last section was another
+  // one — the redirect would bounce them straight back out of it.
+  //
+  // "Any section that isn't cinema", not "music": cinema is the one whose home
+  // IS `/`, so it is the only section for which landing here is already
+  // correct. Testing for one named section instead would quietly make every
+  // section added after it non-resumable.
   const landed = useRef(false);
-  const shouldResume = !landed.current && location.pathname === '/' && lastSection() === 'musica';
+  const resumeTo = lastSection();
+  const shouldResume = !landed.current && location.pathname === '/' && resumeTo !== 'cine';
   landed.current = true;
 
   // Every hook runs before the redirect can return. Bailing out above them
@@ -38,7 +44,7 @@ export function AppLayout() {
   // Feeds Jellyfin the per-user listening history the recommendations read.
   useMusicScrobble();
 
-  if (shouldResume) return <Navigate to={SECTION_HOME.musica} replace />;
+  if (shouldResume) return <Navigate to={SECTION_HOME[resumeTo]} replace />;
 
   return (
     <>
