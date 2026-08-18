@@ -88,6 +88,18 @@ function shutDown(instance: EmulatorInstance | undefined): void {
 // later one supersedes gets shut down on the spot instead of being orphaned.
 let trapped: EmulatorInstance | undefined;
 
+// Which boot the running emulator belongs to.
+//
+// `stopEmulator` is global — it has to be, because so is EmulatorJS. But a
+// React cleanup is NOT: leaving game A and opening game B fires A's cleanup
+// AFTER B's effect has already booted, and an unscoped teardown then kills the
+// emulator that replaced it. Measured on the deployed build: the instance is
+// constructed, builds its context menu, menu bar and virtual gamepad, and is
+// torn down before it ever reaches its canvas — leaving a black rectangle with
+// the right title on it and no error anywhere. So a caller hands back the token
+// it was given, and a teardown for a boot that is no longer current does nothing.
+let generation = 0;
+
 function installInstanceTrap(): void {
   const w = window as unknown as EmulatorWindow;
   const existing = Object.getOwnPropertyDescriptor(w, 'EJS_emulator');
@@ -114,9 +126,13 @@ function installInstanceTrap(): void {
  *
  * Tears down any previous session first, so a caller that forgets to unmount
  * cleanly still gets the game it asked for rather than the last one.
+ *
+ * Returns the token for THIS boot; hand it back to `stopEmulator` so a late
+ * cleanup cannot tear down whatever booted after it.
  */
-export function startEmulator(config: EmulatorConfig): void {
+export function startEmulator(config: EmulatorConfig): number {
   stopEmulator();
+  const mine = ++generation;
 
   const w = window as unknown as EmulatorWindow;
   w.EJS_player = config.playerSelector;
@@ -148,13 +164,21 @@ export function startEmulator(config: EmulatorConfig): void {
   // at all — Vite answers the SPA fallback, so the "script" is index.html.
   script.onerror = () => config.onLoadError?.();
   document.body.appendChild(script);
+
+  return mine;
 }
 
 /**
  * Removes every trace of the running emulator: the instance, the globals, and
  * the injected nodes. Safe to call when nothing is running.
+ *
+ * Pass the token `startEmulator` returned and this becomes a no-op once a newer
+ * boot has taken over — which is what a React cleanup must do. Called with no
+ * token it always tears down, which is what `startEmulator` itself wants.
  */
-export function stopEmulator(): void {
+export function stopEmulator(token?: number): void {
+  if (token !== undefined && token !== generation) return;
+
   const w = window as unknown as EmulatorWindow;
 
   // What this can and cannot switch off, measured against the library rather

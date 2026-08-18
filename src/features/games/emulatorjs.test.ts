@@ -206,4 +206,32 @@ describe('EmulatorJS lifecycle', () => {
 
     expect(onLoadError).toHaveBeenCalled();
   });
+
+  // The bug this token exists for, reproduced on the deployed build: leaving a
+  // game and opening another within a second left a black rectangle with the
+  // right title on it. React fires the FIRST screen's cleanup after the SECOND
+  // has already booted, and an unscoped teardown killed the emulator that had
+  // just replaced it — mid-construction, so its chrome was in the DOM and its
+  // canvas never was.
+  it('ignores a cleanup from a boot that has already been replaced', () => {
+    const first = startEmulator(SNES);
+    const second = startEmulator(N64);
+
+    // The first screen unmounts late and runs its own cleanup.
+    stopEmulator(first);
+
+    // The second game must still be the one loaded.
+    expect(mut().EJS_core).toBe('n64');
+    expect(ejsGlobals().length).toBeGreaterThan(0);
+
+    // Its own cleanup still works.
+    stopEmulator(second);
+    expect(ejsGlobals()).toEqual([]);
+  });
+
+  it('still tears down unconditionally when called with no token', () => {
+    startEmulator(SNES);
+    stopEmulator();
+    expect(ejsGlobals()).toEqual([]);
+  });
 });

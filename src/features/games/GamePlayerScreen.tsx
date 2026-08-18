@@ -39,7 +39,7 @@ export function GamePlayerScreen() {
   useEffect(() => {
     if (!core) return undefined;
     setLoaderFailed(false);
-    startEmulator({
+    const token = startEmulator({
       playerSelector: `#${PLAYER_ID}`,
       core,
       gameUrl: romUrl(id),
@@ -48,7 +48,9 @@ export function GamePlayerScreen() {
     });
     // Leaving this screen must leave nothing behind — see `emulatorjs.ts`. A
     // surviving global is how you tap one game and boot the previous one.
-    return () => stopEmulator();
+    // Scoped to THIS boot: leaving one game and opening another fires this
+    // cleanup after the next emulator has already started.
+    return () => stopEmulator(token);
   }, [id, core, title]);
 
   return (
