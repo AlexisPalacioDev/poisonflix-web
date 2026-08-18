@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Header } from '../../components/Header';
 import { useGamesLibrary } from '../../hooks/useGamesLibrary';
 import {
@@ -32,7 +31,21 @@ function formatSize(bytes: number): string {
 function GameCard({ game }: { game: Game }) {
   const size = formatSize(game.sizeBytes);
   return (
-    <Link to={`/juegos/play/${encodeURIComponent(game.id)}`} className="pf-games__card">
+    // A real navigation, not a client-side one, and this is load-bearing.
+    //
+    // EmulatorJS ships no teardown: `emulator.min.js` declares EJS_STORAGE at
+    // top level, and its loader re-injects that file unconditionally on every
+    // boot — there is no already-loaded check to satisfy. The second injection
+    // is a redeclaration, which is a fatal SyntaxError, and the emulator never
+    // reaches its canvas. Measured on the deployed build: the FIRST game of a
+    // page session works and every one after it is a black rectangle with the
+    // right title on it.
+    //
+    // Purging globals and removing script nodes does not help: removing a
+    // <script> does not undo what it already declared. So each game gets a
+    // fresh document, which costs about a second and is the only thing that
+    // actually works.
+    <a href={`/juegos/play/${encodeURIComponent(game.id)}`} className="pf-games__card">
       <span className="pf-games__card-art" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="30" height="30" focusable="false">
           <path
@@ -52,7 +65,7 @@ function GameCard({ game }: { game: Game }) {
         <span className="pf-games__card-title">{game.title}</span>
         {size && <span className="pf-games__card-sub">{size}</span>}
       </span>
-    </Link>
+    </a>
   );
 }
 
